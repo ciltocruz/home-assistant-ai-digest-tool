@@ -1,0 +1,13 @@
+{
+  "name": "@ha-digest/frontend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@ha-digest/shared": "workspace:*"
+  }
+}

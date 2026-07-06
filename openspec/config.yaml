@@ -1,0 +1,69 @@
+schema: spec-driven
+
+context: |
+  Project: home-assistant-ai-digest-tool
+  State: initialization-only workspace with AGENTS.md and no product source yet
+  Product: public-ready Home Assistant AI digest tool
+  Target: Docker-first for Home Assistant Core
+  Interfaces: Home Assistant sources, AI providers, notifiers, renderers, persistence
+  Constraints: clean-room rewrite, no secrets in code/docs/logs/memory, pnpm-only for JS/TS
+
+strict_tdd: false
+
+testing:
+  detected_at: 2026-07-06
+  strict_tdd_supported: false
+  strict_tdd_reason: No test runner or project manifest exists yet in the workspace.
+  test_runner:
+    available: false
+    framework: null
+    command: ""
+  layers:
+    unit:
+      available: false
+      tool: null
+    integration:
+      available: false
+      tool: null
+    e2e:
+      available: false
+      tool: null
+  coverage:
+    available: false
+    command: ""
+  quality:
+    linter:
+      available: false
+      command: ""
+    type_checker:
+      available: false
+      command: ""
+    formatter:
+      available: false
+      command: ""
+
+rules:
+  proposal:
+    - Keep MVP scope Docker-first for Home Assistant Core.
+    - Reject copying or extracting upstream code from unlicensed references.
+    - Include secret-handling and rollback notes for risky changes.
+  specs:
+    - Use Given/When/Then scenarios.
+    - Use RFC 2119 keywords.
+    - Separate backend, frontend, provider, notifier, and persistence requirements.
+  design:
+    - Document adapter boundaries and rationale.
+    - Keep provider and notifier abstractions explicit.
+  tasks:
+    - Group by phase and keep tasks reviewable within one session.
+    - Add tests before or alongside implementation once tooling exists.
+  apply:
+    - Follow clean-room constraints and avoid secrets in logs or fixtures.
+    tdd: false
+    test_command: ""
+  verify:
+    test_command: ""
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Preserve archived change folders as an audit trail.

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+.DS_Store
+.idea/
+*.iml
+.atl/.skill-registry.cache.json
+.env*
+!.env.example
+!.env.template
+!.env.*.example
+!.env.*.template
