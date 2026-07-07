@@ -29,7 +29,7 @@ PR 2 remains verified for its scoped Phase 2 boundary. The previous warning abou
 | Design | `openspec/changes/home-assistant-ai-digest-tool/design.md` | Read |
 | Tasks | `openspec/changes/home-assistant-ai-digest-tool/tasks.md` | Read |
 | Relevant specs | `openspec/changes/home-assistant-ai-digest-tool/specs/local-history/spec.md`, `security-privacy/spec.md`, `digest-scheduling/spec.md` | Read |
-| PR 2 review guide | `docs/review/pr-2-backend-persistence-safety.md` | Read |
+| Review notes | Maintainer-local working artifact | Excluded from repository tracking by policy |
 | Verify report | `openspec/changes/home-assistant-ai-digest-tool/verify-report.md` | Updated |
 
 ### Completeness
@@ -108,7 +108,7 @@ No known vulnerabilities found
 | Task 2.2 SQLite migrations | ✅ Implemented | `migrations.ts` creates `settings`, `secrets`, `digest_jobs`, `reports`, `notes`, `ignore_rules`, and `deliveries`; migrations are explicitly transactional and have idempotency plus rollback/recovery tests. |
 | Task 2.3 SQLiteSecretStore | ✅ Implemented | `SQLiteSecretStore` uses AES-256-GCM, `/data/app.key` default, `0600` key creation, secret refs/masks, explicit `resolve`, and rotation. Tests prove stored values/key file do not contain the raw secret. |
 | Task 2.4 DigestJobStore | ✅ Implemented | `SQLiteDigestJobStore` provides unique `triggerWindowId` enqueue, atomic `UPDATE ... RETURNING` lease, expired running lease reclaim, complete, retry backoff, and terminal `failed` state. |
-| Review guide requirement | ✅ Implemented | `docs/review/pr-2-backend-persistence-safety.md` explains changed/out-of-scope files, review order, `pnpm` commands, manual checks, and introduced concepts. |
+| Review notes policy | ✅ Compliant | Review notes are kept as maintainer-local working artifacts and excluded from repository tracking. |
 
 ### Design Coherence
 

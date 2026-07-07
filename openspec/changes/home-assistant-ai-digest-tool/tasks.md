@@ -16,9 +16,9 @@ Chained PRs recommended: Yes
 Chain strategy: feature-branch-chain
 400-line budget risk: High
 
-## Review Guide Requirement
+## Review Notes Policy
 
-Every implementation PR MUST include a short review guide for Marcos with:
+Implementation review notes are maintainer-local working artifacts and MUST NOT be committed to the repository. When preparing a review, keep the notes outside tracked product documentation and cover:
 
 - What changed and what is intentionally out of scope.
 - Which files to open first and why.

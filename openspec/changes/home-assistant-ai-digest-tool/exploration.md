@@ -10,7 +10,7 @@
 - `openspec/changes/home-assistant-ai-digest-tool/exploration.md` — records the focused capability review and updated fork/reuse stance.
 - `openspec/changes/home-assistant-ai-digest-tool/proposal.md` — should soften absolute "no fork" wording while preserving the current legal/technical conclusion.
 - `openspec/config.yaml` — existing rules already support clean-room/reference-only constraints; no change required.
-- `AGENTS.md` — current product direction remains aligned; no change required for this exploration pass.
+- Local maintainer notes — current product direction remains aligned; no change required for this exploration pass.
 
 ### Approaches
 1. **Reference-only clean-room implementation** — keep using `HomeAssistantDigest` as a product/UX reference while rebuilding everything independently.
