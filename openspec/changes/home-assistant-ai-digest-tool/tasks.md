@@ -44,10 +44,10 @@ Every implementation PR MUST include a short review guide for Marcos with:
 
 ## Phase 2: Backend Persistence and Safety
 
-- [ ] 2.1 Create `backend/src/domain/*` interfaces for collectors, detectors, providers, notifiers, stores, jobs, and renderers.
-- [ ] 2.2 Implement SQLite migrations in `backend/src/adapters/persistence/` for settings, secrets, jobs, reports, notes, ignores, deliveries.
-- [ ] 2.3 Implement `SQLiteSecretStore` with `/data/app.key`, masked refs only, and tests proving raw secrets never leave store boundaries.
-- [ ] 2.4 Implement `DigestJobStore.enqueue/lease/complete/retry` with unique `triggerWindowId` and concurrent duplicate enqueue tests.
+- [x] 2.1 Create `backend/src/domain/*` interfaces for collectors, detectors, providers, notifiers, stores, jobs, and renderers.
+- [x] 2.2 Implement SQLite migrations in `backend/src/adapters/persistence/` for settings, secrets, jobs, reports, notes, ignores, deliveries.
+- [x] 2.3 Implement `SQLiteSecretStore` with `/data/app.key`, masked refs only, and tests proving raw secrets never leave store boundaries.
+- [x] 2.4 Implement `DigestJobStore.enqueue/lease/complete/retry` with unique `triggerWindowId` and concurrent duplicate enqueue tests.
 
 ## Phase 3: Backend Behavior and API
 

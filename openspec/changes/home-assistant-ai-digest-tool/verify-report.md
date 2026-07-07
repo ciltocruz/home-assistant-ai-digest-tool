@@ -1,99 +1,158 @@
 ## Verification Report
 
-**Change**: home-assistant-ai-digest-tool
-**Version**: N/A
-**Mode**: Standard
-**Scope**: PR 1 foundation slice only: tasks 1.1, 1.2, and 1.3. This is not full-MVP verification or archive readiness.
+**Change**: home-assistant-ai-digest-tool  
+**Version**: N/A  
+**Mode**: Standard verification, hybrid persistence  
+**Scope**: PR 2 / Phase 2 Backend Persistence and Safety only: tasks 2.1, 2.2, 2.3, and 2.4. This is not full-MVP verification or archive readiness.
+
+### Status / Verdict
+
+**Verdict**: PASS WITH WARNINGS
+
+PR 2 remains verified for its scoped Phase 2 boundary. The previous warning about `runMigrations()` not being explicitly transactional is resolved: migrations now run inside `BEGIN IMMEDIATE`/`COMMIT`, or a savepoint when already inside an outer transaction, with rollback on failure. Runtime verification, dependency audit, and source inspection all passed for the requested checks.
+
+### Executive Summary
+
+- Phase 2 task checkboxes are complete in `tasks.md`.
+- Fresh source inspection confirms `runMigrations()` is explicitly transactional and rolls back on migration failure.
+- Migration idempotency and rollback/recovery evidence exists in `backend/src/adapters/persistence/migrations.test.ts`.
+- `pnpm run ci` passed: typecheck, Vitest, focused-test guard, and build.
+- `pnpm audit --audit-level moderate` passed with no known vulnerabilities.
+- Focused persistence coverage is included in the full CI run: migrations, secret store, and digest job store.
+- Remaining warnings are limited to PR 2 test-strength/runtime hardening concerns outside the migration transaction issue.
+
+### Artifacts
+
+| Artifact | Path | Status |
+|----------|------|--------|
+| Proposal | `openspec/changes/home-assistant-ai-digest-tool/proposal.md` | Read |
+| Design | `openspec/changes/home-assistant-ai-digest-tool/design.md` | Read |
+| Tasks | `openspec/changes/home-assistant-ai-digest-tool/tasks.md` | Read |
+| Relevant specs | `openspec/changes/home-assistant-ai-digest-tool/specs/local-history/spec.md`, `security-privacy/spec.md`, `digest-scheduling/spec.md` | Read |
+| PR 2 review guide | `docs/review/pr-2-backend-persistence-safety.md` | Read |
+| Verify report | `openspec/changes/home-assistant-ai-digest-tool/verify-report.md` | Updated |
 
 ### Completeness
 
 | Metric | Value |
 |--------|-------|
 | Tasks total in change | 15 |
-| PR 1 scoped tasks | 3 |
-| PR 1 scoped tasks complete | 3 |
-| PR 1 scoped tasks incomplete | 0 |
-| Later tasks incomplete | 12 |
+| PR 2 scoped tasks | 4 |
+| PR 2 scoped tasks complete | 4 |
+| PR 2 scoped tasks incomplete | 0 |
+| Later tasks incomplete | 8 |
 
-Tasks 1.1, 1.2, and 1.3 are checked in `openspec/changes/home-assistant-ai-digest-tool/tasks.md`. Phase 2 through Phase 5 tasks remain unchecked and are intentionally outside this PR 1 verification boundary.
+Tasks 2.1, 2.2, 2.3, and 2.4 are checked in `openspec/changes/home-assistant-ai-digest-tool/tasks.md`. Phases 3 through 5 remain unchecked and are intentionally outside this PR 2 verification boundary.
 
-### Build & Tests Execution
+### Build / Tests / Audit Evidence
 
-**Build**: ✅ Passed
+**Command**: `pnpm run ci`  
+**Exit code**: 0  
+**Result**: ✅ Passed
 
 ```text
-Command: pnpm run ci
-
 typecheck: passed for packages/shared, backend, and frontend.
-build: passed for packages/shared, backend, and frontend.
-```
-
-**Tests**: ✅ 25 passed / ❌ 0 failed / ⚠️ 0 skipped
-
-```text
-Command: pnpm run ci
-
 vitest run:
+✓ backend/src/adapters/persistence/migrations.test.ts (2 tests)
+✓ backend/src/adapters/persistence/sqlite-digest-job-store.test.ts (5 tests)
+✓ backend/src/adapters/persistence/sqlite-secret-store.test.ts (2 tests)
 ✓ packages/shared/src/dtos.test.ts (21 tests)
 ✓ tests/check-focused-tests.test.ts (4 tests)
 
-Test Files  2 passed (2)
-Tests       25 passed (25)
+Test Files  5 passed (5)
+Tests       34 passed (34)
 
 test:focused:
-No focused tests found in 6 files.
+No focused tests found in 20 files.
+
+build: passed for packages/shared, backend, and frontend.
+```
+
+**Command**: `pnpm audit --audit-level moderate`  
+**Exit code**: 0  
+**Result**: ✅ Passed
+
+```text
+No known vulnerabilities found
 ```
 
 **Coverage**: ➖ Not available / threshold: N/A
 
+### Specific Requested Checks
+
+| Check | Result | Evidence |
+|-------|--------|----------|
+| Previous `runMigrations` transaction warning resolved | ✅ Resolved | `backend/src/adapters/persistence/migrations.ts` wraps migration application in `BEGIN IMMEDIATE`/`COMMIT`; when already in a transaction it uses `SAVEPOINT app_migrations`; both paths roll back and rethrow on error. |
+| Migration rollback evidence exists | ✅ Covered | `migrations.test.ts > rolls back migration-created tables when a migration statement fails` creates an incompatible `schema_migrations`, asserts `runMigrations()` throws, asserts PR 2 tables were not left behind, then drops the bad table and successfully reruns migrations. |
+| Migration idempotency evidence exists | ✅ Covered | `migrations.test.ts > creates the persistence tables required by the backend core` calls `runMigrations(db)` twice and asserts the expected tables and a single version row. |
+| `pnpm run ci` passes | ✅ Passed | Fresh run completed with exit code 0; 5 test files and 34 tests passed. |
+| `pnpm audit --audit-level moderate` passes | ✅ Passed | Fresh run completed with exit code 0 and `No known vulnerabilities found`. |
+
 ### Spec Compliance Matrix
 
-| Requirement | Scenario | Test | Result |
-|-------------|----------|------|--------|
-| Guided onboarding / setup DTO foundation | Valid input saved masked or invalid input reported without secret logging | `packages/shared/src/dtos.test.ts > accepts raw secrets only in setup validation requests`; `rejects raw secrets in setup validation responses`; `rejects raw secret fields in response DTOs` | ✅ COMPLIANT for PR 1 DTO boundary |
-| Security/privacy / secret-safe DTO foundation | Secrets are masked and response DTOs do not expose raw secret fields | `packages/shared/src/dtos.test.ts > keeps settings redacted with secret refs and masks`; `returns field-safe errors without secret values` | ✅ COMPLIANT for PR 1 DTO boundary |
-| Digest scheduling / schedule DTO foundation | Daily and weekly schedule contracts are explicit | `packages/shared/src/dtos.test.ts > accepts valid schedule times at HH:mm boundaries`; `rejects invalid schedule time`; `rejects weekly schedules without dayOfWeek`; `rejects daily schedules with dayOfWeek`; `rejects invalid dayOfWeek` | ✅ COMPLIANT for PR 1 DTO boundary |
-| Digest scheduling / digest window DTO foundation | Digest window start precedes end | `packages/shared/src/dtos.test.ts > accepts digest windows when from is before to`; `rejects digest windows when from equals or follows to` | ✅ COMPLIANT for PR 1 DTO boundary |
-| Flexible notifications / notifier DTO foundation | Test/send DTOs use target refs and bounded messages | Covered by schema inspection in `packages/shared/src/dtos.ts`; no dedicated notifier test beyond aggregate DTO typecheck | ⚠️ PARTIAL |
-| Notes and events / notes DTO foundation | Notes have bounded text, timestamps, and tags | Covered by schema inspection in `packages/shared/src/dtos.ts`; no dedicated notes behavior test in PR 1 | ⚠️ PARTIAL |
-| Ignored warnings / ignore DTO foundation | Ignore rules have match/type/expiry/reason shape | Covered by schema inspection in `packages/shared/src/dtos.ts`; no dedicated ignore lifecycle test in PR 1 | ⚠️ PARTIAL |
-| Focused-test guard | CI fails when `.only` is committed | `tests/check-focused-tests.test.ts > passes when scanned files do not contain focused tests`; `fails when describe.only/it.only/test.only is found`; `vitest.config.ts` has `forbidOnly: true` | ✅ COMPLIANT |
+| Requirement | Scenario | Test / Evidence | Result |
+|-------------|----------|-----------------|--------|
+| Security/privacy / Protect Sensitive Data | Sensitive data handled | `sqlite-secret-store.test.ts > stores encrypted secrets behind masked refs and resolves raw values only on explicit lookup`; `creates /data/app.key equivalent material with owner-only permissions where supported`; shared DTO secret-boundary tests also passed in `pnpm run ci`. | ✅ COMPLIANT for PR 2 secret-store boundary |
+| Digest scheduling / Run Digests On Demand And Schedule | Digest queued | `sqlite-digest-job-store.test.ts > deduplicates concurrent enqueue calls by triggerWindowId`; `leases, completes, and retries jobs without creating duplicate trigger windows`; `leases a queued job atomically across competing workers`; `reclaims running jobs whose lease expired`; `applies deterministic retry backoff and marks exhausted jobs as failed`. | ✅ COMPLIANT for PR 2 job-store boundary |
+| Local history / Store Compressed History | History lifecycle | `migrations.test.ts > creates the persistence tables required by the backend core` verifies schema foundations for `reports`, `notes`, `ignore_rules`, and `deliveries`. | ⚠️ PARTIAL: schema support exists; store behavior and retention cleanup are later-phase work |
+| Notes and events / Attach Context Notes | Note scope | Migration test verifies `notes` table creation. | ⚠️ PARTIAL: schema support exists; note behavior is not in PR 2 scope |
+| Ignored warnings / Manage Ignored Warnings | Ignore lifecycle | Migration test verifies `ignore_rules`; source inspection confirms active-rule unique index. | ⚠️ PARTIAL: schema support exists; ignore behavior is not in PR 2 scope |
 
-**Compliance summary**: PR 1 scoped runtime checks passed. Full MVP behavioral scenarios for collectors, persistence, AI calls, real notifiers, Docker runtime, and React UI are not claimed because those tasks are intentionally pending.
+**Compliance summary**: 2 PR 2 behavioral scenarios are compliant with passing runtime tests. Three adjacent persistence-backed scenarios are partial because PR 2 only creates schema foundations; full store behavior is intentionally deferred.
 
-### Correctness (Static Evidence)
+### Correctness
 
 | Requirement | Status | Notes |
 |------------|--------|-------|
-| Task 1.1 workspace/package structure | ✅ Implemented | Root `package.json` has `typecheck`, `test`, `test:focused`, `build`, and aggregate `ci`; `pnpm-workspace.yaml` includes `backend`, `frontend`, and `packages/*`; backend/frontend/shared packages have build/typecheck scripts. |
-| Task 1.2 shared Zod DTOs | ✅ Implemented | `packages/shared/src/dtos.ts` defines DTOs for setup, redacted settings, digest requests/history, errors, notifiers, notes, and ignores. |
-| Task 1.3 Vitest and focused-test guard | ✅ Implemented | `vitest.config.ts` includes relevant test globs and `forbidOnly: true`; `scripts/check-focused-tests.mjs` scans backend, frontend, packages, and tests. |
-| PR 1 boundary | ✅ Maintained | Backend and frontend source files are placeholders only. No HA real collectors, AI real calls, Telegram real calls, persistence, Docker runtime, or React UI were implemented. |
-| Review guide | ✅ Useful | `docs/review/pr-1-foundation.md` explains changed/out-of-scope files, review order, `pnpm run ci`, manual checks, and a short Zod guide for Marcos. |
+| Task 2.1 domain interfaces | ✅ Implemented | `backend/src/domain/` defines collectors, detectors, providers, notifiers, stores, jobs, renderers, and index exports. |
+| Task 2.2 SQLite migrations | ✅ Implemented | `migrations.ts` creates `settings`, `secrets`, `digest_jobs`, `reports`, `notes`, `ignore_rules`, and `deliveries`; migrations are explicitly transactional and have idempotency plus rollback/recovery tests. |
+| Task 2.3 SQLiteSecretStore | ✅ Implemented | `SQLiteSecretStore` uses AES-256-GCM, `/data/app.key` default, `0600` key creation, secret refs/masks, explicit `resolve`, and rotation. Tests prove stored values/key file do not contain the raw secret. |
+| Task 2.4 DigestJobStore | ✅ Implemented | `SQLiteDigestJobStore` provides unique `triggerWindowId` enqueue, atomic `UPDATE ... RETURNING` lease, expired running lease reclaim, complete, retry backoff, and terminal `failed` state. |
+| Review guide requirement | ✅ Implemented | `docs/review/pr-2-backend-persistence-safety.md` explains changed/out-of-scope files, review order, `pnpm` commands, manual checks, and introduced concepts. |
 
-### Coherence (Design)
+### Design Coherence
 
 | Decision | Followed? | Notes |
 |----------|-----------|-------|
-| pnpm TypeScript workspace | ✅ Yes | Root and package workspace files are present and verified through `pnpm run ci`. |
-| Shared Zod DTOs | ✅ Yes | Shared DTO package owns runtime validation schemas and exported types. |
-| Vitest with focused-test guard | ✅ Yes | Runtime tests passed and `.only` guard is tested. |
-| Chained PR review budget | ✅ Yes | Scope stayed within PR 1 foundation; later implementation work is not included. |
-| Ports/adapters and full runtime architecture | ➖ Not evaluated | Out of PR 1 scope; later backend/frontend/Docker slices remain pending. |
+| pnpm TypeScript workspace | ✅ Yes | Verified via `pnpm run ci`; no npm/npx commands used. |
+| Ports and adapters | ✅ Yes | Domain interfaces are separated from SQLite adapters. |
+| SQLite persistence under `/data` | ✅ Yes | Secret store defaults to `/data/app.key`; migrations create local SQLite schema. DB file opening remains future runtime wiring. |
+| SecretStore masks/refs | ✅ Yes | APIs are not implemented yet, but store returns refs/masks and tests enforce non-leakage in returned refs and persisted ciphertext. |
+| DigestJobStore unique `triggerWindowId` and retries/backoff | ✅ Yes | Unique schema plus store tests cover duplicate enqueue, lease, retry, expired leases, and failed exhaustion. |
+| Transactional migrations before APIs serve | ✅ Yes | `runMigrations()` now wraps migration statements in an explicit transaction/savepoint and rolls back on failure. |
+| Chained PR review budget | ✅ Yes | Scope stayed within PR 2 backend persistence/safety; API, collectors, UI, Docker, and public docs remain out of scope. |
 
 ### Issues Found
 
-**CRITICAL**: None for PR 1 foundation scope.
+**CRITICAL**: None for PR 2 scope.
 
 **WARNING**:
-- Full MVP verification and archive are not ready: Phase 2 through Phase 5 tasks remain unchecked by design.
-- Some DTO groups are verified by schema inspection and aggregate typecheck, but not every DTO has a dedicated behavioral test yet. This is acceptable for PR 1 but should improve as features land.
+- The two-worker lease test exercises the atomic SQLite statement from two connections, but does not prove true concurrent JavaScript interleaving. The implementation uses a single atomic `UPDATE ... RETURNING`, so this remains a test-strength warning rather than a blocker.
+- Lease fencing for stale workers and production observability remain future runtime-orchestration concerns before real scheduler/orchestrator deployment.
 
 **SUGGESTION**:
-- Use `docs/review/pr-1-foundation.md` as Marcos's review entry point before creating or reviewing PR 1.
+- Add runtime metrics/logging around job retries, failed terminal state, and lease reclaim when the scheduler/orchestrator lands.
+- When runtime DB wiring is added, verify migrations run before API/scheduler startup against the real `/data/app.db` path.
+
+### Risks
+
+- Full MVP archive is not ready: Phases 3 through 5 remain intentionally incomplete.
+- Secret storage depends on protecting `/data/app.key`; operational docs and Docker volume handling must call this out before deployment.
+- Future APIs must preserve the current secret boundary by returning only refs/masks and never raw secret values.
+- Future scheduler/orchestrator work must decide whether lease fencing tokens or worker ownership fields are needed before multi-worker production processing.
+
+### Skill Resolution
+
+- `sdd-verify`: Loaded as requested and used for artifact-driven verification, runtime evidence, scoped report, and hybrid persistence requirement. The skill contains an orchestrator gate; no separate subagent primitive was available in this environment, so verification was executed inline under the user’s direct request.
+- `verification-before-completion`: Loaded as requested and used for fresh command execution before making pass/fail claims.
+- Strict TDD: Not active; `openspec/config.yaml` has `strict_tdd: false`.
+
+### Next Recommended
+
+Proceed to PR 2 review/commit preparation if desired. Do not archive the full SDD change yet; continue with Phase 3 only after PR 2 is accepted.
 
 ### Verdict
 
 PASS WITH WARNINGS
 
-PR 1 foundation is ready for review: scoped tasks are complete, boundaries were respected, and `pnpm run ci` passed. Warnings are limited to the intentionally incomplete full-MVP phases and partial DTO-specific behavioral coverage beyond the PR 1 foundation slice.
+PR 2 / Phase 2 backend persistence and safety is verified for its scoped boundary: all scoped tasks are complete, the migration transaction warning is resolved, relevant runtime tests and audit pass, and implementation matches the core persistence/security/job design. Remaining warnings are non-blocking test-strength and future runtime-orchestration hardening items.
