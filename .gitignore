@@ -5,6 +5,7 @@ coverage/
 .idea/
 *.iml
 .atl/
+AGENTS.md
 .env*
 !.env.example
 !.env.template
