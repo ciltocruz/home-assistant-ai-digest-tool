@@ -35,6 +35,7 @@ export function buildRedactedDigestInput(input: BuildDigestInput): RedactedDiges
       redactedEvidence: incident.redactedEvidence.map(redact).slice(0, 10)
     })),
     notes: input.notes.map((note) => ({ ...note, text: redact(note.text).slice(0, 1000) })),
+    unsupportedSignals: input.unsupportedSignals.map((signal) => ({ source: redact(signal.source), reason: redact(signal.reason) })),
     redactionReport: [...report]
   };
 }

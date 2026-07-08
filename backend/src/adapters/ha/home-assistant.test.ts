@@ -97,6 +97,40 @@ describe('Home Assistant collectors and detectors', () => {
     expect(JSON.stringify(incidents)).not.toContain('tiny');
   });
 
+  it('detects real-shape Docker/Core Home Assistant log incidents from sanitized fixtures', async () => {
+    const facts = await new HomeAssistantFactsCollector({
+      apiClient: { async listStates() { return []; } },
+      logReader: {
+        async readLogLines() {
+          return [
+            '2026-07-08 10:15:30.456 ERROR (MainThread) [custom_components.monitor_docker.helpers] Docker container media_downloader is unavailable after 3 retries on docker_host',
+            '2026-07-08 10:15:31.456 WARNING (MainThread) [custom_components.monitor_docker.helpers] Failed to update container ml_worker; retrying in 30 seconds',
+            '2026-07-08 10:16:00.000 WARNING (MainThread) [homeassistant.components.tplink] Config entry docker_router for tplink integration not ready yet; Retrying in background',
+            '2026-07-08 10:16:01.000 ERROR (MainThread) [homeassistant.components.tplink.coordinator] Unexpected error fetching docker_router data',
+            'Traceback (most recent call last):',
+            '  File "/usr/src/homeassistant/homeassistant/helpers/update_coordinator.py", line 380, in _async_refresh',
+            'RuntimeError: Session is closed',
+            '2026-07-08 10:17:00.000 WARNING (MainThread) [homeassistant.runner] Shutdown timeout, cancelling pending tasks'
+          ];
+        }
+      },
+      now: () => now
+    }).collect();
+
+    const incidents = await new HomeAssistantIncidentDetector({ now: () => now }).detect(facts.facts);
+
+    expect(incidents.map((incident) => [incident.type, incident.severity])).toEqual([
+      ['docker', 'warning'],
+      ['docker', 'warning'],
+      ['integration', 'warning'],
+      ['integration', 'warning'],
+      ['system', 'info']
+    ]);
+    expect(JSON.stringify(incidents)).toContain('media_downloader');
+    expect(JSON.stringify(incidents)).toContain('ml_worker');
+    expect(JSON.stringify(incidents)).not.toContain('cisne');
+  });
+
   it('redacts common Home Assistant token key variants from log facts and incidents', async () => {
     const facts = await new HomeAssistantFactsCollector({
       apiClient: { async listStates() { return []; } },

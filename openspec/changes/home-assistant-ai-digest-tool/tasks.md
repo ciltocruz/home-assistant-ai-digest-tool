@@ -55,7 +55,7 @@ Implementation review notes are maintainer-local working artifacts and MUST NOT 
 - [x] 3.2 Implement HA collectors and incident detectors under `backend/src/adapters/ha/`, marking Supervisor-only signals unsupported in Docker/Core.
 - [x] 3.3 Implement fake/OpenAI/Gemini provider adapters and notifier adapters with no live network in tests.
 - [x] 3.4 Add Fastify auth/session/CSRF middleware and protected routes for setup, settings, digest run/history, notes, ignores, notifier test/send.
-- [ ] 3.5 Implement `DigestOrchestrator` transactions so provider/notifier failures preserve incidents and retry state.
+- [x] 3.5 Implement `DigestOrchestrator` transactions so provider/notifier failures preserve incidents and retry state.
 
 ## Phase 4: Frontend
 

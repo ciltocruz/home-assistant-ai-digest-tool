@@ -155,12 +155,16 @@ function detectStateIncident(attributes: HomeAssistantFactAttributes, detectedAt
 function detectLogIncident(attributes: HomeAssistantFactAttributes, factId: string, detectedAt: string): Incident[] {
   const message = attributes.message ?? '';
   const lower = message.toLowerCase();
+  if (!/^\d{4}-\d{2}-\d{2}/.test(message)) return [];
   if (!/(error|failed|warning)/i.test(message)) return [];
+  if (lower.includes('monitor_docker') || lower.includes('docker container')) return [logIncident(factId, 'docker', 'warning', message, detectedAt)];
   if (lower.includes('recorder')) return [logIncident(factId, 'recorder', 'critical', message, detectedAt)];
   if (lower.includes('config_entries') || lower.includes('config entry') || lower.includes('integration')) {
     return [logIncident(factId, 'integration', 'warning', message, detectedAt)];
   }
   if (lower.includes('automation')) return [logIncident(factId, 'automation', 'warning', message, detectedAt)];
+  if (lower.includes('homeassistant.components.')) return [logIncident(factId, 'integration', 'warning', message, detectedAt)];
+  if (lower.includes('homeassistant.runner') || lower.includes('shutdown')) return [logIncident(factId, 'system', 'info', message, detectedAt)];
   return [logIncident(factId, 'log', attributes.level === 'ERROR' ? 'warning' : 'info', message, detectedAt)];
 }
 

@@ -1,0 +1,185 @@
+import { randomUUID } from 'node:crypto';
+import type { DeliveryResult, DigestSummary, PrivacyLevel } from '@ha-digest/shared';
+import type { Collector, UnsupportedSignal } from '../domain/collectors.js';
+import type { IncidentDetector, Incident } from '../domain/detectors.js';
+import type { DigestJob, DigestJobStore } from '../domain/jobs.js';
+import type { Notifier, ResolvedTargetConfig } from '../domain/notifiers.js';
+import type { AIProvider, RedactedDigestInput } from '../domain/providers.js';
+import type { ReportRenderer, RenderedDigest } from '../domain/renderers.js';
+import type { DeliveryStore, IgnoreRuleStore, NoteStore, ReportStore } from '../domain/stores.js';
+import { applyIgnoreRules, buildRedactedDigestInput, prioritizeIncidents } from './incident-processing.js';
+
+export type TransactionBoundary = {
+  run<T>(operation: () => Promise<T>): Promise<T>;
+};
+
+export type DigestRunContextStore = {
+  save(context: {
+    jobId: string;
+    window: { from: string; to: string };
+    incidents: Incident[];
+    unsupportedSignals: UnsupportedSignal[];
+    providerInput: RedactedDigestInput;
+    capturedAt: string;
+  }): Promise<void>;
+};
+
+export type DigestNotifierTarget = ResolvedTargetConfig & { targetRef: string };
+
+export type DigestOrchestratorResult =
+  | { status: 'idle' }
+  | { status: 'completed'; jobId: string; reportId: string }
+  | { status: 'retrying'; jobId: string; stage: 'provider' | 'notifier' };
+
+type DigestOrchestratorOptions = {
+  collectors: Collector[];
+  detectors: IncidentDetector[];
+  provider: AIProvider;
+  renderer: ReportRenderer;
+  notifiers: Notifier[];
+  notifierTargets: DigestNotifierTarget[];
+  reportStore: ReportStore;
+  deliveryStore: DeliveryStore;
+  contextStore: DigestRunContextStore;
+  jobStore: Pick<DigestJobStore, 'leaseNext' | 'complete' | 'retry'>;
+  transaction: TransactionBoundary;
+  ignoreRules?: Pick<IgnoreRuleStore, 'listActive'>;
+  notes?: Pick<NoteStore, 'listWindow'>;
+  privacyLevel: PrivacyLevel;
+  now?: () => string;
+};
+
+export class DigestOrchestrator {
+  private readonly now: () => string;
+
+  constructor(private readonly options: DigestOrchestratorOptions) {
+    this.now = options.now ?? (() => new Date().toISOString());
+  }
+
+  async runNext(): Promise<DigestOrchestratorResult> {
+    const job = await this.options.jobStore.leaseNext();
+    if (!job) return { status: 'idle' };
+
+    const context = await this.buildContext(job);
+    let digest: Awaited<ReturnType<AIProvider['generate']>>;
+    try {
+      digest = await this.options.provider.generate(context.providerInput);
+    } catch {
+      await this.options.transaction.run(async () => {
+        await this.options.contextStore.save(context);
+        await this.options.jobStore.retry(job.id, 'provider failed');
+      });
+      return { status: 'retrying', jobId: job.id, stage: 'provider' };
+    }
+
+    const rendered = await this.options.renderer.render(digest);
+    const reportId = randomUUID();
+    const sentDeliveries: Array<DeliveryResult & { digestId: string }> = [];
+
+    for (const target of this.options.notifierTargets) {
+      try {
+        const notifier = this.findNotifier(target);
+        const delivery = { ...(await notifier.send(rendered, target)), digestId: reportId };
+        if (delivery.status === 'failed') {
+          sentDeliveries.push(this.failedDelivery(reportId, target.targetRef));
+          await this.options.transaction.run(async () => {
+            await this.options.contextStore.save(context);
+            await this.saveReport(reportId, rendered, context, 'failed');
+            for (const sentDelivery of sentDeliveries) await this.options.deliveryStore.record(sentDelivery);
+            await this.options.jobStore.retry(job.id, 'notifier failed');
+          });
+          return { status: 'retrying', jobId: job.id, stage: 'notifier' };
+        }
+        sentDeliveries.push(delivery);
+      } catch {
+        const failedDelivery = this.failedDelivery(reportId, target.targetRef);
+        await this.options.transaction.run(async () => {
+          await this.options.contextStore.save(context);
+          await this.saveReport(reportId, rendered, context, 'failed');
+          for (const delivery of sentDeliveries) await this.options.deliveryStore.record(delivery);
+          await this.options.deliveryStore.record(failedDelivery);
+          await this.options.jobStore.retry(job.id, 'notifier failed');
+        });
+        return { status: 'retrying', jobId: job.id, stage: 'notifier' };
+      }
+    }
+
+    await this.options.transaction.run(async () => {
+      await this.options.contextStore.save(context);
+      await this.saveReport(reportId, rendered, context, this.deliveryStatus(sentDeliveries));
+      for (const delivery of sentDeliveries) await this.options.deliveryStore.record(delivery);
+      await this.options.jobStore.complete(job.id);
+    });
+    return { status: 'completed', jobId: job.id, reportId };
+  }
+
+  private async buildContext(job: DigestJob): Promise<Parameters<DigestRunContextStore['save']>[0]> {
+    const window = parseWindow(job.triggerWindowId, this.now());
+    const collections = await Promise.all(this.options.collectors.map((collector) => collector.collect()));
+    const facts = collections.flatMap((collection) => collection.facts);
+    const unsupportedSignals = collections.flatMap((collection) => collection.unsupportedSignals);
+    const detected = (await Promise.all(this.options.detectors.map((detector) => detector.detect(facts)))).flat();
+    const rules = (await this.options.ignoreRules?.listActive(this.now())) ?? [];
+    const notes = (await this.options.notes?.listWindow(window)) ?? [];
+    const incidents = prioritizeIncidents(applyIgnoreRules(detected, rules, this.now()));
+    const providerInput = buildRedactedDigestInput({
+      window,
+      privacyLevel: this.options.privacyLevel,
+      incidents,
+      entityStats: { factCount: facts.length },
+      notes: notes.map((note) => ({ id: note.id, text: note.text, occurredAt: note.occurredAt })),
+      unsupportedSignals
+    });
+
+    return { jobId: job.id, window, incidents: providerInput.incidents, unsupportedSignals: providerInput.unsupportedSignals, providerInput, capturedAt: this.now() };
+  }
+
+  private findNotifier(target: DigestNotifierTarget): Notifier {
+    const notifier = this.options.notifiers.find((candidate) => candidate.channel === target.channel);
+    if (!notifier) throw new Error('Notifier not configured');
+    return notifier;
+  }
+
+  private async saveReport(
+    id: string,
+    rendered: RenderedDigest,
+    context: Parameters<DigestRunContextStore['save']>[0],
+    deliveryStatus: DigestSummary['deliveryStatus']
+  ): Promise<void> {
+    await this.options.reportStore.save({
+      id,
+      rendered,
+      summary: {
+        id,
+        window: context.window,
+        severityCounts: severityCounts(context.incidents),
+        createdAt: this.now(),
+        deliveryStatus
+      }
+    });
+  }
+
+  private deliveryStatus(deliveries: Array<DeliveryResult & { digestId: string }>): DigestSummary['deliveryStatus'] {
+    if (deliveries.length === 0) return 'skipped';
+    return deliveries.some((delivery) => delivery.status === 'failed') ? 'failed' : 'sent';
+  }
+
+  private failedDelivery(digestId: string, targetRef: string): DeliveryResult & { digestId: string } {
+    return { digestId, status: 'failed', targetRef, errorCode: 'NOTIFIER_FAILED', message: 'Delivery failed.', deliveredAt: undefined };
+  }
+}
+
+function severityCounts(incidents: Incident[]): DigestSummary['severityCounts'] {
+  return incidents.reduce(
+    (counts, incident) => ({ ...counts, [incident.severity]: counts[incident.severity] + 1 }),
+    { critical: 0, warning: 0, info: 0 }
+  );
+}
+
+function parseWindow(triggerWindowId: string, fallbackTo: string): { from: string; to: string } {
+  const match = triggerWindowId.match(/^[^:]+:(\d{4}-.+?Z):(\d{4}-.+Z)$/);
+  if (match?.[1] && match[2]) return { from: match[1], to: match[2] };
+
+  const to = new Date(fallbackTo);
+  return { from: new Date(to.getTime() - 86_400_000).toISOString(), to: to.toISOString() };
+}
