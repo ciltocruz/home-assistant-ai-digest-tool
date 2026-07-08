@@ -7,6 +7,7 @@ export type NotifierHttpRequest = {
   url: string;
   headers: Record<string, string>;
   body: unknown;
+  signal?: AbortSignal;
 };
 
 export type NotifierHttpResponse = {
@@ -19,6 +20,7 @@ export type NotifierHttpClient = (request: NotifierHttpRequest) => Promise<Notif
 type TelegramNotifierOptions = {
   httpClient?: NotifierHttpClient;
   now?: () => string;
+  timeoutMs?: number;
 };
 
 type MarkdownNotifierOptions = {
@@ -30,10 +32,12 @@ export class TelegramNotifier implements Notifier {
   readonly channel = 'telegram';
   private readonly httpClient: NotifierHttpClient;
   private readonly now: () => string;
+  private readonly timeoutMs: number;
 
   constructor(options: TelegramNotifierOptions = {}) {
     this.httpClient = options.httpClient ?? fetchJson;
     this.now = options.now ?? (() => new Date().toISOString());
+    this.timeoutMs = options.timeoutMs ?? 30_000;
   }
 
   async test(target: ResolvedTargetConfig): Promise<TestResult> {
@@ -51,9 +55,10 @@ export class TelegramNotifier implements Notifier {
     const chatId = requiredConfig(target, 'chatId');
     let response: NotifierHttpResponse;
     try {
-      response = await this.httpClient({
+      response = await withTimeout(this.timeoutMs, (signal) => this.httpClient({
         method: 'POST',
         url: `https://api.telegram.org/bot${botToken}/sendMessage`,
+        signal,
         headers: { 'content-type': 'application/json' },
         body: {
           chat_id: chatId,
@@ -61,7 +66,7 @@ export class TelegramNotifier implements Notifier {
           parse_mode: 'MarkdownV2',
           disable_web_page_preview: true
         }
-      });
+      }));
     } catch {
       return {
         status: 'failed',
@@ -86,6 +91,16 @@ export class TelegramNotifier implements Notifier {
     }
 
     return { status: 'sent', targetRef: targetRef(target), deliveredAt: this.now() };
+  }
+}
+
+async function withTimeout<T>(timeoutMs: number, operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await operation(controller.signal);
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -142,7 +157,8 @@ async function fetchJson(request: NotifierHttpRequest): Promise<NotifierHttpResp
   const response = await fetch(request.url, {
     method: request.method,
     headers: request.headers,
-    body: JSON.stringify(request.body)
+    body: JSON.stringify(request.body),
+    signal: request.signal
   });
   return { status: response.status, json: () => response.json() as Promise<unknown> };
 }

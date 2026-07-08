@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import type { DigestSummary, MaskedSettings, NoteCreate, RedactedSettingsDto } from '@ha-digest/shared';
+import { SetupValidationResponseSchema, type DigestSummary, type MaskedSettings, type NoteCreate, type RedactedSettingsDto } from '@ha-digest/shared';
 import { createApp, type BackendApiServices } from './app.js';
 
 const NOW = '2026-07-08T10:00:00.000Z';
@@ -148,6 +148,7 @@ describe('backend API auth, CSRF, and protected routes', () => {
         notifiers: [{ channel: 'telegram', targetRef: 'secret:telegram', secretMask: '••••-gram' }]
       }
     });
+    expect(() => SetupValidationResponseSchema.parse(response.json())).not.toThrow();
   });
 
   it('registers protected API routes using injected stores and fake notifier services', async () => {

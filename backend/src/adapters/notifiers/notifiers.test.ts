@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RenderedDigest } from '../../domain/renderers.js';
 import { MarkdownNotifier, TelegramNotifier } from './notifiers.js';
 
@@ -8,6 +8,10 @@ const digest: RenderedDigest = {
 };
 
 describe('notifier adapters', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('stores markdown reports through an injected sink', async () => {
     const writes: Array<{ label: string; body: string }> = [];
     const notifier = new MarkdownNotifier({
@@ -108,6 +112,28 @@ describe('notifier adapters', () => {
       message: 'Telegram delivery failed before receiving a response.'
     });
   });
+
+  it('aborts Telegram requests after the configured timeout through the injected HTTP boundary', async () => {
+    vi.useFakeTimers();
+    const notifier = new TelegramNotifier({
+      now: () => '2026-07-02T00:00:00.000Z',
+      timeoutMs: 25,
+      httpClient: async (request) =>
+        new Promise((_, reject) => {
+          request.signal?.addEventListener('abort', () => reject(new Error(`aborted ${request.url}`)), { once: true });
+        })
+    });
+
+    const result = notifier.send(digest, { channel: 'telegram', label: 'Telegram', config: { botToken: '123456:test-secret-token', chatId: '4242' } });
+    await vi.advanceTimersByTimeAsync(25);
+
+    await expect(result).resolves.toEqual({
+      status: 'failed',
+      targetRef: 'telegram:Telegram',
+      errorCode: 'TELEGRAM_REQUEST_FAILED',
+      message: 'Telegram delivery failed before receiving a response.'
+    });
+  });
 });
 
-type HttpRequest = { url: string; headers?: Record<string, string>; body?: unknown };
+type HttpRequest = { url: string; headers?: Record<string, string>; body?: unknown; signal?: AbortSignal };

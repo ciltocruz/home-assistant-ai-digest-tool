@@ -124,7 +124,8 @@ export type MaskedSettings = z.infer<typeof MaskedSettingsSchema>;
 
 export const SetupValidationResponseSchema = z
   .object({
-    settings: MaskedSettingsSchema
+    settings: MaskedSettingsSchema,
+    csrfToken: z.string().min(1)
   })
   .strict();
 export type SetupValidationResponse = z.infer<typeof SetupValidationResponseSchema>;

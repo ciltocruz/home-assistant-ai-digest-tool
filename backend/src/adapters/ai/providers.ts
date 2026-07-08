@@ -5,6 +5,7 @@ export type ProviderHttpRequest = {
   url: string;
   headers: Record<string, string>;
   body: unknown;
+  signal?: AbortSignal;
 };
 
 export type ProviderHttpResponse = {
@@ -18,12 +19,14 @@ type ProviderOptions = {
   apiKey: string;
   httpClient?: ProviderHttpClient;
   model?: string;
+  timeoutMs?: number;
 };
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
 const DEFAULT_GEMINI_MODEL = 'gemini-1.5-flash';
+const DEFAULT_PROVIDER_TIMEOUT_MS = 30_000;
 
 export class FakeAIProvider implements AIProvider {
   readonly id = 'fake';
@@ -46,18 +49,21 @@ export class OpenAIProvider implements AIProvider {
   readonly id = 'openai';
   private readonly httpClient: ProviderHttpClient;
   private readonly model: string;
+  private readonly timeoutMs: number;
 
   constructor(private readonly options: ProviderOptions) {
     this.httpClient = options.httpClient ?? fetchJson;
     this.model = options.model ?? DEFAULT_OPENAI_MODEL;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS;
   }
 
   async generate(input: RedactedDigestInput): Promise<StructuredDigest> {
     const response = await safeProviderRequest(
       'OpenAI',
-      this.httpClient({
+      withTimeout(this.timeoutMs, (signal) => this.httpClient({
         method: 'POST',
         url: OPENAI_URL,
+        signal,
         headers: {
           authorization: `Bearer ${this.options.apiKey}`,
           'content-type': 'application/json'
@@ -70,7 +76,7 @@ export class OpenAIProvider implements AIProvider {
             { role: 'user', content: redactedPrompt(input) }
           ]
         }
-      })
+      }))
     );
 
     if (response.status < 200 || response.status >= 300) throw new Error(`OpenAI provider request failed with status ${response.status}`);
@@ -83,18 +89,21 @@ export class GeminiProvider implements AIProvider {
   readonly id = 'gemini';
   private readonly httpClient: ProviderHttpClient;
   private readonly model: string;
+  private readonly timeoutMs: number;
 
   constructor(private readonly options: ProviderOptions) {
     this.httpClient = options.httpClient ?? fetchJson;
     this.model = options.model ?? DEFAULT_GEMINI_MODEL;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS;
   }
 
   async generate(input: RedactedDigestInput): Promise<StructuredDigest> {
     const response = await safeProviderRequest(
       'Gemini',
-      this.httpClient({
+      withTimeout(this.timeoutMs, (signal) => this.httpClient({
         method: 'POST',
         url: `${GEMINI_URL}/${encodeURIComponent(this.model)}:generateContent?key=${encodeURIComponent(this.options.apiKey)}`,
+        signal,
         headers: { 'content-type': 'application/json' },
         body: {
           contents: [
@@ -105,7 +114,7 @@ export class GeminiProvider implements AIProvider {
           ],
           generationConfig: { responseMimeType: 'application/json' }
         }
-      })
+      }))
     );
 
     if (response.status < 200 || response.status >= 300) throw new Error(`Gemini provider request failed with status ${response.status}`);
@@ -119,6 +128,16 @@ async function safeProviderRequest(provider: string, request: Promise<ProviderHt
     return await request;
   } catch {
     throw new Error(`${provider} provider request failed before receiving a response`);
+  }
+}
+
+async function withTimeout<T>(timeoutMs: number, operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await operation(controller.signal);
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -190,7 +209,8 @@ async function fetchJson(request: ProviderHttpRequest): Promise<ProviderHttpResp
   const response = await fetch(request.url, {
     method: request.method,
     headers: request.headers,
-    body: JSON.stringify(request.body)
+    body: JSON.stringify(request.body),
+    signal: request.signal
   });
   return { status: response.status, json: () => response.json() as Promise<unknown> };
 }

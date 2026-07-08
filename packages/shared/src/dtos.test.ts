@@ -29,6 +29,7 @@ describe('shared DTOs', () => {
 
   it('rejects raw secrets in setup validation responses', () => {
     const parsed = SetupValidationResponseSchema.parse({
+      csrfToken: 'csrf-session-token',
       settings: {
         haUrl: 'https://home-assistant.local:8123',
         ai: {
@@ -52,6 +53,23 @@ describe('shared DTOs', () => {
     expect(JSON.stringify(parsed)).not.toContain('botToken');
     expect(JSON.stringify(parsed)).not.toContain('haToken');
     expect(JSON.stringify(parsed)).not.toContain('aiKey');
+  });
+
+  it('accepts setup validation responses that bootstrap an authenticated CSRF token', () => {
+    const parsed = SetupValidationResponseSchema.parse({
+      csrfToken: 'csrf-session-token',
+      settings: {
+        haUrl: 'https://home-assistant.local:8123',
+        ai: {
+          provider: 'openai',
+          keyMask: 'sk-...abcd',
+          ref: 'secret_ai_openai'
+        },
+        notifiers: []
+      }
+    });
+
+    expect(parsed.csrfToken).toBe('csrf-session-token');
   });
 
   it('keeps settings redacted with secret refs and masks', () => {

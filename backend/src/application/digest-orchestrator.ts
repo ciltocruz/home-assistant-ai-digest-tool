@@ -29,7 +29,15 @@ export type DigestNotifierTarget = ResolvedTargetConfig & { targetRef: string };
 export type DigestOrchestratorResult =
   | { status: 'idle' }
   | { status: 'completed'; jobId: string; reportId: string }
-  | { status: 'retrying'; jobId: string; stage: 'provider' | 'notifier' };
+  | { status: 'retrying'; jobId: string; stage: RuntimeFailureStage };
+
+export type RuntimeFailureStage = 'collector' | 'detector' | 'provider' | 'renderer' | 'notifier';
+
+export type DigestOperationalFailureEvent = {
+  jobId: string;
+  stage: RuntimeFailureStage;
+  errorName: string;
+};
 
 type DigestOrchestratorOptions = {
   collectors: Collector[];
@@ -47,6 +55,8 @@ type DigestOrchestratorOptions = {
   notes?: Pick<NoteStore, 'listWindow'>;
   privacyLevel: PrivacyLevel;
   now?: () => string;
+  /** Receives secret-safe operational failure events. Do not include raw error messages here. */
+  failureReporter?: (event: DigestOperationalFailureEvent) => void;
 };
 
 export class DigestOrchestrator {
@@ -60,11 +70,19 @@ export class DigestOrchestrator {
     const job = await this.options.jobStore.leaseNext();
     if (!job) return { status: 'idle' };
 
-    const context = await this.buildContext(job);
+    let context: Parameters<DigestRunContextStore['save']>[0];
+    try {
+      context = await this.buildContext(job);
+    } catch (error) {
+      const stage = error instanceof DigestStageFailure ? error.stage : 'collector';
+      return this.retryWithoutContext(job, stage, error);
+    }
+
     let digest: Awaited<ReturnType<AIProvider['generate']>>;
     try {
       digest = await this.options.provider.generate(context.providerInput);
-    } catch {
+    } catch (error) {
+      this.reportFailure(job.id, 'provider', error);
       await this.options.transaction.run(async () => {
         await this.options.contextStore.save(context);
         await this.options.jobStore.retry(job.id, 'provider failed');
@@ -72,7 +90,18 @@ export class DigestOrchestrator {
       return { status: 'retrying', jobId: job.id, stage: 'provider' };
     }
 
-    const rendered = await this.options.renderer.render(digest);
+    let rendered: RenderedDigest;
+    try {
+      rendered = await this.options.renderer.render(digest);
+    } catch (error) {
+      this.reportFailure(job.id, 'renderer', error);
+      await this.options.transaction.run(async () => {
+        await this.options.contextStore.save(context);
+        await this.options.jobStore.retry(job.id, 'renderer failed');
+      });
+      return { status: 'retrying', jobId: job.id, stage: 'renderer' };
+    }
+
     const reportId = randomUUID();
     const sentDeliveries: Array<DeliveryResult & { digestId: string }> = [];
 
@@ -81,6 +110,7 @@ export class DigestOrchestrator {
         const notifier = this.findNotifier(target);
         const delivery = { ...(await notifier.send(rendered, target)), digestId: reportId };
         if (delivery.status === 'failed') {
+          this.reportFailure(job.id, 'notifier', new DeliveryFailureError());
           sentDeliveries.push(this.failedDelivery(reportId, target.targetRef));
           await this.options.transaction.run(async () => {
             await this.options.contextStore.save(context);
@@ -91,7 +121,8 @@ export class DigestOrchestrator {
           return { status: 'retrying', jobId: job.id, stage: 'notifier' };
         }
         sentDeliveries.push(delivery);
-      } catch {
+      } catch (error) {
+        this.reportFailure(job.id, 'notifier', error);
         const failedDelivery = this.failedDelivery(reportId, target.targetRef);
         await this.options.transaction.run(async () => {
           await this.options.contextStore.save(context);
@@ -115,10 +146,20 @@ export class DigestOrchestrator {
 
   private async buildContext(job: DigestJob): Promise<Parameters<DigestRunContextStore['save']>[0]> {
     const window = parseWindow(job.triggerWindowId, this.now());
-    const collections = await Promise.all(this.options.collectors.map((collector) => collector.collect()));
+    let collections: Awaited<ReturnType<Collector['collect']>>[];
+    try {
+      collections = await Promise.all(this.options.collectors.map((collector) => collector.collect()));
+    } catch (error) {
+      throw new DigestStageFailure('collector', error);
+    }
     const facts = collections.flatMap((collection) => collection.facts);
     const unsupportedSignals = collections.flatMap((collection) => collection.unsupportedSignals);
-    const detected = (await Promise.all(this.options.detectors.map((detector) => detector.detect(facts)))).flat();
+    let detected: Incident[];
+    try {
+      detected = (await Promise.all(this.options.detectors.map((detector) => detector.detect(facts)))).flat();
+    } catch (error) {
+      throw new DigestStageFailure('detector', error);
+    }
     const rules = (await this.options.ignoreRules?.listActive(this.now())) ?? [];
     const notes = (await this.options.notes?.listWindow(window)) ?? [];
     const incidents = prioritizeIncidents(applyIgnoreRules(detected, rules, this.now()));
@@ -167,6 +208,40 @@ export class DigestOrchestrator {
   private failedDelivery(digestId: string, targetRef: string): DeliveryResult & { digestId: string } {
     return { digestId, status: 'failed', targetRef, errorCode: 'NOTIFIER_FAILED', message: 'Delivery failed.', deliveredAt: undefined };
   }
+
+  private async retryWithoutContext(job: DigestJob, stage: RuntimeFailureStage, error: unknown): Promise<DigestOrchestratorResult> {
+    this.reportFailure(job.id, stage, error instanceof DigestStageFailure ? error.cause : error);
+    await this.options.transaction.run(async () => {
+      await this.options.jobStore.retry(job.id, `${stage} failed`);
+    });
+    return { status: 'retrying', jobId: job.id, stage };
+  }
+
+  private reportFailure(jobId: string, stage: RuntimeFailureStage, error: unknown): void {
+    try {
+      this.options.failureReporter?.({ jobId, stage, errorName: getErrorName(error) });
+    } catch {
+      // Never let telemetry/reporting failures change the digest retry path.
+    }
+  }
+}
+
+class DigestStageFailure extends Error {
+  constructor(readonly stage: RuntimeFailureStage, readonly cause: unknown) {
+    super(`${stage} failed`);
+    this.name = 'DigestStageFailure';
+  }
+}
+
+class DeliveryFailureError extends Error {
+  constructor() {
+    super('delivery failed');
+    this.name = 'DeliveryFailure';
+  }
+}
+
+function getErrorName(error: unknown): string {
+  return error instanceof Error && error.name ? error.name : 'Error';
 }
 
 function severityCounts(incidents: Incident[]): DigestSummary['severityCounts'] {

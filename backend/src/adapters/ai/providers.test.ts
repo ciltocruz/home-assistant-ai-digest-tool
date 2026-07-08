@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RedactedDigestInput } from '../../domain/providers.js';
 import { FakeAIProvider, GeminiProvider, OpenAIProvider } from './providers.js';
 
@@ -23,6 +23,10 @@ const input: RedactedDigestInput = {
 };
 
 describe('AI provider adapters', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('returns deterministic fake digests for tests without network', async () => {
     const provider = new FakeAIProvider();
 
@@ -130,9 +134,49 @@ describe('AI provider adapters', () => {
     await expect(provider.generate(input)).rejects.toThrow('Gemini provider request failed before receiving a response');
     await expect(provider.generate(input)).rejects.not.toThrow('gemini-test-secret');
   });
+
+  it('aborts OpenAI requests after the configured timeout through the injected HTTP boundary', async () => {
+    vi.useFakeTimers();
+    const provider = new OpenAIProvider({
+      apiKey: 'sk-test-openai-secret',
+      timeoutMs: 25,
+      httpClient: async (request) =>
+        new Promise((_, reject) => {
+          request.signal?.addEventListener('abort', () => reject(new Error('aborted sk-test-openai-secret')), { once: true });
+        })
+    });
+
+    const result = provider.generate(input).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(25);
+
+    const error = await result;
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe('OpenAI provider request failed before receiving a response');
+    expect((error as Error).message).not.toContain('sk-test-openai-secret');
+  });
+
+  it('aborts Gemini requests after the configured timeout through the injected HTTP boundary', async () => {
+    vi.useFakeTimers();
+    const provider = new GeminiProvider({
+      apiKey: 'gemini-test-secret',
+      timeoutMs: 25,
+      httpClient: async (request) =>
+        new Promise((_, reject) => {
+          request.signal?.addEventListener('abort', () => reject(new Error('aborted gemini-test-secret')), { once: true });
+        })
+    });
+
+    const result = provider.generate(input).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(25);
+
+    const error = await result;
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe('Gemini provider request failed before receiving a response');
+    expect((error as Error).message).not.toContain('gemini-test-secret');
+  });
 });
 
-type HttpRequest = { url: string; headers: Record<string, string>; body?: unknown };
+type HttpRequest = { url: string; headers: Record<string, string>; body?: unknown; signal?: AbortSignal };
 
 const openAiResponse = {
   choices: [

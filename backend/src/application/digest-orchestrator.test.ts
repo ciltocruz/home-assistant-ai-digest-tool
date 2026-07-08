@@ -48,6 +48,58 @@ describe('DigestOrchestrator', () => {
     expect(jobStore.retried).toEqual([{ id: 'notifier-failure', reason: 'notifier failed' }]);
   });
 
+  it('retries and reports a redacted operational event when a collector fails', async () => {
+    const jobStore = new FakeJobStore(job('collector-failure'));
+    const operationalEvents: unknown[] = [];
+    const orchestrator = createOrchestrator({
+      jobStore,
+      collectors: [{ id: 'collector', collect: async () => { throw new Error('collector token=synthetic-secret failed'); } }],
+      failureReporter: (event) => operationalEvents.push(event)
+    });
+
+    await expect(orchestrator.runNext()).resolves.toEqual({ status: 'retrying', jobId: 'collector-failure', stage: 'collector' });
+
+    expect(jobStore.retried).toEqual([{ id: 'collector-failure', reason: 'collector failed' }]);
+    expect(JSON.stringify(operationalEvents)).not.toContain('synthetic-secret');
+    expect(operationalEvents).toEqual([expect.objectContaining({ jobId: 'collector-failure', stage: 'collector', errorName: 'Error' })]);
+  });
+
+  it('retries and reports a redacted operational event when a detector fails', async () => {
+    const jobStore = new FakeJobStore(job('detector-failure'));
+    const operationalEvents: unknown[] = [];
+    const orchestrator = createOrchestrator({
+      jobStore,
+      detectors: [{ id: 'detector', detect: async () => { throw new Error('detector token=synthetic-secret failed'); } }],
+      failureReporter: (event) => operationalEvents.push(event)
+    });
+
+    await expect(orchestrator.runNext()).resolves.toEqual({ status: 'retrying', jobId: 'detector-failure', stage: 'detector' });
+
+    expect(jobStore.retried).toEqual([{ id: 'detector-failure', reason: 'detector failed' }]);
+    expect(JSON.stringify(operationalEvents)).not.toContain('synthetic-secret');
+    expect(operationalEvents).toEqual([expect.objectContaining({ jobId: 'detector-failure', stage: 'detector', errorName: 'Error' })]);
+  });
+
+  it('preserves context, retries, and reports a redacted operational event when rendering fails', async () => {
+    const contextStore = new FakeContextStore();
+    const jobStore = new FakeJobStore(job('renderer-failure'));
+    const operationalEvents: unknown[] = [];
+    const orchestrator = createOrchestrator({
+      contextStore,
+      jobStore,
+      renderer: { render: async () => { throw new Error('renderer token=synthetic-secret failed'); } },
+      failureReporter: (event) => operationalEvents.push(event)
+    });
+
+    await expect(orchestrator.runNext()).resolves.toEqual({ status: 'retrying', jobId: 'renderer-failure', stage: 'renderer' });
+
+    expect(contextStore.saved).toHaveLength(1);
+    expect(contextStore.saved[0]?.incidents.map((incident) => incident.id)).toEqual(['incident-1']);
+    expect(jobStore.retried).toEqual([{ id: 'renderer-failure', reason: 'renderer failed' }]);
+    expect(JSON.stringify(operationalEvents)).not.toContain('synthetic-secret');
+    expect(operationalEvents).toEqual([expect.objectContaining({ jobId: 'renderer-failure', stage: 'renderer', errorName: 'Error' })]);
+  });
+
   it('treats failed delivery results as notifier failures without persisting adapter secrets', async () => {
     const reportStore = new FakeReportStore();
     const deliveryStore = new FakeDeliveryStore();
