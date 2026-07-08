@@ -52,7 +52,7 @@ Implementation review notes are maintainer-local working artifacts and MUST NOT 
 ## Phase 3: Backend Behavior and API
 
 - [x] 3.1 Implement redaction, safe markdown rendering, ignore rules, priority, battery prediction, and fixture tests for malicious/empty inputs.
-- [ ] 3.2 Implement HA collectors and incident detectors under `backend/src/adapters/ha/`, marking Supervisor-only signals unsupported in Docker/Core.
+- [x] 3.2 Implement HA collectors and incident detectors under `backend/src/adapters/ha/`, marking Supervisor-only signals unsupported in Docker/Core.
 - [ ] 3.3 Implement fake/OpenAI/Gemini provider adapters and notifier adapters with no live network in tests.
 - [ ] 3.4 Add Fastify auth/session/CSRF middleware and protected routes for setup, settings, digest run/history, notes, ignores, notifier test/send.
 - [ ] 3.5 Implement `DigestOrchestrator` transactions so provider/notifier failures preserve incidents and retry state.
