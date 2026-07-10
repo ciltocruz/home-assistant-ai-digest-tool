@@ -1,0 +1,65 @@
+{
+  "hero": {
+    "eyebrow": "Resumen de incidencias Docker-first",
+    "title": "Home Assistant AI Digest",
+    "copy": "Convierte avisos de Home Assistant, entidades no disponibles, sensores obsoletos y fallos de entrega en un resumen privado diario con acciones claras.",
+    "privacy": "Los secretos se envían solo al backend local y se muestran enmascarados tras la validación."
+  },
+  "onboarding": {
+    "eyebrow": "Primer arranque",
+    "title": "Configuración guiada",
+    "steps": {
+      "connectHomeAssistant": "Conecta Home Assistant",
+      "chooseAiProvider": "Elige proveedor de IA",
+      "setPrivacyLevel": "Define el nivel de privacidad",
+      "runFirstDigest": "Lanza el primer informe"
+    },
+    "fields": {
+      "homeAssistantUrl": "URL de Home Assistant",
+      "aiProvider": "Proveedor de IA",
+      "notifier": "Canal de aviso"
+    },
+    "notifiers": {
+      "telegram": "Telegram",
+      "markdown": "Informe Markdown"
+    },
+    "actions": {
+      "validateSetup": "Validar configuración"
+    }
+  },
+  "dashboard": {
+    "ariaLabel": "Vista general del panel",
+    "manualDigest": {
+      "eyebrow": "Control del informe",
+      "title": "Informe manual",
+      "copy": "Lanza ahora un análisis con datos sensibles enmascarados y deja el informe en cola sin esperar al próximo horario.",
+      "action": "Lanzar informe"
+    },
+    "history": {
+      "eyebrow": "Historial",
+      "title": "Aún no hay informes",
+      "copy": "Tu historial local mostrará recuentos por severidad, estado de entrega y ventanas analizadas tras la primera ejecución."
+    },
+    "notes": {
+      "eyebrow": "Contexto del operador",
+      "title": "Añadir una nota",
+      "copy": "Adjunta mantenimientos o comportamientos extraños para que el próximo informe explique lo ocurrido con contexto."
+    },
+    "ignoredWarnings": {
+      "eyebrow": "Control de ruido",
+      "title": "Avisos ignorados",
+      "copy": "Mantén entidades ruidosas conocidas fuera de futuros informes sin borrar el historial de reglas."
+    },
+    "telegramTest": {
+      "eyebrow": "Prueba de entrega",
+      "title": "Envío de prueba por Telegram",
+      "copy": "Envía un mensaje seguro de prueba con la referencia de aviso guardada. Los tokens permanecen enmascarados.",
+      "action": "Enviar prueba"
+    },
+    "settings": {
+      "eyebrow": "Ajustes",
+      "title": "Horario diario",
+      "copy": "Privacidad equilibrada, retención de 30 días y ventanas de resumen diario y semanal listas para ajustar."
+    }
+  }
+}

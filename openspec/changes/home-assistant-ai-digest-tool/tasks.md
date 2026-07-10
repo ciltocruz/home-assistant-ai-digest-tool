@@ -59,7 +59,7 @@ Implementation review notes are maintainer-local working artifacts and MUST NOT 
 
 ## Phase 4: Frontend
 
-- [ ] 4.1 Create React/Vite app in `frontend/src/` with API client consuming shared DTOs and redacted error handling.
+- [x] 4.1 Create React/Vite app in `frontend/src/` with API client consuming shared DTOs and redacted error handling.
 - [ ] 4.2 Build onboarding flow for HA, provider, notifier, schedule, privacy, validation, and first digest.
 - [ ] 4.3 Build dashboard, history empty/list states, notes, ignored warnings, settings, and Telegram test-send UI.
 
