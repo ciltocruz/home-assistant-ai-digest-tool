@@ -1,70 +1,76 @@
 import './styles.css';
+import { t } from './i18n/index.js';
 
-const setupSteps = ['Connect Home Assistant', 'Choose AI provider', 'Set privacy level', 'Run first digest'];
+const setupStepKeys = [
+  'onboarding.steps.connectHomeAssistant',
+  'onboarding.steps.chooseAiProvider',
+  'onboarding.steps.setPrivacyLevel',
+  'onboarding.steps.runFirstDigest',
+] as const;
 
 export function App() {
   return (
     <main className="app-shell">
       <section className="hero-panel" aria-labelledby="product-title">
-        <p className="eyebrow">Docker-first incident briefing</p>
-        <h1 id="product-title">Home Assistant AI Digest</h1>
-        <p className="hero-copy">Turn Home Assistant warnings, unavailable entities, stale sensors, and delivery failures into a private daily briefing you can act on.</p>
-        <div className="privacy-card">Secrets are sent only to the local backend and displayed as masks after validation.</div>
+        <p className="eyebrow">{t('hero.eyebrow')}</p>
+        <h1 id="product-title">{t('hero.title')}</h1>
+        <p className="hero-copy">{t('hero.copy')}</p>
+        <div className="privacy-card">{t('hero.privacy')}</div>
       </section>
 
       <section className="panel" aria-labelledby="onboarding-title">
         <div className="section-heading">
-          <p className="eyebrow">First run</p>
-          <h2 id="onboarding-title">Guided onboarding</h2>
+          <p className="eyebrow">{t('onboarding.eyebrow')}</p>
+          <h2 id="onboarding-title">{t('onboarding.title')}</h2>
         </div>
         <ol className="setup-rail">
-          {setupSteps.map((step) => <li key={step}>{step}</li>)}
+          {setupStepKeys.map((key) => <li key={key}>{t(key)}</li>)}
         </ol>
         <form className="setup-grid">
-          <label>Home Assistant URL<input placeholder="http://homeassistant.local:8123" /></label>
-          <label>AI provider<select defaultValue="gemini"><option value="gemini">Gemini</option><option value="openai">OpenAI</option></select></label>
-          <label>Notifier<select defaultValue="telegram"><option value="telegram">Telegram</option><option value="markdown">Markdown report</option></select></label>
-          <button type="button">Validate setup</button>
+          <label>{t('onboarding.fields.homeAssistantUrl')}<input placeholder="http://homeassistant.local:8123" /></label>
+          <label>{t('onboarding.fields.aiProvider')}<select defaultValue="gemini"><option value="gemini">Gemini</option><option value="openai">OpenAI</option></select></label>
+          <label>{t('onboarding.fields.notifier')}<select defaultValue="telegram"><option value="telegram">{t('onboarding.notifiers.telegram')}</option><option value="markdown">{t('onboarding.notifiers.markdown')}</option></select></label>
+          <button type="button">{t('onboarding.actions.validateSetup')}</button>
         </form>
       </section>
 
-      <section className="dashboard-grid" aria-label="Dashboard overview">
+      <section className="dashboard-grid" aria-label={t('dashboard.ariaLabel')}>
         <article className="panel action-panel">
-          <p className="eyebrow">Digest control</p>
-          <h2>Manual digest</h2>
-          <p>Run a redacted scan now and queue the report without waiting for the next schedule.</p>
-          <button type="button">Run digest</button>
+          <p className="eyebrow">{t('dashboard.manualDigest.eyebrow')}</p>
+          <h2>{t('dashboard.manualDigest.title')}</h2>
+          <p>{t('dashboard.manualDigest.copy')}</p>
+          <button type="button">{t('dashboard.manualDigest.action')}</button>
         </article>
 
         <article className="panel">
-          <p className="eyebrow">History</p>
-          <h2>No digests yet</h2>
-          <p>Your local history will show severity counts, delivery status, and report windows after the first run.</p>
+          <p className="eyebrow">{t('dashboard.history.eyebrow')}</p>
+          <h2>{t('dashboard.history.title')}</h2>
+          <p>{t('dashboard.history.copy')}</p>
         </article>
 
         <article className="panel">
-          <p className="eyebrow">Operator context</p>
-          <h2>Add a note</h2>
-          <p>Attach maintenance windows or weird behavior so the next digest can explain what happened in context.</p>
+          <p className="eyebrow">{t('dashboard.notes.eyebrow')}</p>
+          <h2>{t('dashboard.notes.title')}</h2>
+          <p>{t('dashboard.notes.copy')}</p>
         </article>
 
         <article className="panel">
-          <p className="eyebrow">Noise control</p>
-          <h2>Ignored warnings</h2>
-          <p>Keep known noisy entities out of future digests without deleting the rule history.</p>
+          <p className="eyebrow">{t('dashboard.ignoredWarnings.eyebrow')}</p>
+          <h2>{t('dashboard.ignoredWarnings.title')}</h2>
+          <p>{t('dashboard.ignoredWarnings.copy')}</p>
         </article>
 
         <article className="panel">
-          <p className="eyebrow">Delivery check</p>
-          <h2>Telegram test-send</h2>
-          <p>Send a safe test message through the stored notifier reference. Tokens stay masked.</p>
-          <button type="button">Send test</button>
+          <p className="eyebrow">{t('dashboard.telegramTest.eyebrow')}</p>
+          <h2>{t('dashboard.telegramTest.title')}</h2>
+          <p>{t('dashboard.telegramTest.copy')}</p>
+          <button type="button">{t('dashboard.telegramTest.action')}</button>
         </article>
 
         <article className="panel">
-          <p className="eyebrow">Settings</p>
-          <h2>Daily schedule</h2>
-          <p>Balanced privacy, 30-day retention, and daily plus weekly summary windows are ready to tune.</p>
+          <p className="eyebrow">{t('dashboard.settings.eyebrow')}</p>
+          <h2>{t('dashboard.settings.title')}</h2>
+          <p>{t('dashboard.settings.copy')}</p>
         </article>
       </section>
     </main>

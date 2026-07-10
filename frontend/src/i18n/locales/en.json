@@ -1,0 +1,65 @@
+{
+  "hero": {
+    "eyebrow": "Docker-first incident briefing",
+    "title": "Home Assistant AI Digest",
+    "copy": "Turn Home Assistant warnings, unavailable entities, stale sensors, and delivery failures into a private daily briefing you can act on.",
+    "privacy": "Secrets are sent only to the local backend and displayed as masks after validation."
+  },
+  "onboarding": {
+    "eyebrow": "First run",
+    "title": "Guided onboarding",
+    "steps": {
+      "connectHomeAssistant": "Connect Home Assistant",
+      "chooseAiProvider": "Choose AI provider",
+      "setPrivacyLevel": "Set privacy level",
+      "runFirstDigest": "Run first digest"
+    },
+    "fields": {
+      "homeAssistantUrl": "Home Assistant URL",
+      "aiProvider": "AI provider",
+      "notifier": "Notifier"
+    },
+    "notifiers": {
+      "telegram": "Telegram",
+      "markdown": "Markdown report"
+    },
+    "actions": {
+      "validateSetup": "Validate setup"
+    }
+  },
+  "dashboard": {
+    "ariaLabel": "Dashboard overview",
+    "manualDigest": {
+      "eyebrow": "Digest control",
+      "title": "Manual digest",
+      "copy": "Run a scan with sensitive data masked now and queue the report without waiting for the next schedule.",
+      "action": "Run digest"
+    },
+    "history": {
+      "eyebrow": "History",
+      "title": "No digests yet",
+      "copy": "Your local history will show severity counts, delivery status, and report windows after the first run."
+    },
+    "notes": {
+      "eyebrow": "Operator context",
+      "title": "Add a note",
+      "copy": "Attach maintenance windows or weird behavior so the next digest can explain what happened in context."
+    },
+    "ignoredWarnings": {
+      "eyebrow": "Noise control",
+      "title": "Ignored warnings",
+      "copy": "Keep known noisy entities out of future digests without deleting the rule history."
+    },
+    "telegramTest": {
+      "eyebrow": "Delivery check",
+      "title": "Telegram test-send",
+      "copy": "Send a safe test message through the stored notifier reference. Tokens stay masked.",
+      "action": "Send test"
+    },
+    "settings": {
+      "eyebrow": "Settings",
+      "title": "Daily schedule",
+      "copy": "Balanced privacy, 30-day retention, and daily plus weekly summary windows are ready to tune."
+    }
+  }
+}
