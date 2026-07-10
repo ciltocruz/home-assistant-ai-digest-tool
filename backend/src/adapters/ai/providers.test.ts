@@ -1,0 +1,211 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { RedactedDigestInput } from '../../domain/providers.js';
+import { FakeAIProvider, GeminiProvider, OpenAIProvider } from './providers.js';
+
+const input: RedactedDigestInput = {
+  window: { from: '2026-07-01T00:00:00.000Z', to: '2026-07-02T00:00:00.000Z' },
+  privacyLevel: 'balanced',
+  incidents: [
+    {
+      id: 'ha:entity:sensor.kitchen:unavailable',
+      type: 'entity',
+      severity: 'warning',
+      area: 'Kitchen',
+      summary: 'sensor.kitchen is unavailable',
+      redactedEvidence: ['state=unavailable', 'token=[REDACTED]'],
+      detectedAt: '2026-07-02T00:00:00.000Z'
+    }
+  ],
+  entityStats: { unavailableCount: 1 },
+  notes: [{ id: 'note-1', text: 'Checked router; no secret included', occurredAt: '2026-07-01T12:00:00.000Z' }],
+  unsupportedSignals: [{ source: 'supervisor', reason: 'Unsupported in Docker/Core mode' }],
+  redactionReport: ['redacted:token']
+};
+
+describe('AI provider adapters', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('returns deterministic fake digests for tests without network', async () => {
+    const provider = new FakeAIProvider();
+
+    await expect(provider.generate(input)).resolves.toEqual({
+      severity: 'warning',
+      summary: '1 incident needs attention for 2026-07-01T00:00:00.000Z → 2026-07-02T00:00:00.000Z.',
+      attentionItems: [
+        {
+          title: 'sensor.kitchen is unavailable',
+          severity: 'warning',
+          detail: 'state=unavailable; token=[REDACTED]'
+        }
+      ]
+    });
+  });
+
+  it('posts OpenAI-compatible redacted payloads through an injected HTTP client', async () => {
+    const requests: HttpRequest[] = [];
+    const provider = new OpenAIProvider({
+      apiKey: 'sk-test-openai-secret',
+      httpClient: async (request) => {
+        requests.push(request);
+        return { status: 200, json: async () => openAiResponse };
+      }
+    });
+
+    const digest = await provider.generate(input);
+
+    expect(digest.summary).toBe('Kitchen sensor is unavailable.');
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe('https://api.openai.com/v1/chat/completions');
+    expect(requests[0]?.headers.authorization).toBe('Bearer sk-test-openai-secret');
+    const body = JSON.stringify(requests[0]?.body);
+    expect(body).toContain('sensor.kitchen is unavailable');
+    expect(body).toContain('[REDACTED]');
+    expect(body).not.toContain('sk-test-openai-secret');
+  });
+
+  it('posts Gemini-compatible redacted payloads through an injected HTTP client', async () => {
+    const requests: HttpRequest[] = [];
+    const provider = new GeminiProvider({
+      apiKey: 'gemini-test-secret',
+      httpClient: async (request) => {
+        requests.push(request);
+        return { status: 200, json: async () => geminiResponse };
+      }
+    });
+
+    const digest = await provider.generate(input);
+
+    expect(digest.attentionItems[0]?.title).toBe('Kitchen sensor');
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toContain('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent');
+    expect(requests[0]?.url).toContain('key=gemini-test-secret');
+    const body = JSON.stringify(requests[0]?.body);
+    expect(body).toContain('redacted incident context');
+    expect(body).toContain('[REDACTED]');
+    expect(body).not.toContain('gemini-test-secret');
+  });
+
+  it('returns provider failures without exposing API keys or raw responses', async () => {
+    const provider = new OpenAIProvider({
+      apiKey: 'sk-test-openai-secret',
+      httpClient: async () => ({ status: 500, json: async () => ({ error: { message: 'raw provider detail sk-test-openai-secret' } }) })
+    });
+
+    await expect(provider.generate(input)).rejects.toThrow('OpenAI provider request failed with status 500');
+    await expect(provider.generate(input)).rejects.not.toThrow('sk-test-openai-secret');
+  });
+
+  it('returns safe errors when OpenAI returns malformed JSON content', async () => {
+    const provider = new OpenAIProvider({
+      apiKey: 'sk-test-openai-secret',
+      httpClient: async () => ({
+        status: 200,
+        json: async () => ({ choices: [{ message: { content: '{not-json sk-test-openai-secret' } }] })
+      })
+    });
+
+    await expect(provider.generate(input)).rejects.toThrow('OpenAI provider returned an invalid digest');
+    await expect(provider.generate(input)).rejects.not.toThrow('sk-test-openai-secret');
+  });
+
+  it('returns safe errors when Gemini returns an invalid structured digest', async () => {
+    const provider = new GeminiProvider({
+      apiKey: 'gemini-test-secret',
+      httpClient: async () => ({
+        status: 200,
+        json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ severity: 'urgent', summary: 'bad shape', secret: 'gemini-test-secret' }) }] } }] })
+      })
+    });
+
+    await expect(provider.generate(input)).rejects.toThrow('Gemini provider returned an invalid digest');
+    await expect(provider.generate(input)).rejects.not.toThrow('gemini-test-secret');
+  });
+
+  it('keeps Gemini secret-bearing URLs out of request failure messages', async () => {
+    const provider = new GeminiProvider({
+      apiKey: 'gemini-test-secret',
+      httpClient: async (request) => {
+        throw new Error(`network failed for ${request.url}`);
+      }
+    });
+
+    await expect(provider.generate(input)).rejects.toThrow('Gemini provider request failed before receiving a response');
+    await expect(provider.generate(input)).rejects.not.toThrow('gemini-test-secret');
+  });
+
+  it('aborts OpenAI requests after the configured timeout through the injected HTTP boundary', async () => {
+    vi.useFakeTimers();
+    const provider = new OpenAIProvider({
+      apiKey: 'sk-test-openai-secret',
+      timeoutMs: 25,
+      httpClient: async (request) =>
+        new Promise((_, reject) => {
+          request.signal?.addEventListener('abort', () => reject(new Error('aborted sk-test-openai-secret')), { once: true });
+        })
+    });
+
+    const result = provider.generate(input).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(25);
+
+    const error = await result;
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe('OpenAI provider request failed before receiving a response');
+    expect((error as Error).message).not.toContain('sk-test-openai-secret');
+  });
+
+  it('aborts Gemini requests after the configured timeout through the injected HTTP boundary', async () => {
+    vi.useFakeTimers();
+    const provider = new GeminiProvider({
+      apiKey: 'gemini-test-secret',
+      timeoutMs: 25,
+      httpClient: async (request) =>
+        new Promise((_, reject) => {
+          request.signal?.addEventListener('abort', () => reject(new Error('aborted gemini-test-secret')), { once: true });
+        })
+    });
+
+    const result = provider.generate(input).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(25);
+
+    const error = await result;
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe('Gemini provider request failed before receiving a response');
+    expect((error as Error).message).not.toContain('gemini-test-secret');
+  });
+});
+
+type HttpRequest = { url: string; headers: Record<string, string>; body?: unknown; signal?: AbortSignal };
+
+const openAiResponse = {
+  choices: [
+    {
+      message: {
+        content: JSON.stringify({
+          severity: 'warning',
+          summary: 'Kitchen sensor is unavailable.',
+          attentionItems: [{ title: 'Kitchen sensor', severity: 'warning', detail: 'Check Home Assistant entity availability.' }]
+        })
+      }
+    }
+  ]
+};
+
+const geminiResponse = {
+  candidates: [
+    {
+      content: {
+        parts: [
+          {
+            text: JSON.stringify({
+              severity: 'warning',
+              summary: 'Kitchen sensor is unavailable.',
+              attentionItems: [{ title: 'Kitchen sensor', severity: 'warning', detail: 'Check Home Assistant entity availability.' }]
+            })
+          }
+        ]
+      }
+    }
+  ]
+};

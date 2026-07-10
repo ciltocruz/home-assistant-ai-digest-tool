@@ -8,6 +8,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@ha-digest/shared": "workspace:*"
+    "@ha-digest/shared": "workspace:*",
+    "fastify": "5.10.0"
   }
 }

@@ -6,6 +6,7 @@ coverage/
 *.iml
 .atl/
 AGENTS.md
+docs/review/
 .env*
 !.env.example
 !.env.template

@@ -2,7 +2,7 @@
 
 ## Intent
 
-Build a public-ready, clean-room, Docker-first Home Assistant AI digest tool that helps users understand what needs attention without reading logs manually. The MVP includes guided setup, self-configuring monitoring, daily/weekly digests, local history, notes, ignore controls, battery prediction, flexible reports/notifications, and privacy-first AI summarization. Cisne is the first test deployment, not the product boundary. `saihgupr/HomeAssistantDigest` remains a product/UX reference, but current evidence does not justify code reuse.
+Build a public-ready, clean-room, Docker-first Home Assistant AI digest tool that helps users understand what needs attention without reading logs manually. The MVP includes guided setup, self-configuring monitoring, daily/weekly digests, local history, notes, ignore controls, battery prediction, flexible reports/notifications, and privacy-first AI summarization. A private Docker-based Home Assistant environment is the first test deployment, not the product boundary. `saihgupr/HomeAssistantDigest` remains a product/UX reference, but current evidence does not justify code reuse.
 
 ## Scope
 
@@ -76,7 +76,7 @@ Use a clean-room standalone service with clear interfaces: `Collector`, `Inciden
 
 ## Rollback Plan
 
-Before implementation, rollback is deleting this change folder and Engram proposal. After implementation, rollback is stopping/removing the standalone container and reverting product repo changes; Cisne deployment remains separate until explicitly migrated.
+Before implementation, rollback is deleting this change folder and associated planning artifacts. After implementation, rollback is stopping/removing the standalone container and reverting product repo changes; environment-specific deployment remains separate until explicitly migrated.
 
 ## Dependencies
 
