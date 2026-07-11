@@ -3,10 +3,10 @@ import { createApiClient, ApiClientError } from './api-client.js';
 
 const setupRequest = {
   haUrl: 'http://homeassistant.local:8123',
-  haToken: 'SENTINEL_HA_ACCESS_VALUE',
+  haToken: 'sample home assistant private value',
   aiProvider: 'gemini' as const,
-  aiKey: 'SENTINEL_AI_PROVIDER_VALUE',
-  telegram: { botToken: 'SENTINEL_TELEGRAM_BOT_VALUE', chatId: 'SENTINEL_CHAT_ID' }
+  aiKey: 'sample ai private value',
+  telegram: { botToken: 'sample telegram private value', chatId: 'sample chat reference' }
 };
 
 const settingsResponse = {
@@ -26,7 +26,7 @@ describe('createApiClient', () => {
   test('validates setup through the shared DTO contract and stores the CSRF token', async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const client = createApiClient({
-      setupToken: 'SETUP_ACCESS_SENTINEL',
+      setupToken: 'setup bootstrap value',
       fetch: async (url, init = {}) => {
         calls.push({ url: String(url), init });
         return jsonResponse(200, {
@@ -35,7 +35,7 @@ describe('createApiClient', () => {
             ai: { provider: 'gemini', keyMask: '••••-sentinel', ref: 'ref-ai' },
             notifiers: [{ id: 'telegram-main', channel: 'telegram', targetRef: 'ref-telegram', label: 'Telegram', secretMask: '••••-bot' }]
           },
-          csrfToken: 'CSRF_SENTINEL'
+          csrfToken: 'csrf sample value'
         });
       }
     });
@@ -43,10 +43,10 @@ describe('createApiClient', () => {
     const response = await client.validateSetup(setupRequest);
 
     expect(response.settings.ai.ref).toBe('ref-ai');
-    expect(client.getCsrfToken()).toBe('CSRF_SENTINEL');
+    expect(client.getCsrfToken()).toBe('csrf sample value');
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe('/api/setup');
-    expect(calls[0]?.init.headers).toMatchObject({ authorization: 'Bearer SETUP_ACCESS_SENTINEL' });
+    expect(calls[0]?.init.headers).toMatchObject({ authorization: 'Bearer setup bootstrap value' });
     expect(JSON.parse(String(calls[0]?.init.body))).toEqual(setupRequest);
   });
 
@@ -54,7 +54,7 @@ describe('createApiClient', () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const client = createApiClient({
       baseUrl: 'http://ui.test',
-      csrfToken: 'CSRF_SENTINEL',
+      csrfToken: 'csrf sample value',
       fetch: async (url, init = {}) => {
         calls.push({ url: String(url), init });
         return routeResponse(String(url), init);
@@ -84,9 +84,9 @@ describe('createApiClient', () => {
       ['http://ui.test/api/notifiers/test', 'POST'],
       ['http://ui.test/api/notifiers/send', 'POST']
     ]);
-    expect(calls[0]?.init.headers).not.toMatchObject({ 'x-csrf-token': 'CSRF_SENTINEL' });
+    expect(calls[0]?.init.headers).not.toMatchObject({ 'x-csrf-token': 'csrf sample value' });
     for (const call of calls.filter((entry) => (entry.init.method ?? 'GET') !== 'GET')) {
-      expect(call.init.headers).toMatchObject({ 'x-csrf-token': 'CSRF_SENTINEL', 'content-type': 'application/json' });
+      expect(call.init.headers).toMatchObject({ 'x-csrf-token': 'csrf sample value', 'content-type': 'application/json' });
     }
     expect(JSON.parse(String(calls[1]?.init.body))).toEqual(settingsResponse);
     expect(JSON.parse(String(calls[2]?.init.body))).toEqual({ kind: 'manual' });
@@ -125,10 +125,10 @@ describe('createApiClient', () => {
   test('redacts secret-like values from server errors before exposing them to UI state', async () => {
     const bearerScheme = ['Bea', 'rer'].join('');
     const jwtLikeValue = [jsonBase64UrlSentinel('header'), jsonBase64UrlSentinel('payload'), 'signature_value'].join('.');
-    const opaqueBearerValue = 'SETUP_ACCESS_SENTINEL';
+    const opaqueBearerValue = 'opaque-setup-sample';
     const longLivedAccessValue = [jsonBase64UrlSentinel('home-assistant-access'), 'longBase64UrlValue'].join('');
     const client = createApiClient({
-      csrfToken: 'CSRF_SENTINEL',
+      csrfToken: 'csrf sample value',
       fetch: async () => jsonResponse(500, {
         code: 'INTERNAL_ERROR',
         message: `Provider failed with ${bearerScheme} ${jwtLikeValue}, setup token ${bearerScheme} ${opaqueBearerValue}, and Home Assistant access ${longLivedAccessValue}`,
@@ -155,7 +155,7 @@ describe('createApiClient', () => {
   test('redacts secret-like values from field errors before storing them on ApiClientError', async () => {
     const bearerScheme = ['Bea', 'rer'].join('');
     const fieldSecret = `${bearerScheme} ${jsonBase64UrlSentinel('field')}.${jsonBase64UrlSentinel('payload')}.signature_value`;
-    const opaqueFieldSecret = `${bearerScheme} SETUP_ACCESS_SENTINEL`;
+    const opaqueFieldSecret = `${bearerScheme} opaque-setup-sample`;
     const client = createApiClient({
       fetch: async () => jsonResponse(400, {
         code: 'VALIDATION_ERROR',

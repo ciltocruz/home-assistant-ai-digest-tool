@@ -8,23 +8,45 @@
   "onboarding": {
     "eyebrow": "First run",
     "title": "Guided onboarding",
-    "steps": {
-      "connectHomeAssistant": "Connect Home Assistant",
-      "chooseAiProvider": "Choose AI provider",
-      "setPrivacyLevel": "Set privacy level",
-      "runFirstDigest": "Run first digest"
+    "progressLabel": "Setup progress",
+    "stepLabels": {
+      "homeAssistant": "Connect Home Assistant",
+      "aiProvider": "AI provider",
+      "notifier": "Notifier",
+      "schedulePrivacy": "Schedule and privacy",
+      "firstDigest": "First digest"
     },
     "fields": {
       "homeAssistantUrl": "Home Assistant URL",
+      "homeAssistantToken": "Home Assistant token",
       "aiProvider": "AI provider",
-      "notifier": "Notifier"
+      "aiKey": "Provider key",
+      "notifier": "Notifier",
+      "telegramBotToken": "Telegram bot token",
+      "telegramChatId": "Telegram chat ID"
     },
     "notifiers": {
       "telegram": "Telegram",
       "markdown": "Markdown report"
     },
     "actions": {
-      "validateSetup": "Validate setup"
+      "continue": {
+        "homeAssistant": "Continue to AI provider",
+        "aiProvider": "Continue to notifier",
+        "notifier": "Continue to schedule and privacy",
+        "schedulePrivacy": "Continue to first digest"
+      },
+      "validateSetup": "Validate and run first digest",
+      "firstDigestQueued": "First digest queued"
+    },
+    "schedulePrivacyNotice": "For now we will use a daily digest at 08:00 Europe/Madrid with balanced privacy. You can change schedule and data scope when settings persistence is available.",
+    "missingSetupToken": "The setup assistant bootstrap key is missing. Configure the backend to inject it before completing first run.",
+    "errors": {
+      "haUrl": "Enter a valid Home Assistant URL.",
+      "haToken": "Add a Home Assistant token.",
+      "aiKey": "Add the AI provider key.",
+      "telegramBotToken": "Add the Telegram bot token.",
+      "telegramChatId": "Add the Telegram chat."
     }
   },
   "dashboard": {
@@ -32,8 +54,8 @@
     "manualDigest": {
       "eyebrow": "Digest control",
       "title": "Manual digest",
-      "copy": "Run a scan with sensitive data masked now and queue the report without waiting for the next schedule.",
-      "action": "Run digest"
+      "copy": "Manual digests will be available after settings and history are persisted.",
+      "action": "Not available yet"
     },
     "history": {
       "eyebrow": "History",
@@ -42,24 +64,24 @@
     },
     "notes": {
       "eyebrow": "Operator context",
-      "title": "Add a note",
-      "copy": "Attach maintenance windows or weird behavior so the next digest can explain what happened in context."
+      "title": "Notes not available yet",
+      "copy": "Operator notes will be available after the backend persists manual context."
     },
     "ignoredWarnings": {
       "eyebrow": "Noise control",
-      "title": "Ignored warnings",
-      "copy": "Keep known noisy entities out of future digests without deleting the rule history."
+      "title": "Ignored warnings not available yet",
+      "copy": "Ignored warnings will be available after rule persistence exists."
     },
     "telegramTest": {
       "eyebrow": "Delivery check",
       "title": "Telegram test-send",
-      "copy": "Send a safe test message through the stored notifier reference. Tokens stay masked.",
-      "action": "Send test"
+      "copy": "Telegram test-send will be available after a saved channel exists.",
+      "action": "Not available yet"
     },
     "settings": {
       "eyebrow": "Settings",
-      "title": "Daily schedule",
-      "copy": "Balanced privacy, 30-day retention, and daily plus weekly summary windows are ready to tune."
+      "title": "Daily schedule pending",
+      "copy": "First run uses safe defaults until the settings screen persists changes."
     }
   }
 }

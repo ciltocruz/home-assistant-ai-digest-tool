@@ -1,14 +1,20 @@
 import './styles.css';
+import { createApiClient } from './api-client.js';
 import { t } from './i18n/index.js';
+import { OnboardingFlow, createInitialOnboardingState, type OnboardingApi } from './onboarding.js';
 
-const setupStepKeys = [
-  'onboarding.steps.connectHomeAssistant',
-  'onboarding.steps.chooseAiProvider',
-  'onboarding.steps.setPrivacyLevel',
-  'onboarding.steps.runFirstDigest',
-] as const;
+type BootstrapConfig = {
+  setupToken?: string;
+};
 
-export function App() {
+declare global {
+  var __HA_DIGEST_BOOTSTRAP__: BootstrapConfig | undefined;
+}
+
+export function App({ api }: { api?: OnboardingApi } = {}) {
+  const setupToken = resolveSetupToken();
+  const onboardingApi = api ?? (setupToken ? createApiClient({ setupToken }) : undefined);
+
   return (
     <main className="app-shell">
       <section className="hero-panel" aria-labelledby="product-title">
@@ -18,28 +24,15 @@ export function App() {
         <div className="privacy-card">{t('hero.privacy')}</div>
       </section>
 
-      <section className="panel" aria-labelledby="onboarding-title">
-        <div className="section-heading">
-          <p className="eyebrow">{t('onboarding.eyebrow')}</p>
-          <h2 id="onboarding-title">{t('onboarding.title')}</h2>
-        </div>
-        <ol className="setup-rail">
-          {setupStepKeys.map((key) => <li key={key}>{t(key)}</li>)}
-        </ol>
-        <form className="setup-grid">
-          <label>{t('onboarding.fields.homeAssistantUrl')}<input placeholder="http://homeassistant.local:8123" /></label>
-          <label>{t('onboarding.fields.aiProvider')}<select defaultValue="gemini"><option value="gemini">Gemini</option><option value="openai">OpenAI</option></select></label>
-          <label>{t('onboarding.fields.notifier')}<select defaultValue="telegram"><option value="telegram">{t('onboarding.notifiers.telegram')}</option><option value="markdown">{t('onboarding.notifiers.markdown')}</option></select></label>
-          <button type="button">{t('onboarding.actions.validateSetup')}</button>
-        </form>
-      </section>
+      {!onboardingApi ? <section className="panel" role="alert">{t('onboarding.missingSetupToken')}</section> : null}
+      <OnboardingFlow state={createInitialOnboardingState()} api={onboardingApi} />
 
       <section className="dashboard-grid" aria-label={t('dashboard.ariaLabel')}>
         <article className="panel action-panel">
           <p className="eyebrow">{t('dashboard.manualDigest.eyebrow')}</p>
           <h2>{t('dashboard.manualDigest.title')}</h2>
           <p>{t('dashboard.manualDigest.copy')}</p>
-          <button type="button">{t('dashboard.manualDigest.action')}</button>
+          <button type="button" disabled>{t('dashboard.manualDigest.action')}</button>
         </article>
 
         <article className="panel">
@@ -64,7 +57,7 @@ export function App() {
           <p className="eyebrow">{t('dashboard.telegramTest.eyebrow')}</p>
           <h2>{t('dashboard.telegramTest.title')}</h2>
           <p>{t('dashboard.telegramTest.copy')}</p>
-          <button type="button">{t('dashboard.telegramTest.action')}</button>
+          <button type="button" disabled>{t('dashboard.telegramTest.action')}</button>
         </article>
 
         <article className="panel">
@@ -75,4 +68,16 @@ export function App() {
       </section>
     </main>
   );
+}
+
+export function resolveSetupToken(): string {
+  const globalToken = globalThis.__HA_DIGEST_BOOTSTRAP__?.setupToken?.trim();
+  if (globalToken) return globalToken;
+
+  const metaToken = typeof document === 'undefined'
+    ? ''
+    : document.querySelector<HTMLMetaElement>('meta[name="ha-digest-setup-token"]')?.content.trim();
+  if (metaToken) return metaToken;
+
+  return '';
 }
