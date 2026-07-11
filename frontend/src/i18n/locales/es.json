@@ -8,23 +8,45 @@
   "onboarding": {
     "eyebrow": "Primer arranque",
     "title": "Configuración guiada",
-    "steps": {
-      "connectHomeAssistant": "Conecta Home Assistant",
-      "chooseAiProvider": "Elige proveedor de IA",
-      "setPrivacyLevel": "Define el nivel de privacidad",
-      "runFirstDigest": "Lanza el primer informe"
+    "progressLabel": "Progreso de configuración",
+    "stepLabels": {
+      "homeAssistant": "Conecta Home Assistant",
+      "aiProvider": "Proveedor de IA",
+      "notifier": "Canal de aviso",
+      "schedulePrivacy": "Horario y privacidad",
+      "firstDigest": "Primer informe"
     },
     "fields": {
       "homeAssistantUrl": "URL de Home Assistant",
+      "homeAssistantToken": "Token de Home Assistant",
       "aiProvider": "Proveedor de IA",
-      "notifier": "Canal de aviso"
+      "aiKey": "Clave del proveedor",
+      "notifier": "Canal de aviso",
+      "telegramBotToken": "Token del bot de Telegram",
+      "telegramChatId": "ID del chat de Telegram"
     },
     "notifiers": {
       "telegram": "Telegram",
       "markdown": "Informe Markdown"
     },
     "actions": {
-      "validateSetup": "Validar configuración"
+      "continue": {
+        "homeAssistant": "Continuar a proveedor de IA",
+        "aiProvider": "Continuar a canal de aviso",
+        "notifier": "Continuar a horario y privacidad",
+        "schedulePrivacy": "Continuar a primer informe"
+      },
+      "validateSetup": "Validar y lanzar primer informe",
+      "firstDigestQueued": "Primer informe en cola"
+    },
+    "schedulePrivacyNotice": "Usaremos temporalmente un informe diario a las 08:00 de Europe/Madrid con privacidad equilibrada. Podrás cambiar horario y alcance de datos cuando la persistencia de ajustes esté disponible.",
+    "missingSetupToken": "Falta la clave de arranque del asistente. Configura el backend para inyectarla antes de completar el primer arranque.",
+    "errors": {
+      "haUrl": "Indica una URL válida de Home Assistant.",
+      "haToken": "Añade un token de Home Assistant.",
+      "aiKey": "Añade la clave del proveedor de IA.",
+      "telegramBotToken": "Añade el token del bot de Telegram.",
+      "telegramChatId": "Añade el chat de Telegram."
     }
   },
   "dashboard": {
@@ -32,8 +54,8 @@
     "manualDigest": {
       "eyebrow": "Control del informe",
       "title": "Informe manual",
-      "copy": "Lanza ahora un análisis con datos sensibles enmascarados y deja el informe en cola sin esperar al próximo horario.",
-      "action": "Lanzar informe"
+      "copy": "El informe manual estará disponible después de persistir ajustes e historial.",
+      "action": "No disponible todavía"
     },
     "history": {
       "eyebrow": "Historial",
@@ -42,24 +64,24 @@
     },
     "notes": {
       "eyebrow": "Contexto del operador",
-      "title": "Añadir una nota",
-      "copy": "Adjunta mantenimientos o comportamientos extraños para que el próximo informe explique lo ocurrido con contexto."
+      "title": "Notas no disponibles todavía",
+      "copy": "Las notas del operador estarán disponibles cuando el backend persista contexto manual."
     },
     "ignoredWarnings": {
       "eyebrow": "Control de ruido",
-      "title": "Avisos ignorados",
-      "copy": "Mantén entidades ruidosas conocidas fuera de futuros informes sin borrar el historial de reglas."
+      "title": "Avisos ignorados no disponibles todavía",
+      "copy": "Los avisos ignorados estarán disponibles cuando exista persistencia de reglas."
     },
     "telegramTest": {
       "eyebrow": "Prueba de entrega",
       "title": "Envío de prueba por Telegram",
-      "copy": "Envía un mensaje seguro de prueba con la referencia de aviso guardada. Los tokens permanecen enmascarados.",
-      "action": "Enviar prueba"
+      "copy": "La prueba de Telegram estará disponible cuando exista un canal guardado.",
+      "action": "No disponible todavía"
     },
     "settings": {
       "eyebrow": "Ajustes",
-      "title": "Horario diario",
-      "copy": "Privacidad equilibrada, retención de 30 días y ventanas de resumen diario y semanal listas para ajustar."
+      "title": "Horario diario pendiente",
+      "copy": "El primer arranque usa valores seguros por defecto hasta que la pantalla de ajustes persista cambios."
     }
   }
 }
