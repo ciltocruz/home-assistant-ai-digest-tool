@@ -1,5 +1,6 @@
 import './styles.css';
 import { createApiClient } from './api-client.js';
+import { DashboardHistory, type DashboardApi } from './dashboard.js';
 import { t } from './i18n/index.js';
 import { OnboardingFlow, createInitialOnboardingState, type OnboardingApi } from './onboarding.js';
 
@@ -11,9 +12,12 @@ declare global {
   var __HA_DIGEST_BOOTSTRAP__: BootstrapConfig | undefined;
 }
 
-export function App({ api }: { api?: OnboardingApi } = {}) {
+type AppApi = OnboardingApi & Partial<DashboardApi>;
+
+export function App({ api }: { api?: AppApi } = {}) {
   const setupToken = resolveSetupToken();
   const onboardingApi = api ?? (setupToken ? createApiClient({ setupToken }) : undefined);
+  const dashboardApi = hasDashboardApi(onboardingApi) ? onboardingApi : undefined;
 
   return (
     <main className="app-shell">
@@ -35,11 +39,7 @@ export function App({ api }: { api?: OnboardingApi } = {}) {
           <button type="button" disabled>{t('dashboard.manualDigest.action')}</button>
         </article>
 
-        <article className="panel">
-          <p className="eyebrow">{t('dashboard.history.eyebrow')}</p>
-          <h2>{t('dashboard.history.title')}</h2>
-          <p>{t('dashboard.history.copy')}</p>
-        </article>
+        <DashboardHistory api={dashboardApi} />
 
         <article className="panel">
           <p className="eyebrow">{t('dashboard.notes.eyebrow')}</p>
@@ -68,6 +68,10 @@ export function App({ api }: { api?: OnboardingApi } = {}) {
       </section>
     </main>
   );
+}
+
+function hasDashboardApi(api: AppApi | undefined): api is AppApi & DashboardApi {
+  return typeof api?.listHistory === 'function';
 }
 
 export function resolveSetupToken(): string {

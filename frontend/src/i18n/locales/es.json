@@ -59,8 +59,37 @@
     },
     "history": {
       "eyebrow": "Historial",
-      "title": "Aún no hay informes",
-      "copy": "Tu historial local mostrará recuentos por severidad, estado de entrega y ventanas analizadas tras la primera ejecución."
+      "loading": {
+        "title": "Cargando historial",
+        "copy": "Buscando informes guardados en el backend local."
+      },
+      "empty": {
+        "title": "Aún no hay informes",
+        "copy": "Cuando lances el primer informe, aparecerá aquí con su ventana analizada y estado de entrega."
+      },
+      "error": {
+        "title": "No se pudo cargar el historial",
+        "copy": "Revisa que la sesión siga activa y vuelve a intentarlo."
+      },
+      "unavailable": {
+        "title": "Historial pendiente de conexión",
+        "copy": "El historial se cargará cuando el frontend tenga una sesión segura con el backend."
+      },
+      "summarySingular": "1 informe guardado",
+      "summaryPlural": "{count} informes guardados",
+      "analysisWindow": "Ventana analizada: {from} — {to}",
+      "severityAriaLabel": "Recuento por severidad",
+      "severity": {
+        "critical": "Críticas",
+        "warning": "Avisos",
+        "info": "Info"
+      },
+      "deliveryStatus": {
+        "pending": "Pendiente",
+        "sent": "Enviado",
+        "failed": "Fallido",
+        "skipped": "Omitido"
+      }
     },
     "notes": {
       "eyebrow": "Contexto del operador",
