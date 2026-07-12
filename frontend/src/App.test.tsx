@@ -31,7 +31,7 @@ describe('App', () => {
 
     expect(t('dashboard.manualDigest.title')).toBe(messages.es.dashboard.manualDigest.title);
     expect(html).toContain(messages.es.dashboard.manualDigest.title);
-    expect(html).toContain(messages.es.dashboard.history.title);
+    expect(html).toContain(messages.es.dashboard.history.unavailable.title);
     expect(html).toContain(messages.es.dashboard.notes.title);
     expect(html).toContain(messages.es.dashboard.ignoredWarnings.title);
     expect(html).toContain(messages.es.dashboard.telegramTest.title);

@@ -59,8 +59,37 @@
     },
     "history": {
       "eyebrow": "History",
-      "title": "No digests yet",
-      "copy": "Your local history will show severity counts, delivery status, and report windows after the first run."
+      "loading": {
+        "title": "Loading history",
+        "copy": "Looking for saved digests in the local backend."
+      },
+      "empty": {
+        "title": "No digests yet",
+        "copy": "After you run the first digest, it will appear here with its analyzed window and delivery status."
+      },
+      "error": {
+        "title": "History could not be loaded",
+        "copy": "Check that the session is still active and try again."
+      },
+      "unavailable": {
+        "title": "History waiting for connection",
+        "copy": "History will load after the frontend has a secure backend session."
+      },
+      "summarySingular": "1 saved digest",
+      "summaryPlural": "{count} saved digests",
+      "analysisWindow": "Analyzed window: {from} — {to}",
+      "severityAriaLabel": "Severity counts",
+      "severity": {
+        "critical": "Critical",
+        "warning": "Warnings",
+        "info": "Info"
+      },
+      "deliveryStatus": {
+        "pending": "Pending",
+        "sent": "Sent",
+        "failed": "Failed",
+        "skipped": "Skipped"
+      }
     },
     "notes": {
       "eyebrow": "Operator context",
