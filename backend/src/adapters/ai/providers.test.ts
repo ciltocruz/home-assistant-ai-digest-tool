@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RedactedDigestInput } from '../../domain/providers.js';
 import { FakeAIProvider, GeminiProvider, OpenAIProvider } from './providers.js';
 
+const OPENAI_TEST_KEY = 'openai-placeholder-key-for-tests';
+
 const input: RedactedDigestInput = {
   window: { from: '2026-07-01T00:00:00.000Z', to: '2026-07-02T00:00:00.000Z' },
   privacyLevel: 'balanced',
@@ -46,7 +48,7 @@ describe('AI provider adapters', () => {
   it('posts OpenAI-compatible redacted payloads through an injected HTTP client', async () => {
     const requests: HttpRequest[] = [];
     const provider = new OpenAIProvider({
-      apiKey: 'sk-test-openai-secret',
+      apiKey: OPENAI_TEST_KEY,
       httpClient: async (request) => {
         requests.push(request);
         return { status: 200, json: async () => openAiResponse };
@@ -58,11 +60,11 @@ describe('AI provider adapters', () => {
     expect(digest.summary).toBe('Kitchen sensor is unavailable.');
     expect(requests).toHaveLength(1);
     expect(requests[0]?.url).toBe('https://api.openai.com/v1/chat/completions');
-    expect(requests[0]?.headers.authorization).toBe('Bearer sk-test-openai-secret');
+    expect(requests[0]?.headers.authorization).toBe(`Bearer ${OPENAI_TEST_KEY}`);
     const body = JSON.stringify(requests[0]?.body);
     expect(body).toContain('sensor.kitchen is unavailable');
     expect(body).toContain('[REDACTED]');
-    expect(body).not.toContain('sk-test-openai-secret');
+    expect(body).not.toContain(OPENAI_TEST_KEY);
   });
 
   it('posts Gemini-compatible redacted payloads through an injected HTTP client', async () => {
@@ -89,25 +91,25 @@ describe('AI provider adapters', () => {
 
   it('returns provider failures without exposing API keys or raw responses', async () => {
     const provider = new OpenAIProvider({
-      apiKey: 'sk-test-openai-secret',
-      httpClient: async () => ({ status: 500, json: async () => ({ error: { message: 'raw provider detail sk-test-openai-secret' } }) })
+      apiKey: OPENAI_TEST_KEY,
+      httpClient: async () => ({ status: 500, json: async () => ({ error: { message: `raw provider detail ${OPENAI_TEST_KEY}` } }) })
     });
 
     await expect(provider.generate(input)).rejects.toThrow('OpenAI provider request failed with status 500');
-    await expect(provider.generate(input)).rejects.not.toThrow('sk-test-openai-secret');
+    await expect(provider.generate(input)).rejects.not.toThrow(OPENAI_TEST_KEY);
   });
 
   it('returns safe errors when OpenAI returns malformed JSON content', async () => {
     const provider = new OpenAIProvider({
-      apiKey: 'sk-test-openai-secret',
+      apiKey: OPENAI_TEST_KEY,
       httpClient: async () => ({
         status: 200,
-        json: async () => ({ choices: [{ message: { content: '{not-json sk-test-openai-secret' } }] })
+        json: async () => ({ choices: [{ message: { content: `{not-json ${OPENAI_TEST_KEY}` } }] })
       })
     });
 
     await expect(provider.generate(input)).rejects.toThrow('OpenAI provider returned an invalid digest');
-    await expect(provider.generate(input)).rejects.not.toThrow('sk-test-openai-secret');
+    await expect(provider.generate(input)).rejects.not.toThrow(OPENAI_TEST_KEY);
   });
 
   it('returns safe errors when Gemini returns an invalid structured digest', async () => {
@@ -138,11 +140,11 @@ describe('AI provider adapters', () => {
   it('aborts OpenAI requests after the configured timeout through the injected HTTP boundary', async () => {
     vi.useFakeTimers();
     const provider = new OpenAIProvider({
-      apiKey: 'sk-test-openai-secret',
+      apiKey: OPENAI_TEST_KEY,
       timeoutMs: 25,
       httpClient: async (request) =>
         new Promise((_, reject) => {
-          request.signal?.addEventListener('abort', () => reject(new Error('aborted sk-test-openai-secret')), { once: true });
+          request.signal?.addEventListener('abort', () => reject(new Error(`aborted ${OPENAI_TEST_KEY}`)), { once: true });
         })
     });
 
@@ -152,7 +154,7 @@ describe('AI provider adapters', () => {
     const error = await result;
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toBe('OpenAI provider request failed before receiving a response');
-    expect((error as Error).message).not.toContain('sk-test-openai-secret');
+    expect((error as Error).message).not.toContain(OPENAI_TEST_KEY);
   });
 
   it('aborts Gemini requests after the configured timeout through the injected HTTP boundary', async () => {
