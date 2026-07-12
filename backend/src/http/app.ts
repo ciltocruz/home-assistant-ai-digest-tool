@@ -11,6 +11,8 @@ import type { DigestJobStore } from '../domain/jobs.js';
 import type { IgnoreRuleStore, NoteStore, ReportStore } from '../domain/stores.js';
 
 export type BackendApiServices = {
+  health?: { check(): Promise<{ ok: true } | { ok: false; reason: string }> };
+  close?: () => void | Promise<void>;
   setup: { complete(input: SetupValidationRequest): Promise<MaskedSettings> };
   settings: { get(): Promise<RedactedSettingsDto>; update(input: RedactedSettingsDto): Promise<RedactedSettingsDto> };
   digestJobs: Pick<DigestJobStore, 'enqueue'>;
@@ -67,7 +69,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     reportFailure(options.failureReporter, {
       requestId: request.id,
       method: request.method,
-      url: request.url,
+      url: safeOperationalUrl(request.url),
       statusCode: 500,
       code: 'INTERNAL_ERROR',
       errorName: getErrorName(error)
@@ -212,6 +214,14 @@ function reportFailure(reporter: CreateAppOptions['failureReporter'], event: Ope
     reporter?.(event);
   } catch {
     // Never let telemetry/reporting failures change the HTTP response path.
+  }
+}
+
+function safeOperationalUrl(url: string): string {
+  try {
+    return new URL(url, 'http://runtime.local').pathname;
+  } catch {
+    return url.split('?')[0] || '/';
   }
 }
 

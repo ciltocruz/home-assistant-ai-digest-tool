@@ -1,8 +1,9 @@
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, relative, resolve, sep } from 'node:path';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { BackendApiServices, BackendAuthOptions } from './http/app.js';
+import type { BackendApiServices, BackendAuthOptions, CreateAppOptions } from './http/app.js';
 import { createApp } from './http/app.js';
+import { createPersistentRuntimeServices } from './runtime-persistence.js';
 
 export type RuntimePreviewOptions = {
   frontendDistDir: string;
@@ -11,16 +12,37 @@ export type RuntimePreviewOptions = {
   sessionTtlMs?: number;
   secureCookies?: boolean;
   now?: () => string;
+  failureReporter?: CreateAppOptions['failureReporter'];
+  injectSetupToken?: boolean;
 };
 
-export function createRuntimePreviewApp(options: RuntimePreviewOptions): FastifyInstance {
+export type PersistentRuntimePreviewOptions = RuntimePreviewOptions & {
+  dataDir?: string;
+};
+
+export async function createPersistentRuntimePreviewApp(options: PersistentRuntimePreviewOptions): Promise<FastifyInstance> {
+  return createRuntimePreviewApp({
+    ...options,
+    injectSetupToken: false,
+    services: await createPersistentRuntimeServices({ dataDir: options.dataDir, now: options.now })
+  });
+}
+
+type RuntimePreviewAppOptions = RuntimePreviewOptions & {
+  services?: BackendApiServices;
+};
+
+export function createRuntimePreviewApp(options: RuntimePreviewAppOptions): FastifyInstance {
+  const services = options.services ?? createPreviewServices(options.now);
   const app = createApp({
-    services: createPreviewServices(options.now),
+    services,
     auth: createPreviewAuth(options),
     now: options.now,
+    failureReporter: options.failureReporter,
     publicRequest: (request) => isRuntimePublicRequest(request.url)
   });
   const frontendRoot = resolve(options.frontendDistDir);
+  const htmlSetupToken = options.injectSetupToken === false ? undefined : options.setupToken;
 
   app.addHook('onSend', async (_request, reply) => {
     reply.header('x-content-type-options', 'nosniff');
@@ -31,6 +53,8 @@ export function createRuntimePreviewApp(options: RuntimePreviewOptions): Fastify
   app.get('/ready', async (_request, reply) => {
     const index = await readExistingFile(join(frontendRoot, 'index.html'));
     if (!index) return reply.code(503).send({ status: 'not_ready', reason: 'frontend_index_unavailable' });
+    const persistence = await options.services?.health?.check();
+    if (persistence && !persistence.ok) return reply.code(503).send({ status: 'not_ready', reason: persistence.reason });
     return { status: 'ready' };
   });
 
@@ -39,8 +63,10 @@ export function createRuntimePreviewApp(options: RuntimePreviewOptions): Fastify
       return reply.code(404).send({ code: 'NOT_FOUND', message: 'Route not found.', requestId: request.id });
     }
 
-    return serveFrontend(request, reply, frontendRoot, options.setupToken);
+    return serveFrontend(request, reply, frontendRoot, htmlSetupToken);
   });
+
+  if (services.close) app.addHook('onClose', async () => services.close?.());
 
   return app;
 }
@@ -108,7 +134,7 @@ function createPreviewServices(now = () => new Date().toISOString()): BackendApi
   };
 }
 
-async function serveFrontend(request: FastifyRequest, reply: FastifyReply, frontendRoot: string, setupToken: string): Promise<FastifyReply> {
+async function serveFrontend(request: FastifyRequest, reply: FastifyReply, frontendRoot: string, setupToken: string | undefined): Promise<FastifyReply> {
   const pathname = new URL(request.url, 'http://preview.local').pathname;
   const requested = pathname === '/' ? 'index.html' : decodeURIComponent(pathname.slice(1));
   const filePath = safeJoin(frontendRoot, requested);
@@ -140,9 +166,9 @@ async function readExistingFile(filePath: string): Promise<Buffer | null> {
   }
 }
 
-function sendFile(reply: FastifyReply, filePath: string, file: Buffer, setupToken: string): FastifyReply {
+function sendFile(reply: FastifyReply, filePath: string, file: Buffer, setupToken: string | undefined): FastifyReply {
   const type = contentType(filePath);
-  if (type.startsWith('text/html')) return reply.type(type).send(injectBootstrap(file.toString('utf8'), setupToken));
+  if (type.startsWith('text/html') && setupToken) return reply.type(type).send(injectBootstrap(file.toString('utf8'), setupToken));
   return reply.type(type).send(file);
 }
 

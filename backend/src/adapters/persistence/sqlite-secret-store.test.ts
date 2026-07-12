@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -39,6 +39,15 @@ describe('SQLiteSecretStore', () => {
 
     const keyMode = (await stat(join(dataDir, 'app.key'))).mode & 0o777;
     expect(keyMode).toBe(0o600);
+  });
+
+  it('rejects corrupt app.key material before any secret encryption or decryption', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-corrupt-key-'));
+    const db = await openTestDatabase();
+    runMigrations(db);
+    await writeFile(join(dataDir, 'app.key'), Buffer.from('too-short').toString('base64'));
+
+    await expect(SQLiteSecretStore.create({ db, dataDir })).rejects.toThrow(/app\.key.*32-byte.*AES-256/i);
   });
 });
 

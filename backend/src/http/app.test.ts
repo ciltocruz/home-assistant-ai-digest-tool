@@ -4,9 +4,9 @@ import { SetupValidationResponseSchema, type DigestSummary, type MaskedSettings,
 import { createApp, type BackendApiServices } from './app.js';
 
 const NOW = '2026-07-08T10:00:00.000Z';
-const SECRET_HA_TOKEN = 'ha-token-secret-value';
-const SECRET_AI_KEY = 'ai-key-secret-value';
-const SECRET_TELEGRAM_TOKEN = 'telegram-bot-secret-value';
+const SECRET_HA_TOKEN = 'sentinel-ha-credential-value';
+const SECRET_AI_KEY = 'sentinel-ai-credential-value';
+const SECRET_TELEGRAM_TOKEN = 'sentinel-telegram-credential-value';
 
 describe('backend API auth, CSRF, and protected routes', () => {
   let app: FastifyInstance | undefined;
@@ -85,7 +85,7 @@ describe('backend API auth, CSRF, and protected routes', () => {
   });
 
   it('records redacted operational events for service failures without leaking secrets in responses', async () => {
-    const SECRET_IN_FAILURE = 'sk-service-failure-secret';
+    const SECRET_IN_FAILURE = 'sentinel-provider-failure-credential';
     const operationalEvents: unknown[] = [];
     const services = createServices();
     services.settings.get = async () => {
@@ -99,12 +99,13 @@ describe('backend API auth, CSRF, and protected routes', () => {
     });
     const { cookie } = await authenticated(app);
 
-    const response = await app.inject({ method: 'GET', url: '/api/settings', headers: { cookie } });
+    const response = await app.inject({ method: 'GET', url: '/api/settings?providerKey=sentinel-provider-query-credential', headers: { cookie } });
 
     expect(response.statusCode).toBe(500);
     expect(response.body).not.toContain(SECRET_IN_FAILURE);
     expect(response.json()).toMatchObject({ code: 'INTERNAL_ERROR', message: 'Request failed. Check server logs with redaction enabled.' });
     expect(JSON.stringify(operationalEvents)).not.toContain(SECRET_IN_FAILURE);
+    expect(JSON.stringify(operationalEvents)).not.toContain('sentinel-provider-query-credential');
     expect(operationalEvents).toEqual([
       expect.objectContaining({ method: 'GET', url: '/api/settings', statusCode: 500, code: 'INTERNAL_ERROR', errorName: 'Error' })
     ]);

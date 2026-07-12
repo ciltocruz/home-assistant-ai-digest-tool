@@ -89,11 +89,11 @@ docker compose up --build
 
 Then open `http://localhost:3000`.
 
-The Compose preview is local-only by default: it binds `127.0.0.1:3000`, requires explicit `ADMIN_TOKEN` and `SETUP_TOKEN` values from `.env`, and injects the setup token into the served HTML so the onboarding UI can call the fake preview API. Do not bind it to `0.0.0.0` unless you understand this is still an early preview and have added your own network protection.
+The Compose preview is local-only by default: it binds `127.0.0.1:3000` and requires explicit `ADMIN_TOKEN` and `SETUP_TOKEN` values from `.env`. The setup token stays private and server-side; copy it manually from your `.env` when the onboarding UI asks for it. Do not bind the preview to `0.0.0.0` unless you understand this is still an early preview and have added your own network protection.
 
 The default `SECURE_COOKIES=false` setting is only for this localhost HTTP preview. Use secure cookies for HTTPS or reverse-proxy deployments.
 
-The Compose file creates a `/data` volume for the future persistent runtime and includes an optional read-only `HA_LOGS_PATH` mount placeholder for Home Assistant logs. The example path is outside the repository (`/tmp/ha-digest-preview/ha-logs`) so real Home Assistant logs are not normalized as project files; if you use a repo-local scratch folder anyway, `.preview/` is ignored by Git and Docker. The current preview runtime does not send live notifications and does not yet wire the final SQLite stores into the container startup path.
+The Compose file creates a `/data` volume for the partially real persistent runtime. Setup/settings secrets, digest job queue state, and report history are now backed by SQLite plus `/data/app.key`; external Home Assistant collection, live AI provider calls, live notifier delivery, and scheduler execution are still pending. The optional read-only `HA_LOGS_PATH` mount placeholder is for future Home Assistant log collection. The example path is outside the repository (`/tmp/ha-digest-preview/ha-logs`) so real Home Assistant logs are not normalized as project files; if you use a repo-local scratch folder anyway, `.preview/` is ignored by Git and Docker.
 
 The preview container also exposes unauthenticated `/health` and `/ready` endpoints for local Docker health checks.
 
@@ -114,7 +114,7 @@ Near-term work:
 - Finish the onboarding and settings flows.
 - Build the dashboard, digest history, notes, and ignored-warning UI.
 - Add browser smoke tests.
-- Finish production Docker startup wiring for SQLite-backed runtime services.
+- Wire external Home Assistant, AI provider, notifier, and scheduler adapters into the persistent runtime.
 - Add safe screenshots once browser capture is available.
 
 ## Project principles

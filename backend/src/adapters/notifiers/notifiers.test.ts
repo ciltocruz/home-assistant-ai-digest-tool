@@ -7,6 +7,8 @@ const digest: RenderedDigest = {
   body: '# Home Assistant Digest\n\nKitchen sensor needs attention.'
 };
 
+const TELEGRAM_BOT_TOKEN_SENTINEL = 'telegram-bot-token-sentinel';
+
 describe('notifier adapters', () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -74,27 +76,27 @@ describe('notifier adapters', () => {
       }
     });
 
-    const target = { channel: 'telegram' as const, label: 'Telegram', config: { botToken: '123456:test-secret-token', chatId: '4242' } };
+    const target = { channel: 'telegram' as const, label: 'Telegram', config: { botToken: TELEGRAM_BOT_TOKEN_SENTINEL, chatId: '4242' } };
 
     await expect(notifier.test(target)).resolves.toEqual({ status: 'success', message: 'Telegram test message delivered.', checkedAt: '2026-07-02T00:00:00.000Z' });
     await expect(notifier.send(digest, target)).resolves.toEqual({ status: 'sent', targetRef: 'telegram:Telegram', deliveredAt: '2026-07-02T00:00:00.000Z' });
     expect(requests).toHaveLength(2);
-    expect(requests[0]?.url).toBe('https://api.telegram.org/bot123456:test-secret-token/sendMessage');
+    expect(requests[0]?.url).toBe(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN_SENTINEL}/sendMessage`);
     expect(requests[0]?.body).toMatchObject({ chat_id: '4242', parse_mode: 'MarkdownV2' });
     expect(requests[1]?.body).toMatchObject({ text: expect.stringContaining('Kitchen sensor') });
-    expect(JSON.stringify(requests.map((request) => request.body))).not.toContain('123456:test-secret-token');
+    expect(JSON.stringify(requests.map((request) => request.body))).not.toContain(TELEGRAM_BOT_TOKEN_SENTINEL);
   });
 
   it('returns Telegram failures without exposing bot tokens', async () => {
     const notifier = new TelegramNotifier({
       now: () => '2026-07-02T00:00:00.000Z',
-      httpClient: async () => ({ status: 401, json: async () => ({ ok: false, description: 'Unauthorized 123456:test-secret-token' }) })
+      httpClient: async () => ({ status: 401, json: async () => ({ ok: false, description: `Unauthorized ${TELEGRAM_BOT_TOKEN_SENTINEL}` }) })
     });
 
-    const result = await notifier.send(digest, { channel: 'telegram', label: 'Telegram', config: { botToken: '123456:test-secret-token', chatId: '4242' } });
+    const result = await notifier.send(digest, { channel: 'telegram', label: 'Telegram', config: { botToken: TELEGRAM_BOT_TOKEN_SENTINEL, chatId: '4242' } });
 
     expect(result).toEqual({ status: 'failed', targetRef: 'telegram:Telegram', errorCode: 'TELEGRAM_HTTP_401', message: 'Telegram delivery failed with status 401' });
-    expect(JSON.stringify(result)).not.toContain('123456:test-secret-token');
+    expect(JSON.stringify(result)).not.toContain(TELEGRAM_BOT_TOKEN_SENTINEL);
   });
 
   it('keeps Telegram secret-bearing URLs out of delivery failure messages', async () => {
@@ -105,7 +107,7 @@ describe('notifier adapters', () => {
       }
     });
 
-    await expect(notifier.send(digest, { channel: 'telegram', label: 'Telegram', config: { botToken: '123456:test-secret-token', chatId: '4242' } })).resolves.toEqual({
+    await expect(notifier.send(digest, { channel: 'telegram', label: 'Telegram', config: { botToken: TELEGRAM_BOT_TOKEN_SENTINEL, chatId: '4242' } })).resolves.toEqual({
       status: 'failed',
       targetRef: 'telegram:Telegram',
       errorCode: 'TELEGRAM_REQUEST_FAILED',
@@ -124,7 +126,7 @@ describe('notifier adapters', () => {
         })
     });
 
-    const result = notifier.send(digest, { channel: 'telegram', label: 'Telegram', config: { botToken: '123456:test-secret-token', chatId: '4242' } });
+    const result = notifier.send(digest, { channel: 'telegram', label: 'Telegram', config: { botToken: TELEGRAM_BOT_TOKEN_SENTINEL, chatId: '4242' } });
     await vi.advanceTimersByTimeAsync(25);
 
     await expect(result).resolves.toEqual({

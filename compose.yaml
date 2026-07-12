@@ -11,6 +11,7 @@ services:
       SETUP_TOKEN: "${SETUP_TOKEN:?Set SETUP_TOKEN in .env to a long random local preview token}"
       SECURE_COOKIES: "${SECURE_COOKIES:-false}"
       FRONTEND_DIST_DIR: /app/frontend-dist
+      DATA_DIR: /data
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/ready').then((response)=>process.exit(response.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s

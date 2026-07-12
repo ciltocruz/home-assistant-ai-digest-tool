@@ -13,28 +13,28 @@ describe('shared DTOs', () => {
   it('accepts raw secrets only in setup validation requests', () => {
     const request = SetupValidationRequestSchema.parse({
       haUrl: 'https://home-assistant.local:8123',
-      haToken: 'raw-ha-token',
+      haToken: 'sentinel-raw-ha-credential',
       aiProvider: 'gemini',
-      aiKey: 'raw-ai-key',
+      aiKey: 'sentinel-raw-ai-credential',
       telegram: {
-        botToken: 'raw-bot-token',
+        botToken: 'sentinel-raw-telegram-credential',
         chatId: '123456'
       }
     });
 
-    expect(request.haToken).toBe('raw-ha-token');
-    expect(request.aiKey).toBe('raw-ai-key');
-    expect(request.telegram?.botToken).toBe('raw-bot-token');
+    expect(request.haToken).toBe('sentinel-raw-ha-credential');
+    expect(request.aiKey).toBe('sentinel-raw-ai-credential');
+    expect(request.telegram?.botToken).toBe('sentinel-raw-telegram-credential');
   });
 
   it('rejects raw secrets in setup validation responses', () => {
     const parsed = SetupValidationResponseSchema.parse({
-      csrfToken: 'csrf-session-token',
+      csrfToken: 'csrf-session-code',
       settings: {
         haUrl: 'https://home-assistant.local:8123',
         ai: {
           provider: 'openai',
-          keyMask: 'sk-...abcd',
+          keyMask: 'sentinel-redacted-abcd',
           ref: 'secret_ai_openai'
         },
         notifiers: [
@@ -57,19 +57,19 @@ describe('shared DTOs', () => {
 
   it('accepts setup validation responses that bootstrap an authenticated CSRF token', () => {
     const parsed = SetupValidationResponseSchema.parse({
-      csrfToken: 'csrf-session-token',
+      csrfToken: 'csrf-session-code',
       settings: {
         haUrl: 'https://home-assistant.local:8123',
         ai: {
           provider: 'openai',
-          keyMask: 'sk-...abcd',
+          keyMask: 'sentinel-redacted-abcd',
           ref: 'secret_ai_openai'
         },
         notifiers: []
       }
     });
 
-    expect(parsed.csrfToken).toBe('csrf-session-token');
+    expect(parsed.csrfToken).toBe('csrf-session-code');
   });
 
   it('keeps settings redacted with secret refs and masks', () => {
@@ -86,7 +86,7 @@ describe('shared DTOs', () => {
     });
 
     expect(settings.secretRefs.aiKeyRef).toBe('secret_ai_key');
-    expect(JSON.stringify(settings)).not.toContain('raw-ai-key');
+    expect(JSON.stringify(settings)).not.toContain('sentinel-raw-ai-credential');
   });
 
   it('accepts valid schedule times at HH:mm boundaries', () => {
@@ -185,7 +185,7 @@ describe('shared DTOs', () => {
     });
 
     expect(error.fieldErrors?.aiKey).toEqual(['Invalid key format']);
-    expect(JSON.stringify(error)).not.toContain('raw-ai-key');
+    expect(JSON.stringify(error)).not.toContain('sentinel-raw-ai-credential');
   });
 
   it('rejects raw secret fields in response DTOs', () => {
@@ -193,12 +193,12 @@ describe('shared DTOs', () => {
       SetupValidationResponseSchema.parse({
         settings: {
           haUrl: 'https://home-assistant.local:8123',
-          haToken: 'raw-ha-token',
+          haToken: 'sentinel-raw-ha-credential',
           ai: {
             provider: 'openai',
-            keyMask: 'sk-...abcd',
+            keyMask: 'sentinel-redacted-abcd',
             ref: 'secret_ai_openai',
-            aiKey: 'raw-ai-key'
+            aiKey: 'sentinel-raw-ai-credential'
           },
           notifiers: []
         }

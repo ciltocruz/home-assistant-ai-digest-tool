@@ -70,4 +70,5 @@ Implementation review notes are maintainer-local working artifacts and MUST NOT 
 - [ ] 5.1 Add Playwright smoke flows for onboarding, manual digest, history empty state, notes, ignores, and notifier test-send.
 - [ ] 5.2 Add `Dockerfile`, `compose.yaml`, and `/data` volume wiring for backend, frontend assets, SQLite, logs, and mounted HA logs.
   - [x] 5.2a Add buildable Docker runtime preview with frontend asset serving, `/data` volume, and HA logs mount placeholder.
+  - [x] 5.2b Wire preview runtime startup to real `/data` SQLite settings, secrets, digest job, and report-history stores while keeping live HA/AI/notifier adapters fake.
 - [ ] 5.3 Write `README.md` and `docs/` for Docker-only support, privacy/secrets, HA token/log mounts, providers, Telegram, email, and markdown reports.

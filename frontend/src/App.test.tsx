@@ -81,7 +81,7 @@ describe('App', () => {
   test('shows a clear setup configuration message when the bootstrap token is missing', () => {
     const html = renderToStaticMarkup(<App />);
 
-    expect(html).toContain('Falta la clave de arranque del asistente. Configura el backend para inyectarla antes de completar el primer arranque.');
+    expect(html).toContain('Falta la clave de arranque del asistente. Introdúcela desde un canal privado antes de completar el primer arranque.');
   });
 
   test('resolves setup tokens only from runtime bootstrap or meta configuration', () => {

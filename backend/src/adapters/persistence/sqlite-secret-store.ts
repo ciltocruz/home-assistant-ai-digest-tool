@@ -24,7 +24,9 @@ export class SQLiteSecretStore implements SecretStore {
   ) {}
 
   static async create(options: SecretStoreOptions): Promise<SQLiteSecretStore> {
-    return new SQLiteSecretStore(options.db, await loadOrCreateKey(options.dataDir ?? '/data'));
+    const key = await loadOrCreateKey(options.db, options.dataDir ?? '/data');
+    validateExistingSecretsCanDecrypt(options.db, key);
+    return new SQLiteSecretStore(options.db, key);
   }
 
   async put(kind: SecretKind, raw: string): Promise<StoredSecretRef> {
@@ -74,16 +76,49 @@ export class SQLiteSecretStore implements SecretStore {
   }
 }
 
-async function loadOrCreateKey(dataDir: string): Promise<Buffer> {
+async function loadOrCreateKey(db: DatabaseSync, dataDir: string): Promise<Buffer> {
   const keyPath = join(dataDir, 'app.key');
   await mkdir(dataDir, { recursive: true });
   try {
-    return Buffer.from(await readFile(keyPath, 'utf8'), 'base64');
+    return parseAppKey(await readFile(keyPath, 'utf8'), keyPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    if (await hasExistingEncryptedSecrets(db)) {
+      throw new Error('Refusing to create a new app.key while existing encrypted secrets are present. Restore /data/app.key from backup.');
+    }
     const key = randomBytes(32);
     await writeFile(keyPath, key.toString('base64'), { mode: 0o600, flag: 'wx' });
     return key;
+  }
+}
+
+function parseAppKey(encoded: string, keyPath: string): Buffer {
+  const normalized = encoded.trim();
+  const key = Buffer.from(normalized, 'base64');
+  const isCanonicalBase64 = /^[A-Za-z0-9+/]+={0,2}$/.test(normalized) && normalized.length % 4 === 0 && key.toString('base64') === normalized;
+  if (!isCanonicalBase64 || key.length !== 32) {
+    throw new Error(`Invalid ${keyPath}: expected a 32-byte base64-encoded AES-256 key. Restore /data/app.key from backup or remove the empty data volume.`);
+  }
+  return key;
+}
+
+async function hasExistingEncryptedSecrets(db: DatabaseSync): Promise<boolean> {
+  const table = db.prepare("select name from sqlite_master where type = 'table' and name = 'secrets'").get();
+  if (!table) return false;
+  const row = db.prepare('select exists(select 1 from secrets limit 1) as has_secrets').get() as { has_secrets: number };
+  return row.has_secrets === 1;
+}
+
+function validateExistingSecretsCanDecrypt(db: DatabaseSync, key: Buffer): void {
+  const row = db.prepare('select encrypted_value, iv, auth_tag from secrets limit 1').get() as
+    | Pick<SecretRow, 'encrypted_value' | 'iv' | 'auth_tag'>
+    | undefined;
+  if (!row) return;
+
+  try {
+    decrypt({ value: row.encrypted_value, iv: row.iv, authTag: row.auth_tag }, key);
+  } catch {
+    throw new Error('Invalid /data/app.key: cannot decrypt existing encrypted secrets. Restore /data/app.key from backup.');
   }
 }
 

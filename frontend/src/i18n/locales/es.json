@@ -40,7 +40,7 @@
       "firstDigestQueued": "Primer informe en cola"
     },
     "schedulePrivacyNotice": "Usaremos temporalmente un informe diario a las 08:00 de Europe/Madrid con privacidad equilibrada. Podrás cambiar horario y alcance de datos cuando la persistencia de ajustes esté disponible.",
-    "missingSetupToken": "Falta la clave de arranque del asistente. Configura el backend para inyectarla antes de completar el primer arranque.",
+    "missingSetupToken": "Falta la clave de arranque del asistente. Introdúcela desde un canal privado antes de completar el primer arranque.",
     "errors": {
       "haUrl": "Indica una URL válida de Home Assistant.",
       "haToken": "Añade un token de Home Assistant.",

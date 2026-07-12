@@ -40,7 +40,7 @@
       "firstDigestQueued": "First digest queued"
     },
     "schedulePrivacyNotice": "For now we will use a daily digest at 08:00 Europe/Madrid with balanced privacy. You can change schedule and data scope when settings persistence is available.",
-    "missingSetupToken": "The setup assistant bootstrap key is missing. Configure the backend to inject it before completing first run.",
+    "missingSetupToken": "The setup assistant bootstrap key is missing. Provide it through a private channel before completing first run.",
     "errors": {
       "haUrl": "Enter a valid Home Assistant URL.",
       "haToken": "Add a Home Assistant token.",
