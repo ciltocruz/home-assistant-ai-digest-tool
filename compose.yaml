@@ -1,0 +1,28 @@
+services:
+  app:
+    build:
+      context: .
+      target: runtime-preview
+    image: home-assistant-ai-digest-tool:preview
+    ports:
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-3000}:3000"
+    environment:
+      ADMIN_TOKEN: "${ADMIN_TOKEN:?Set ADMIN_TOKEN in .env to a long random local preview token}"
+      SETUP_TOKEN: "${SETUP_TOKEN:?Set SETUP_TOKEN in .env to a long random local preview token}"
+      SECURE_COOKIES: "${SECURE_COOKIES:-false}"
+      FRONTEND_DIST_DIR: /app/frontend-dist
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/ready').then((response)=>process.exit(response.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    volumes:
+      - ha-digest-data:/data
+      # Optional: set HA_LOGS_PATH to a Home Assistant config/log directory for future collectors.
+      # Example: HA_LOGS_PATH=/path/to/homeassistant
+      - "${HA_LOGS_PATH:-/tmp/ha-digest-preview/ha-logs}:/ha-logs:ro"
+    restart: unless-stopped
+
+volumes:
+  ha-digest-data:

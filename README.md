@@ -26,8 +26,8 @@ The project currently includes:
 
 Still pending before normal users should install it:
 
-- Docker image and Compose example.
-- Persistent data storage for the Docker release.
+- Production-ready Docker runtime wiring.
+- Persistent app storage connected to the final Docker release.
 - Public installation guide.
 - Browser smoke tests.
 - Full dashboard, history, settings, notes, and ignore-management screens.
@@ -77,6 +77,26 @@ pnpm run ci
 
 This runs typechecking, tests, the focused-test guard, and workspace builds.
 
+### Run the Docker preview
+
+The repository includes an early Docker preview so contributors can build the backend and frontend together. It serves the built Spanish-first UI and a protected preview API, but it is not the final production install path yet.
+
+```bash
+cp .env.example .env
+# Replace ADMIN_TOKEN and SETUP_TOKEN with long random values before starting.
+docker compose up --build
+```
+
+Then open `http://localhost:3000`.
+
+The Compose preview is local-only by default: it binds `127.0.0.1:3000`, requires explicit `ADMIN_TOKEN` and `SETUP_TOKEN` values from `.env`, and injects the setup token into the served HTML so the onboarding UI can call the fake preview API. Do not bind it to `0.0.0.0` unless you understand this is still an early preview and have added your own network protection.
+
+The default `SECURE_COOKIES=false` setting is only for this localhost HTTP preview. Use secure cookies for HTTPS or reverse-proxy deployments.
+
+The Compose file creates a `/data` volume for the future persistent runtime and includes an optional read-only `HA_LOGS_PATH` mount placeholder for Home Assistant logs. The example path is outside the repository (`/tmp/ha-digest-preview/ha-logs`) so real Home Assistant logs are not normalized as project files; if you use a repo-local scratch folder anyway, `.preview/` is ignored by Git and Docker. The current preview runtime does not send live notifications and does not yet wire the final SQLite stores into the container startup path.
+
+The preview container also exposes unauthenticated `/health` and `/ready` endpoints for local Docker health checks.
+
 ## Security notes
 
 Home Assistant data is sensitive. Treat this project like infrastructure software, not like a toy demo.
@@ -94,7 +114,7 @@ Near-term work:
 - Finish the onboarding and settings flows.
 - Build the dashboard, digest history, notes, and ignored-warning UI.
 - Add browser smoke tests.
-- Add Dockerfile, Compose example, and `/data` volume documentation.
+- Finish production Docker startup wiring for SQLite-backed runtime services.
 - Add safe screenshots once browser capture is available.
 
 ## Project principles

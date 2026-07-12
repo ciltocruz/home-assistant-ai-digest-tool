@@ -47,6 +47,8 @@ export type CreateAppOptions = {
   now?: () => string;
   /** Receives secret-safe operational failure events for production logging/metrics. Do not include raw error messages here. */
   failureReporter?: (event: OperationalFailureEvent) => void;
+  /** Allows preview/static routes to stay public without weakening API protection. */
+  publicRequest?: (request: FastifyRequest) => boolean;
 };
 
 type Session = { id: string; csrfToken: string; expiresAtMs: number };
@@ -98,7 +100,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
   });
 
   app.addHook('preHandler', async (request, reply) => {
-    if (isPublicRoute(request)) return;
+    if (isPublicRoute(request) || options.publicRequest?.(request)) return;
 
     const session = authenticate(request, options.auth, sessions, currentTimeMs());
     if (!session) return sendError(reply, 401, 'UNAUTHENTICATED', 'Authenticated session required.', request.id);
