@@ -3,7 +3,14 @@
 **Change**: home-assistant-ai-digest-tool  
 **Version**: N/A  
 **Mode**: Standard verification, hybrid persistence  
-**Scope**: PR 3 / Phase 3 Backend Behavior and API only: tasks 3.1, 3.2, 3.3, 3.4, and 3.5. This is not full-MVP verification or archive readiness; Phases 4 and 5 intentionally remain incomplete.
+**Scope**: Historical PR 3 / Phase 3 Backend Behavior and API verification, plus current runtime-persistence PR evidence below. This is not full-MVP verification or archive readiness; live Home Assistant collection, live AI/provider calls, live notifier delivery, and scheduler execution remain incomplete.
+
+### Current Runtime Persistence PR Evidence
+
+- `pnpm test backend/src/http/app.test.ts backend/src/runtime-preview.test.ts backend/src/runtime-persistence.test.ts` passed: 3 files / 27 tests.
+- `pnpm run ci` passed: typecheck, full Vitest suite, focused-test guard, and build; 18 files / 135 tests.
+- Fresh review lenses for risk, resilience, reliability, and readability found no CRITICAL blockers for the runtime persistence PR.
+- Known follow-up before exposed production deployments: disable or rotate the reusable setup token after successful onboarding.
 
 ### Status / Verdict
 

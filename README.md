@@ -89,7 +89,7 @@ docker compose up --build
 
 Then open `http://localhost:3000`.
 
-The Compose preview is local-only by default: it binds `127.0.0.1:3000` and requires explicit `ADMIN_TOKEN` and `SETUP_TOKEN` values from `.env`. The setup token stays private and server-side; copy it manually from your `.env` when the onboarding UI asks for it. Do not bind the preview to `0.0.0.0` unless you understand this is still an early preview and have added your own network protection.
+The Compose preview is local-only by default: it binds `127.0.0.1:3000` and requires explicit `ADMIN_TOKEN` and `SETUP_TOKEN` values from `.env`. In the persistent runtime the setup token stays private and server-side; the current UI does not expose a manual setup-token entry flow yet. Do not bind the preview to `0.0.0.0` unless you understand this is still an early preview and have added your own network protection.
 
 The default `SECURE_COOKIES=false` setting is only for this localhost HTTP preview. Use secure cookies for HTTPS or reverse-proxy deployments.
 
