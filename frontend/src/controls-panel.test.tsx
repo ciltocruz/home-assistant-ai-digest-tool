@@ -2,6 +2,7 @@
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { ApiClientError } from './api-client.js';
 import { ControlsPanel, type ControlsApi } from './controls-panel.js';
 Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: true, value: true });
 const settings = {
@@ -175,6 +176,39 @@ describe('ControlsPanel', () => {
     expect(container.textContent).toContain('No se pudo enviar la prueba de Telegram. Inténtalo de nuevo.');
     expect(container.textContent).not.toContain('sk_secret_value');
     expect(container.querySelector<HTMLButtonElement>('button[data-testid="telegram-test"]')?.disabled).toBe(false);
+  });
+
+  test('keeps settings and Telegram controls available when notes fail to load', async () => {
+    const api = createControlsApi({
+      listNotes: vi.fn(async () => {
+        throw new ApiClientError('NOTES_UNAVAILABLE', 'Notes failed with sk_secret_value', 'req-notes-load');
+      })
+    });
+
+    const { container } = await mountControlsPanel(api);
+    await flushAsyncWork();
+
+    expect(container.textContent).toContain('No se pudieron cargar las notas. Revisa el detalle y vuelve a intentarlo. Código NOTES_UNAVAILABLE, solicitud req-notes-load.');
+    expect(container.textContent).not.toContain('sk_secret_value');
+    expect(container.querySelector<HTMLInputElement>('input[name="retentionDays"]')?.value).toBe('90');
+    expect(container.querySelector<HTMLButtonElement>('button[data-testid="telegram-test"]')?.disabled).toBe(false);
+  });
+
+  test('shows safe API code and request id details when a mutation fails', async () => {
+    const api = createControlsApi({
+      addNote: vi.fn(async () => {
+        throw new ApiClientError('VALIDATION_ERROR', 'Invalid note with sk_secret_value', 'req-note-save');
+      })
+    });
+
+    const { container } = await mountControlsPanel(api);
+    await flushAsyncWork();
+
+    await changeInput(container, 'textarea[name="noteText"]', 'Checked recorder gap');
+    await submitForm(container, 'form[aria-label="Añadir nota"]');
+
+    expect(container.textContent).toContain('No se pudo guardar la nota. Inténtalo de nuevo. Código VALIDATION_ERROR, solicitud req-note-save.');
+    expect(container.textContent).not.toContain('sk_secret_value');
   });
 });
 

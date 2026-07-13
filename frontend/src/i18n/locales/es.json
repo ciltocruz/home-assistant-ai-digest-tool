@@ -138,6 +138,11 @@
       "removeIgnore": "No se pudo quitar el aviso ignorado. Inténtalo de nuevo.",
       "settings": "No se pudieron guardar los ajustes. Inténtalo de nuevo.",
       "telegramTest": "No se pudo enviar la prueba de Telegram. Inténtalo de nuevo."
-    }
+    },
+    "loadErrors": {
+      "notes": "No se pudieron cargar las notas. Revisa el detalle y vuelve a intentarlo.",
+      "ignores": "No se pudieron cargar los avisos ignorados. Revisa el detalle y vuelve a intentarlo."
+    },
+    "errorDetail": "Código {code}, solicitud {requestId}."
   }
 }

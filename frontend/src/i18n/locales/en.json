@@ -138,6 +138,11 @@
       "removeIgnore": "The ignored warning could not be removed. Try again.",
       "settings": "Settings could not be saved. Try again.",
       "telegramTest": "The Telegram test could not be sent. Try again."
-    }
+    },
+    "loadErrors": {
+      "notes": "Notes could not be loaded. Check the detail and try again.",
+      "ignores": "Ignored warnings could not be loaded. Check the detail and try again."
+    },
+    "errorDetail": "Code {code}, request {requestId}."
   }
 }

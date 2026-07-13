@@ -18,7 +18,7 @@ type LoadState =
   | { status: 'loading' }
   | { status: 'unavailable' }
   | { status: 'error'; message: string }
-  | { status: 'ready'; settings: RedactedSettingsDto; notes: NoteDto[]; ignores: IgnoreRuleDto[]; testResult?: TestResult };
+  | { status: 'ready'; settings: RedactedSettingsDto; notes: NoteDto[]; ignores: IgnoreRuleDto[]; testResult?: TestResult; loadErrors?: string[] };
 
 const DEFAULT_NOTE_WINDOW = { from: '1970-01-01T00:00:00.000Z', to: '9999-12-31T23:59:59.000Z' };
 
@@ -109,8 +109,8 @@ export function ControlsPanel({ api, now = () => new Date().toISOString() }: { a
     setMutationError(null);
     try {
       await operation();
-    } catch {
-      setMutationError(errorMessage);
+    } catch (error) {
+      setMutationError(formatUserError(errorMessage, error));
     } finally {
       setPendingMutation(null);
     }
@@ -120,6 +120,7 @@ export function ControlsPanel({ api, now = () => new Date().toISOString() }: { a
 
   return <section className="controls-grid" aria-label={t('dashboard.ariaLabel')}>
     {mutationError ? <p className="panel error-copy" role="alert">{mutationError}</p> : null}
+    {state.loadErrors?.map((message) => <p className="panel error-copy" role="alert" key={message}>{message}</p>)}
     <article className="panel">
       <p className="eyebrow">{t('dashboard.notes.eyebrow')}</p>
       <h2>{t('dashboard.notes.title')}</h2>
@@ -166,12 +167,30 @@ export function ControlsPanel({ api, now = () => new Date().toISOString() }: { a
 
 async function loadControls(api: ControlsApi): Promise<LoadState> {
   try {
-    const [settings, notes, ignores] = await Promise.all([api.getSettings(), api.listNotes(DEFAULT_NOTE_WINDOW), api.listIgnores()]);
-    return { status: 'ready', settings, notes, ignores };
+    const settings = await api.getSettings();
+    const [notesResult, ignoresResult] = await Promise.allSettled([api.listNotes(DEFAULT_NOTE_WINDOW), api.listIgnores()]);
+    const loadErrors: string[] = [];
+    const notes = notesResult.status === 'fulfilled' ? notesResult.value : [];
+    const ignores = ignoresResult.status === 'fulfilled' ? ignoresResult.value : [];
+    if (notesResult.status === 'rejected') loadErrors.push(formatUserError(t('dashboard.loadErrors.notes'), notesResult.reason));
+    if (ignoresResult.status === 'rejected') loadErrors.push(formatUserError(t('dashboard.loadErrors.ignores'), ignoresResult.reason));
+    return { status: 'ready', settings, notes, ignores, loadErrors };
   } catch (error) {
     const message = error instanceof ApiClientError || error instanceof Error ? redactSensitiveText(error.message) : t('dashboard.settings.copy');
     return { status: 'error', message };
   }
+}
+
+function formatUserError(message: string, error: unknown): string {
+  const detail = formatSafeApiDetail(error);
+  return detail ? `${message} ${detail}` : message;
+}
+
+function formatSafeApiDetail(error: unknown): string | null {
+  if (!(error instanceof ApiClientError)) return null;
+  const code = redactSensitiveText(error.code);
+  const requestId = redactSensitiveText(error.requestId);
+  return t('dashboard.errorDetail').replace('{code}', code).replace('{requestId}', requestId);
 }
 
 function StatusPanel({ title, copy }: { title: string; copy: string }) {
