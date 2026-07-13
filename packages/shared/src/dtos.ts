@@ -18,7 +18,7 @@ export type DeliveryStatus = z.infer<typeof DeliveryStatusSchema>;
 export const SecretRefSchema = z.string().min(1);
 export type SecretRef = z.infer<typeof SecretRefSchema>;
 
-const HH_MM_24_HOUR_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+export const HH_MM_24_HOUR_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 export const MAX_RETENTION_DAYS = 3650;
 const MAX_NOTIFIER_TEST_MESSAGE_LENGTH = 2000;
 const MAX_IGNORE_REASON_LENGTH = 500;

@@ -23,11 +23,20 @@
       "aiKey": "Provider key",
       "notifier": "Notifier",
       "telegramBotToken": "Telegram bot token",
-      "telegramChatId": "Telegram chat ID"
+      "telegramChatId": "Telegram chat ID",
+      "dailyTime": "Digest time",
+      "timezone": "Timezone",
+      "privacyLevel": "Privacy level",
+      "retentionDays": "Retention days"
     },
     "notifiers": {
       "telegram": "Telegram",
       "markdown": "Markdown report"
+    },
+    "privacy": {
+      "minimal": "Minimal",
+      "balanced": "Balanced",
+      "detailed": "Detailed"
     },
     "actions": {
       "continue": {
@@ -39,14 +48,18 @@
       "validateSetup": "Validate and run first digest",
       "firstDigestQueued": "First digest queued"
     },
-    "schedulePrivacyNotice": "For now we will use a daily digest at 08:00 Europe/Madrid with balanced privacy. You can change schedule and data scope when settings persistence is available.",
+    "schedulePrivacyNotice": "We will save this schedule and privacy level before running the first digest. Secrets stay referenced and masked.",
     "missingSetupToken": "The setup assistant bootstrap key is missing. Provide it through a private channel before completing first run.",
     "errors": {
       "haUrl": "Enter a valid Home Assistant URL.",
       "haToken": "Add a Home Assistant token.",
       "aiKey": "Add the AI provider key.",
       "telegramBotToken": "Add the Telegram bot token.",
-      "telegramChatId": "Add the Telegram chat."
+      "telegramChatId": "Add the Telegram chat.",
+      "dailyTime": "Enter a time using HH:MM.",
+      "timezone": "Enter a timezone.",
+      "retentionDays": "Use between 1 and 3650 retention days.",
+      "settingsPersistenceUnavailable": "Settings could not be saved before the first digest. Check the secure backend connection and try again."
     }
   },
   "dashboard": {

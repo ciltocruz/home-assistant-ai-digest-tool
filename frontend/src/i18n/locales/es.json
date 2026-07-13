@@ -23,11 +23,20 @@
       "aiKey": "Clave del proveedor",
       "notifier": "Canal de aviso",
       "telegramBotToken": "Token del bot de Telegram",
-      "telegramChatId": "ID del chat de Telegram"
+      "telegramChatId": "ID del chat de Telegram",
+      "dailyTime": "Hora del informe",
+      "timezone": "Zona horaria",
+      "privacyLevel": "Nivel de privacidad",
+      "retentionDays": "Días de retención"
     },
     "notifiers": {
       "telegram": "Telegram",
       "markdown": "Informe Markdown"
+    },
+    "privacy": {
+      "minimal": "Mínima",
+      "balanced": "Equilibrada",
+      "detailed": "Detallada"
     },
     "actions": {
       "continue": {
@@ -39,14 +48,18 @@
       "validateSetup": "Validar y lanzar primer informe",
       "firstDigestQueued": "Primer informe en cola"
     },
-    "schedulePrivacyNotice": "Usaremos temporalmente un informe diario a las 08:00 de Europe/Madrid con privacidad equilibrada. Podrás cambiar horario y alcance de datos cuando la persistencia de ajustes esté disponible.",
+    "schedulePrivacyNotice": "Guardaremos este horario y nivel de privacidad antes de lanzar el primer informe. Los secretos seguirán referenciados y enmascarados.",
     "missingSetupToken": "Falta la clave de arranque del asistente. Introdúcela desde un canal privado antes de completar el primer arranque.",
     "errors": {
       "haUrl": "Indica una URL válida de Home Assistant.",
       "haToken": "Añade un token de Home Assistant.",
       "aiKey": "Añade la clave del proveedor de IA.",
       "telegramBotToken": "Añade el token del bot de Telegram.",
-      "telegramChatId": "Añade el chat de Telegram."
+      "telegramChatId": "Añade el chat de Telegram.",
+      "dailyTime": "Indica una hora en formato HH:MM.",
+      "timezone": "Indica una zona horaria.",
+      "retentionDays": "Usa entre 1 y 3650 días de retención.",
+      "settingsPersistenceUnavailable": "No se pudieron guardar los ajustes antes del primer informe. Revisa la conexión segura con el backend y vuelve a intentarlo."
     }
   },
   "dashboard": {
