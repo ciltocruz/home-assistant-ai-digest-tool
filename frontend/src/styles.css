@@ -15,7 +15,7 @@
 
 body { margin: 0; }
 
-button, input, select { font: inherit; }
+button, input, select, textarea { font: inherit; }
 
 button {
   border: 0;
@@ -100,9 +100,9 @@ button {
 
 .setup-grid { grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr)); }
 
-.setup-grid label { display: grid; gap: 0.4rem; font-weight: 700; }
+.setup-grid label, .control-form label { display: grid; gap: 0.4rem; font-weight: 700; }
 
-.setup-grid input, .setup-grid select {
+.setup-grid input, .setup-grid select, .control-form input, .control-form select, .control-form textarea {
   background: var(--color-surface);
   border: 1px solid var(--color-mint-border);
   border-radius: 14px;
@@ -110,9 +110,12 @@ button {
   padding: 0.8rem;
 }
 
+.control-form textarea { min-height: 6rem; resize: vertical; }
+
 .field-error { color: #ffb199; font-weight: 700; }
 
 .dashboard-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.controls-grid { display: contents; }
 
 .action-panel { background: var(--color-panel-strong); color: var(--color-text-strong); }
 
@@ -133,6 +136,21 @@ button {
 }
 
 .history-item strong { color: var(--color-accent); }
+
+.control-form, .compact-list { display: grid; gap: 0.75rem; }
+
+.compact-list { list-style: none; padding: 0; }
+
+.compact-list li {
+  background: rgba(238, 248, 244, 0.07);
+  border: 1px solid var(--color-mint-border);
+  border-radius: 18px;
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.85rem;
+}
+
+.compact-list button { justify-self: start; padding: 0.5rem 0.8rem; }
 
 .severity-strip {
   display: flex;

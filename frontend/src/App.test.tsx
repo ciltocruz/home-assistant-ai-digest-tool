@@ -42,19 +42,31 @@ describe('App', () => {
     const html = renderToStaticMarkup(<App api={{ validateSetup: vi.fn(), runDigest: vi.fn() }} />);
 
     expect(html).toContain('El informe manual estará disponible después de persistir ajustes e historial.');
-    expect(html).toContain('La prueba de Telegram estará disponible cuando exista un canal guardado.');
+    expect(html).toContain('Guarda un canal de Telegram en el primer arranque antes de probar la entrega.');
     expect(html).toContain('disabled=""');
     expect(html).not.toContain('Lanzar informe</button>');
     expect(html).not.toContain('Enviar prueba</button>');
   });
 
-  test('keeps dashboard non-action card copy explicitly unavailable', () => {
+  test('keeps API-backed control cards hidden until the controls API is available', () => {
     const html = renderToStaticMarkup(<App api={{ validateSetup: vi.fn(), runDigest: vi.fn() }} />);
 
-    expect(html).toContain('Las notas del operador estarán disponibles cuando el backend persista contexto manual.');
-    expect(html).toContain('Los avisos ignorados estarán disponibles cuando exista persistencia de reglas.');
-    expect(html).not.toContain('Adjunta mantenimientos');
-    expect(html).not.toContain('Mantén entidades ruidosas');
+    expect(html).toContain('Añade contexto manual');
+    expect(html).toContain('Silencia entidades');
+  });
+
+  test('does not treat a partial controls API as the full controls contract', () => {
+    const partialControlsApi = {
+      validateSetup: vi.fn(),
+      runDigest: vi.fn(),
+      getSettings: vi.fn(),
+      listNotes: vi.fn(),
+      testNotifier: vi.fn()
+    };
+
+    const html = renderToStaticMarkup(<App api={partialControlsApi} />);
+
+    expect(html).toContain('Guarda un canal de Telegram en el primer arranque antes de probar la entrega.');
   });
 
   test('passes the configured bootstrap setup token to the production API client', async () => {

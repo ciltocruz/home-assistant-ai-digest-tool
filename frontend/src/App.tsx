@@ -1,5 +1,6 @@
 import './styles.css';
 import { createApiClient } from './api-client.js';
+import { ControlsPanel, type ControlsApi } from './controls-panel.js';
 import { DashboardHistory, type DashboardApi } from './dashboard.js';
 import { t } from './i18n/index.js';
 import { OnboardingFlow, createInitialOnboardingState, type OnboardingApi } from './onboarding.js';
@@ -12,12 +13,13 @@ declare global {
   var __HA_DIGEST_BOOTSTRAP__: BootstrapConfig | undefined;
 }
 
-type AppApi = OnboardingApi & Partial<DashboardApi>;
+type AppApi = OnboardingApi & Partial<DashboardApi & ControlsApi>;
 
 export function App({ api }: { api?: AppApi } = {}) {
   const setupToken = resolveSetupToken();
   const onboardingApi = api ?? (setupToken ? createApiClient({ setupToken }) : undefined);
   const dashboardApi = hasDashboardApi(onboardingApi) ? onboardingApi : undefined;
+  const controlsApi = hasControlsApi(onboardingApi) ? onboardingApi : undefined;
 
   return (
     <main className="app-shell">
@@ -41,30 +43,7 @@ export function App({ api }: { api?: AppApi } = {}) {
 
         <DashboardHistory api={dashboardApi} />
 
-        <article className="panel">
-          <p className="eyebrow">{t('dashboard.notes.eyebrow')}</p>
-          <h2>{t('dashboard.notes.title')}</h2>
-          <p>{t('dashboard.notes.copy')}</p>
-        </article>
-
-        <article className="panel">
-          <p className="eyebrow">{t('dashboard.ignoredWarnings.eyebrow')}</p>
-          <h2>{t('dashboard.ignoredWarnings.title')}</h2>
-          <p>{t('dashboard.ignoredWarnings.copy')}</p>
-        </article>
-
-        <article className="panel">
-          <p className="eyebrow">{t('dashboard.telegramTest.eyebrow')}</p>
-          <h2>{t('dashboard.telegramTest.title')}</h2>
-          <p>{t('dashboard.telegramTest.copy')}</p>
-          <button type="button" disabled>{t('dashboard.telegramTest.action')}</button>
-        </article>
-
-        <article className="panel">
-          <p className="eyebrow">{t('dashboard.settings.eyebrow')}</p>
-          <h2>{t('dashboard.settings.title')}</h2>
-          <p>{t('dashboard.settings.copy')}</p>
-        </article>
+        <ControlsPanel api={controlsApi} />
       </section>
     </main>
   );
@@ -72,6 +51,17 @@ export function App({ api }: { api?: AppApi } = {}) {
 
 function hasDashboardApi(api: AppApi | undefined): api is AppApi & DashboardApi {
   return typeof api?.listHistory === 'function';
+}
+
+function hasControlsApi(api: AppApi | undefined): api is AppApi & ControlsApi {
+  return typeof api?.getSettings === 'function'
+    && typeof api.updateSettings === 'function'
+    && typeof api.listNotes === 'function'
+    && typeof api.addNote === 'function'
+    && typeof api.listIgnores === 'function'
+    && typeof api.addIgnore === 'function'
+    && typeof api.removeIgnore === 'function'
+    && typeof api.testNotifier === 'function';
 }
 
 export function resolveSetupToken(): string {

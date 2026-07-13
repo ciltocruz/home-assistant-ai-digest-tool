@@ -19,7 +19,7 @@ export const SecretRefSchema = z.string().min(1);
 export type SecretRef = z.infer<typeof SecretRefSchema>;
 
 const HH_MM_24_HOUR_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
-const MAX_RETENTION_DAYS = 3650;
+export const MAX_RETENTION_DAYS = 3650;
 const MAX_NOTIFIER_TEST_MESSAGE_LENGTH = 2000;
 const MAX_IGNORE_REASON_LENGTH = 500;
 const MAX_NOTE_TEXT_LENGTH = 4000;
