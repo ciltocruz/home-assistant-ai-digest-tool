@@ -66,6 +66,7 @@ describe('createApiClient', () => {
     await client.runDigest({ kind: 'manual' });
     await client.listHistory();
     await client.addNote({ text: 'Observed restart', occurredAt: '2026-07-10T10:00:00.000Z', tags: ['maintenance'] });
+    await client.listNotes({ from: '2026-07-10T00:00:00.000Z', to: '2026-07-11T00:00:00.000Z' });
     await client.listIgnores();
     await client.addIgnore({ match: 'sensor.noisy', type: 'entity', reason: 'Known noisy fixture' });
     await client.removeIgnore('ignore/id with spaces');
@@ -78,6 +79,7 @@ describe('createApiClient', () => {
       ['http://ui.test/api/digests/run', 'POST'],
       ['http://ui.test/api/digests/history', 'GET'],
       ['http://ui.test/api/notes', 'POST'],
+      ['http://ui.test/api/notes?from=2026-07-10T00%3A00%3A00.000Z&to=2026-07-11T00%3A00%3A00.000Z', 'GET'],
       ['http://ui.test/api/ignores', 'GET'],
       ['http://ui.test/api/ignores', 'POST'],
       ['http://ui.test/api/ignores/ignore%2Fid%20with%20spaces', 'DELETE'],
@@ -91,10 +93,10 @@ describe('createApiClient', () => {
     expect(JSON.parse(String(calls[1]?.init.body))).toEqual(settingsResponse);
     expect(JSON.parse(String(calls[2]?.init.body))).toEqual({ kind: 'manual' });
     expect(JSON.parse(String(calls[4]?.init.body))).toEqual({ text: 'Observed restart', occurredAt: '2026-07-10T10:00:00.000Z', tags: ['maintenance'] });
-    expect(JSON.parse(String(calls[6]?.init.body))).toEqual({ match: 'sensor.noisy', type: 'entity', reason: 'Known noisy fixture' });
-    expect(calls[7]?.init.body).toBeUndefined();
-    expect(JSON.parse(String(calls[8]?.init.body))).toEqual({ channel: 'telegram', targetRef: 'ref-telegram', message: 'Synthetic test message' });
-    expect(JSON.parse(String(calls[9]?.init.body))).toEqual({ digestId: 'digest-1', targetRef: 'ref-telegram' });
+    expect(JSON.parse(String(calls[7]?.init.body))).toEqual({ match: 'sensor.noisy', type: 'entity', reason: 'Known noisy fixture' });
+    expect(calls[8]?.init.body).toBeUndefined();
+    expect(JSON.parse(String(calls[9]?.init.body))).toEqual({ channel: 'telegram', targetRef: 'ref-telegram', message: 'Synthetic test message' });
+    expect(JSON.parse(String(calls[10]?.init.body))).toEqual({ digestId: 'digest-1', targetRef: 'ref-telegram' });
   });
 
   test('rejects unexpected response shapes before UI state can consume them', async () => {
@@ -236,6 +238,7 @@ function routeResponse(url: string, init: RequestInit): Response {
   if (url.endsWith('/api/digests/run') && method === 'POST') return jsonResponse(200, { jobId: 'job-1', status: 'queued' });
   if (url.endsWith('/api/digests/history') && method === 'GET') return jsonResponse(200, [digestSummaryResponse]);
   if (url.endsWith('/api/notes') && method === 'POST') return jsonResponse(200, noteResponse);
+  if (url.endsWith('/api/notes?from=2026-07-10T00%3A00%3A00.000Z&to=2026-07-11T00%3A00%3A00.000Z') && method === 'GET') return jsonResponse(200, [noteResponse]);
   if (url.endsWith('/api/ignores') && method === 'GET') return jsonResponse(200, [ignoreResponse]);
   if (url.endsWith('/api/ignores') && method === 'POST') return jsonResponse(200, ignoreResponse);
   if (url.endsWith('/api/ignores/ignore%2Fid%20with%20spaces') && method === 'DELETE') return emptyResponse(204);

@@ -97,6 +97,10 @@ export function createApiClient(options: ApiClientOptions = {}) {
     runDigest: (input: RunDigestRequest): Promise<RunDigestResponse> => request('/api/digests/run', RunDigestResponseSchema, { method: 'POST', body: JSON.stringify(RunDigestRequestSchema.parse(input)) }),
     listHistory: (): Promise<DigestHistoryResponse> => request('/api/digests/history', DigestHistoryResponseSchema),
     addNote: (input: NoteCreate): Promise<NoteDto> => request('/api/notes', NoteDtoSchema, { method: 'POST', body: JSON.stringify(NoteCreateSchema.parse(input)) }),
+    listNotes: (window: { from: string; to: string }): Promise<NoteDto[]> => {
+      const params = new URLSearchParams({ from: window.from, to: window.to });
+      return request(`/api/notes?${params.toString()}`, z.array(NoteDtoSchema));
+    },
     listIgnores: (): Promise<IgnoreRuleDto[]> => request('/api/ignores', z.array(IgnoreRuleDtoSchema)),
     addIgnore: (input: IgnoreRuleCreate): Promise<IgnoreRuleDto> => request('/api/ignores', IgnoreRuleDtoSchema, { method: 'POST', body: JSON.stringify(IgnoreRuleCreateSchema.parse(input)) }),
     removeIgnore: (id: string): Promise<void> => request(`/api/ignores/${encodeURIComponent(id)}`, z.unknown(), { method: 'DELETE' }).then(() => undefined),

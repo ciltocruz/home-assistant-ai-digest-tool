@@ -93,24 +93,51 @@
     },
     "notes": {
       "eyebrow": "Contexto del operador",
-      "title": "Notas no disponibles todavía",
-      "copy": "Las notas del operador estarán disponibles cuando el backend persista contexto manual."
+      "title": "Notas del operador",
+      "copy": "Añade contexto manual para que los próximos informes expliquen qué estaba pasando en casa.",
+      "formLabel": "Añadir nota",
+      "textLabel": "Nota",
+      "action": "Guardar nota"
     },
     "ignoredWarnings": {
       "eyebrow": "Control de ruido",
-      "title": "Avisos ignorados no disponibles todavía",
-      "copy": "Los avisos ignorados estarán disponibles cuando exista persistencia de reglas."
+      "title": "Avisos ignorados",
+      "copy": "Silencia entidades o mensajes conocidos para que el informe se centre en lo accionable.",
+      "formLabel": "Añadir aviso ignorado",
+      "matchLabel": "Coincidencia",
+      "action": "Ignorar aviso",
+      "remove": "Quitar",
+      "noReason": "Sin motivo registrado"
     },
     "telegramTest": {
       "eyebrow": "Prueba de entrega",
       "title": "Envío de prueba por Telegram",
-      "copy": "La prueba de Telegram estará disponible cuando exista un canal guardado.",
-      "action": "No disponible todavía"
+      "copy": "Envía un mensaje corto al canal guardado sin exponer el token en el navegador.",
+      "missingCopy": "Guarda un canal de Telegram en el primer arranque antes de probar la entrega.",
+      "action": "Enviar prueba",
+      "defaultMessage": "Prueba de Home Assistant AI Digest"
     },
     "settings": {
       "eyebrow": "Ajustes",
-      "title": "Horario diario pendiente",
-      "copy": "El primer arranque usa valores seguros por defecto hasta que la pantalla de ajustes persista cambios."
+      "title": "Privacidad y retención",
+      "copy": "Edita los ajustes seguros que ya devuelve el backend local. Los secretos siguen referenciados y enmascarados.",
+      "formLabel": "Guardar ajustes",
+      "privacyLabel": "Nivel de privacidad",
+      "retentionLabel": "Días de retención",
+      "noSchedule": "Sin horario guardado",
+      "action": "Guardar ajustes",
+      "privacy": {
+        "minimal": "Mínima",
+        "balanced": "Equilibrada",
+        "detailed": "Detallada"
+      }
+    },
+    "mutationErrors": {
+      "note": "No se pudo guardar la nota. Inténtalo de nuevo.",
+      "ignore": "No se pudo guardar el aviso ignorado. Inténtalo de nuevo.",
+      "removeIgnore": "No se pudo quitar el aviso ignorado. Inténtalo de nuevo.",
+      "settings": "No se pudieron guardar los ajustes. Inténtalo de nuevo.",
+      "telegramTest": "No se pudo enviar la prueba de Telegram. Inténtalo de nuevo."
     }
   }
 }

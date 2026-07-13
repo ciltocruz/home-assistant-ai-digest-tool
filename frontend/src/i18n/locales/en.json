@@ -93,24 +93,51 @@
     },
     "notes": {
       "eyebrow": "Operator context",
-      "title": "Notes not available yet",
-      "copy": "Operator notes will be available after the backend persists manual context."
+      "title": "Operator notes",
+      "copy": "Add manual context so future digests explain what was happening at home.",
+      "formLabel": "Add note",
+      "textLabel": "Note",
+      "action": "Save note"
     },
     "ignoredWarnings": {
       "eyebrow": "Noise control",
-      "title": "Ignored warnings not available yet",
-      "copy": "Ignored warnings will be available after rule persistence exists."
+      "title": "Ignored warnings",
+      "copy": "Silence known entities or messages so the digest stays focused on actionable work.",
+      "formLabel": "Add ignored warning",
+      "matchLabel": "Match",
+      "action": "Ignore warning",
+      "remove": "Remove",
+      "noReason": "No reason recorded"
     },
     "telegramTest": {
       "eyebrow": "Delivery check",
       "title": "Telegram test-send",
-      "copy": "Telegram test-send will be available after a saved channel exists.",
-      "action": "Not available yet"
+      "copy": "Send a short message to the saved channel without exposing the token in the browser.",
+      "missingCopy": "Save a Telegram channel during first run before testing delivery.",
+      "action": "Send test",
+      "defaultMessage": "Home Assistant AI Digest test"
     },
     "settings": {
       "eyebrow": "Settings",
-      "title": "Daily schedule pending",
-      "copy": "First run uses safe defaults until the settings screen persists changes."
+      "title": "Privacy and retention",
+      "copy": "Edit safe settings already returned by the local backend. Secrets stay referenced and masked.",
+      "formLabel": "Save settings",
+      "privacyLabel": "Privacy level",
+      "retentionLabel": "Retention days",
+      "noSchedule": "No saved schedule",
+      "action": "Save settings",
+      "privacy": {
+        "minimal": "Minimal",
+        "balanced": "Balanced",
+        "detailed": "Detailed"
+      }
+    },
+    "mutationErrors": {
+      "note": "The note could not be saved. Try again.",
+      "ignore": "The ignored warning could not be saved. Try again.",
+      "removeIgnore": "The ignored warning could not be removed. Try again.",
+      "settings": "Settings could not be saved. Try again.",
+      "telegramTest": "The Telegram test could not be sent. Try again."
     }
   }
 }
