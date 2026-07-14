@@ -67,8 +67,13 @@
     "manualDigest": {
       "eyebrow": "Control del informe",
       "title": "Informe manual",
-      "copy": "El informe manual estará disponible después de persistir ajustes e historial.",
-      "action": "No disponible todavía"
+      "copy": "Lanza un informe bajo demanda contra el backend local usando los ajustes guardados.",
+      "unavailableCopy": "El informe manual estará disponible después de persistir ajustes e historial.",
+      "action": "Lanzar informe",
+      "pendingAction": "Lanzando informe",
+      "unavailableAction": "No disponible todavía",
+      "queued": "Informe manual en cola.",
+      "error": "No se pudo lanzar el informe manual."
     },
     "history": {
       "eyebrow": "Historial",

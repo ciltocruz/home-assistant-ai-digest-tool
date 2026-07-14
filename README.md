@@ -22,14 +22,13 @@ The project currently includes:
 - Home Assistant, AI provider, and Telegram setup fields in the UI.
 - Backend foundations for incidents, providers, notifications, storage, and safe API access.
 - Spanish as the default UI language, with English translations prepared.
-- Automated tests for the current backend and frontend slices.
+- Automated unit/integration tests and Playwright browser smoke tests for the current backend and frontend slices.
 
 Still pending before normal users should install it:
 
 - Production-ready Docker runtime wiring.
 - Persistent app storage connected to the final Docker release.
 - Public installation guide.
-- Browser smoke tests.
 - Full dashboard, history, settings, notes, and ignore-management screens.
 
 ## Screenshots
@@ -75,7 +74,13 @@ The UI is currently Spanish-first. English translations exist in the locale cata
 pnpm run ci
 ```
 
-This runs typechecking, tests, the focused-test guard, and workspace builds.
+This runs typechecking, unit/integration tests, the focused-test guard, Playwright Chromium smoke tests, and workspace builds. To run only the browser smoke tests, use:
+
+```bash
+pnpm run test:smoke
+```
+
+The smoke command installs Playwright Chromium if it is missing.
 
 ### Run the Docker preview
 
@@ -113,7 +118,7 @@ Near-term work:
 
 - Finish the onboarding and settings flows.
 - Build the dashboard, digest history, notes, and ignored-warning UI.
-- Add browser smoke tests.
+- Expand browser smoke coverage as new runtime capabilities become available.
 - Wire external Home Assistant, AI provider, notifier, and scheduler adapters into the persistent runtime.
 - Add safe screenshots once browser capture is available.
 

@@ -39,7 +39,7 @@ describe('App', () => {
   });
 
   test('renders unavailable dashboard actions as disabled and explicit', () => {
-    const html = renderToStaticMarkup(<App api={{ validateSetup: vi.fn(), runDigest: vi.fn() }} />);
+    const html = renderToStaticMarkup(<App api={{ validateSetup: vi.fn() }} />);
 
     expect(html).toContain('El informe manual estará disponible después de persistir ajustes e historial.');
     expect(html).toContain('Guarda un canal de Telegram en el primer arranque antes de probar la entrega.');
@@ -53,6 +53,13 @@ describe('App', () => {
 
     expect(html).toContain('Añade contexto manual');
     expect(html).toContain('Silencia entidades');
+  });
+
+  test('renders manual digest action when the digest API is available', () => {
+    const html = renderToStaticMarkup(<App api={{ runDigest: vi.fn() }} />);
+
+    expect(html).toContain('Lanzar informe</button>');
+    expect(html).not.toContain('No disponible todavía</button>');
   });
 
   test('does not treat a partial controls API as the full controls contract', () => {
