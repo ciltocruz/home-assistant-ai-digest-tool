@@ -13,13 +13,14 @@ declare global {
   var __HA_DIGEST_BOOTSTRAP__: BootstrapConfig | undefined;
 }
 
-type AppApi = OnboardingApi & Partial<DashboardApi & ControlsApi>;
+type AppApi = Partial<OnboardingApi & DashboardApi & ControlsApi>;
 
 export function App({ api }: { api?: AppApi } = {}) {
   const setupToken = resolveSetupToken();
-  const onboardingApi = api ?? (setupToken ? createApiClient({ setupToken }) : undefined);
-  const dashboardApi = hasDashboardApi(onboardingApi) ? onboardingApi : undefined;
-  const controlsApi = hasControlsApi(onboardingApi) ? onboardingApi : undefined;
+  const candidateApi = api ?? (setupToken ? createApiClient({ setupToken }) : undefined);
+  const onboardingApi = hasOnboardingApi(candidateApi) ? candidateApi : undefined;
+  const dashboardApi = hasDashboardApi(candidateApi) ? candidateApi : undefined;
+  const controlsApi = hasControlsApi(candidateApi) ? candidateApi : undefined;
 
   return (
     <main className="app-shell">
@@ -51,6 +52,13 @@ export function App({ api }: { api?: AppApi } = {}) {
 
 function hasDashboardApi(api: AppApi | undefined): api is AppApi & DashboardApi {
   return typeof api?.listHistory === 'function';
+}
+
+function hasOnboardingApi(api: AppApi | undefined): api is AppApi & OnboardingApi {
+  return typeof api?.validateSetup === 'function'
+    && typeof api.getSettings === 'function'
+    && typeof api.updateSettings === 'function'
+    && typeof api.runDigest === 'function';
 }
 
 function hasControlsApi(api: AppApi | undefined): api is AppApi & ControlsApi {

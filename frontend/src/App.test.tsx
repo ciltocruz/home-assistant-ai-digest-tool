@@ -70,7 +70,7 @@ describe('App', () => {
   });
 
   test('passes the configured bootstrap setup token to the production API client', async () => {
-    const api = { validateSetup: vi.fn(), runDigest: vi.fn() };
+    const api = { validateSetup: vi.fn(), getSettings: vi.fn(), updateSettings: vi.fn(), runDigest: vi.fn() };
     const createApiClient = vi.fn(() => api);
     (globalThis as { __HA_DIGEST_BOOTSTRAP__?: { setupToken?: string } }).__HA_DIGEST_BOOTSTRAP__ = { setupToken: 'setup bootstrap value' };
 
