@@ -67,8 +67,13 @@
     "manualDigest": {
       "eyebrow": "Digest control",
       "title": "Manual digest",
-      "copy": "Manual digests will be available after settings and history are persisted.",
-      "action": "Not available yet"
+      "copy": "Run an on-demand digest against the local backend using saved settings.",
+      "unavailableCopy": "Manual digests will be available after settings and history are persisted.",
+      "action": "Run digest",
+      "pendingAction": "Running digest",
+      "unavailableAction": "Not available yet",
+      "queued": "Manual digest queued.",
+      "error": "The manual digest could not be started."
     },
     "history": {
       "eyebrow": "History",
