@@ -9,9 +9,22 @@ services:
     environment:
       ADMIN_TOKEN: "${ADMIN_TOKEN:?Set ADMIN_TOKEN in .env to a long random local preview token}"
       SETUP_TOKEN: "${SETUP_TOKEN:?Set SETUP_TOKEN in .env to a long random local preview token}"
+      APP_BIND_ADDRESS: "${APP_BIND_ADDRESS:-127.0.0.1}"
+      RUNTIME_MODE: "${RUNTIME_MODE:-local}"
+      TRUST_PROXY: "${TRUST_PROXY:-false}"
       SECURE_COOKIES: "${SECURE_COOKIES:-false}"
       FRONTEND_DIST_DIR: /app/frontend-dist
       DATA_DIR: /data
+      LOG_DIR: /data/logs
+      HA_LOGS_DIR: /ha-logs
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/ready').then((response)=>process.exit(response.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
@@ -20,9 +33,8 @@ services:
       start_period: 10s
     volumes:
       - ha-digest-data:/data
-      # Optional: set HA_LOGS_PATH to a Home Assistant config/log directory for future collectors.
-      # Example: HA_LOGS_PATH=/path/to/homeassistant
-      - "${HA_LOGS_PATH:-/tmp/ha-digest-preview/ha-logs}:/ha-logs:ro"
+      # Mount exactly one HA log file; never mount the HA config directory or Docker socket.
+      - "${HA_LOG_FILE:-./.preview/ha-logs/home-assistant.log}:/ha-logs/home-assistant.log:ro"
     restart: unless-stopped
 
 volumes:

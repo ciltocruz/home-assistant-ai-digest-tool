@@ -1,0 +1,6 @@
+services:
+  app:
+    environment:
+      RUNTIME_MODE: reverse-proxy
+      TRUST_PROXY: "true"
+      SECURE_COOKIES: "true"

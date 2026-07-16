@@ -50,9 +50,9 @@ Slice boundary: Slice 1 (PR #1, base feature/tracker branch) runtime contracts/r
 
 **Files:** Modify `Dockerfile`, `compose.yaml`, `.env.example`; create `compose.reverse-proxy.yaml`.
 
-- [ ] RED: run `ADMIN_TOKEN=x SETUP_TOKEN=y docker compose config`; expect absent proxy variables.
-- [ ] GREEN: add loopback defaults and proxy override (`RUNTIME_MODE=reverse-proxy`, `TRUST_PROXY=true`, `SECURE_COOKIES=true`); enforce read-only root, `cap_drop`, no-new-privileges, PID limit, bounded `/tmp`, writable `/data`, and narrow read-only logs. Forbid socket, host network, privilege, and full HA config mounts.
-- [ ] Run `ADMIN_TOKEN=x SETUP_TOKEN=y docker compose -f compose.yaml -f compose.reverse-proxy.yaml config`; expect valid YAML. Boundary: `chore: harden Docker runtime`.
+- [x] RED: run `ADMIN_TOKEN=x SETUP_TOKEN=y docker compose config`; expect absent proxy variables.
+- [x] GREEN: add loopback defaults and proxy override (`RUNTIME_MODE=reverse-proxy`, `TRUST_PROXY=true`, `SECURE_COOKIES=true`); enforce read-only root, `cap_drop`, no-new-privileges, PID limit, bounded `/tmp`, writable `/data`, and narrow read-only logs. Forbid socket, host network, privilege, and full HA config mounts.
+- [x] Run `ADMIN_TOKEN=x SETUP_TOKEN=y docker compose -f compose.yaml -f compose.reverse-proxy.yaml config`; expect valid YAML. Boundary: `chore: harden Docker runtime`.
 
 ### Task 5: Container proof and recovery contract
 

@@ -71,7 +71,8 @@ Implementation review notes are maintainer-local working artifacts and MUST NOT 
 - [ ] 5.2 Add `Dockerfile`, `compose.yaml`, and `/data` volume wiring for backend, frontend assets, SQLite, logs, and mounted HA logs.
   - [x] 5.2a Add buildable Docker runtime preview with frontend asset serving, `/data` volume, and HA logs mount placeholder.
   - [x] 5.2b Wire preview runtime startup to real `/data` SQLite settings, secrets, digest job, and report-history stores while keeping live HA/AI/notifier adapters fake.
-  - Completion gate: keep umbrella task 5.2 incomplete until Docker runtime remediation Tasks 4-6 (hardening, container proof/recovery contract, and final acceptance) are complete. Slice 1 runtime behavior (Tasks 1-3) is complete; Dockerfile and Compose changes already visible in the working tree predate Slice 1 and are the baseline for Slice 2 review.
+  - [x] Docker runtime remediation Task 4 (Slice 2): harden the Docker runtime and provide explicit local/reverse-proxy Compose modes.
+  - Completion gate: keep umbrella task 5.2 incomplete until Docker runtime remediation Tasks 5-6 (container proof/recovery contract and final acceptance) are complete. Slice 1 runtime behavior (Tasks 1-3) and Slice 2 Docker hardening (Task 4) are complete.
 - [ ] 5.3 Write `README.md` and `docs/` for Docker-only support, privacy/secrets, HA token/log mounts, providers, Telegram, email, and markdown reports.
 
 ## Future Work
