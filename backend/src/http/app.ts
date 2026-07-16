@@ -46,6 +46,8 @@ export type OperationalFailureEvent = {
 export type CreateAppOptions = {
   services: BackendApiServices;
   auth: BackendAuthOptions;
+  /** Enable only when the runtime mode is a controlled TLS-terminating reverse proxy. */
+  trustProxy?: boolean;
   now?: () => string;
   /** Receives secret-safe operational failure events for production logging/metrics. Do not include raw error messages here. */
   failureReporter?: (event: OperationalFailureEvent) => void;
@@ -59,7 +61,7 @@ const SESSION_COOKIE = 'ha_digest_session';
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 export function createApp(options: CreateAppOptions): FastifyInstance {
-  const app = fastify({ logger: false });
+  const app = fastify({ logger: false, trustProxy: options.trustProxy ?? false });
   const sessions = new Map<string, Session>();
   const now = options.now ?? (() => new Date().toISOString());
   const currentTimeMs = () => Date.parse(now());

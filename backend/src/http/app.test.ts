@@ -121,6 +121,31 @@ describe('backend API auth, CSRF, and protected routes', () => {
     expect(login.headers['set-cookie']).toContain('Secure');
   });
 
+  it('uses forwarded client IP headers only when the controlled proxy is trusted', async () => {
+    const trustedApp = createApp({
+      services: createServices(),
+      auth: authOptions(),
+      trustProxy: true,
+      publicRequest: (request) => request.url === '/request-ip'
+    });
+    trustedApp.get('/request-ip', async (request) => ({ ip: request.ip }));
+    app = trustedApp;
+
+    const trusted = await trustedApp.inject({ method: 'GET', url: '/request-ip', headers: { 'x-forwarded-for': '203.0.113.9' } });
+    await trustedApp.close();
+    app = createApp({
+      services: createServices(),
+      auth: authOptions(),
+      trustProxy: false,
+      publicRequest: (request) => request.url === '/request-ip'
+    });
+    app.get('/request-ip', async (request) => ({ ip: request.ip }));
+    const untrusted = await app.inject({ method: 'GET', url: '/request-ip', headers: { 'x-forwarded-for': '203.0.113.9' } });
+
+    expect(trusted.json()).toEqual({ ip: '203.0.113.9' });
+    expect(untrusted.json()).not.toEqual({ ip: '203.0.113.9' });
+  });
+
   it('bootstraps setup with a bearer setup token, creates a session, and never returns raw secrets', async () => {
     app = createApp({ services: createServices(), auth: authOptions(), now: () => NOW });
 

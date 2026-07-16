@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises';
+import { open, readdir, readFile, stat } from 'node:fs/promises';
 import { extname, join, relative, resolve, sep } from 'node:path';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { BackendApiServices, BackendAuthOptions, CreateAppOptions } from './http/app.js';
@@ -7,14 +7,18 @@ import { createPersistentRuntimeServices } from './runtime-persistence.js';
 
 export type RuntimePreviewOptions = {
   frontendDistDir: string;
+  haLogsDir?: string;
   adminToken: string;
   setupToken: string;
   sessionTtlMs?: number;
   secureCookies?: boolean;
+  trustProxy?: boolean;
   now?: () => string;
   failureReporter?: CreateAppOptions['failureReporter'];
   injectSetupToken?: boolean;
 };
+
+type RuntimeCheck = { status: 'ready' } | { status: 'degraded'; reason: string };
 
 export type PersistentRuntimePreviewOptions = RuntimePreviewOptions & {
   dataDir?: string;
@@ -37,6 +41,7 @@ export function createRuntimePreviewApp(options: RuntimePreviewAppOptions): Fast
   const app = createApp({
     services,
     auth: createPreviewAuth(options),
+    trustProxy: options.trustProxy,
     now: options.now,
     failureReporter: options.failureReporter,
     publicRequest: (request) => isRuntimePublicRequest(request.url)
@@ -53,9 +58,13 @@ export function createRuntimePreviewApp(options: RuntimePreviewAppOptions): Fast
   app.get('/ready', async (_request, reply) => {
     const index = await readExistingFile(join(frontendRoot, 'index.html'));
     if (!index) return reply.code(503).send({ status: 'not_ready', reason: 'frontend_index_unavailable' });
+    const haLogs = options.haLogsDir
+      ? await checkHaLogsMount(options.haLogsDir)
+      : { status: 'degraded' as const, reason: 'ha_logs_mount_unconfigured' };
+    if (haLogs.status === 'degraded') return reply.code(503).send({ status: 'not_ready', reason: haLogs.reason });
     const persistence = await options.services?.health?.check();
     if (persistence && !persistence.ok) return reply.code(503).send({ status: 'not_ready', reason: persistence.reason });
-    return { status: 'ready' };
+    return { status: 'ready', checks: { haLogs } };
   });
 
   app.setNotFoundHandler(async (request, reply) => {
@@ -163,6 +172,39 @@ async function readExistingFile(filePath: string): Promise<Buffer | null> {
     return readFile(filePath);
   } catch {
     return null;
+  }
+}
+
+async function checkHaLogsMount(path: string): Promise<RuntimeCheck> {
+  try {
+    const info = await stat(path);
+    if (info.isFile()) return await canOpenForRead(path) ? { status: 'ready' } : { status: 'degraded', reason: 'ha_logs_mount_unreadable' };
+    if (!info.isDirectory()) return { status: 'degraded', reason: 'ha_logs_mount_unavailable' };
+  } catch {
+    return { status: 'degraded', reason: 'ha_logs_mount_unavailable' };
+  }
+
+  try {
+    const entries = await readdir(path, { withFileTypes: true });
+    if (entries.length === 0) return { status: 'degraded', reason: 'ha_logs_mount_empty' };
+    const logFiles = entries.filter((entry) => entry.isFile());
+    if (logFiles.length === 0) return { status: 'degraded', reason: 'ha_logs_mount_unavailable' };
+    for (const entry of logFiles) {
+      if (await canOpenForRead(join(path, entry.name))) return { status: 'ready' };
+    }
+    return { status: 'degraded', reason: 'ha_logs_mount_unreadable' };
+  } catch {
+    return { status: 'degraded', reason: 'ha_logs_mount_unreadable' };
+  }
+}
+
+async function canOpenForRead(path: string): Promise<boolean> {
+  try {
+    const handle = await open(path, 'r');
+    await handle.close();
+    return true;
+  } catch {
+    return false;
   }
 }
 

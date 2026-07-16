@@ -1,29 +1,53 @@
-import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createRuntimeLogger, type RuntimeLogger, type RuntimeStartupFailureEvent } from './runtime-logging.js';
+import { loadRuntimeConfig } from './runtime-config.js';
 import { createPersistentRuntimePreviewApp } from './runtime-preview.js';
 
-const port = Number(process.env.PORT ?? '3000');
-const host = process.env.HOST ?? '0.0.0.0';
-const adminToken = requireEnv('ADMIN_TOKEN');
-const setupToken = requireEnv('SETUP_TOKEN');
-const frontendDistDir = resolve(process.env.FRONTEND_DIST_DIR ?? './frontend-dist');
-const dataDir = resolve(process.env.DATA_DIR ?? '/data');
+type RuntimeServerDependencies = {
+  createApp?: typeof createPersistentRuntimePreviewApp;
+  createLogger?: (options: { dataDir: string; logDir: string }) => RuntimeLogger;
+  setExitCode?: (value: number) => void;
+};
 
-const app = await createPersistentRuntimePreviewApp({
-  frontendDistDir,
-  dataDir,
-  adminToken,
-  setupToken,
-  secureCookies: process.env.SECURE_COOKIES === 'true',
-  failureReporter: (event) => console.error(JSON.stringify({ level: 'error', event: 'runtime_api_failure', ...event }))
-});
+export async function startRuntimeServer(
+  environment: NodeJS.ProcessEnv = process.env,
+  dependencies: RuntimeServerDependencies = {}
+): Promise<void> {
+  const dataDir = environment.DATA_DIR ?? '/data';
+  const logDir = environment.LOG_DIR ?? `${dataDir}/logs`;
+  const logger = (dependencies.createLogger ?? createRuntimeLogger)({ dataDir, logDir });
 
-app.listen({ host, port }).catch((error) => {
-  app.log.error(error);
-  process.exitCode = 1;
-});
+  try {
+    const config = loadRuntimeConfig(environment);
+    const app = await (dependencies.createApp ?? createPersistentRuntimePreviewApp)({
+      frontendDistDir: config.frontendDistDir,
+      dataDir: config.dataDir,
+      haLogsDir: config.haLogsDir,
+      adminToken: config.adminToken,
+      setupToken: config.setupToken,
+      secureCookies: config.secureCookies,
+      trustProxy: config.trustProxy,
+      failureReporter: logger.reportApiFailure
+    });
+    await app.listen({ host: config.host, port: config.port });
+  } catch (error) {
+    logger.reportStartupFailure(startupFailureEvent(error));
+    (dependencies.setExitCode ?? setProcessExitCode)(1);
+  }
+}
 
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is required for the runtime preview.`);
-  return value;
+function startupFailureEvent(error: unknown): RuntimeStartupFailureEvent {
+  return {
+    event: 'runtime_startup_failure',
+    reason: 'runtime_startup_failed',
+    errorName: error instanceof TypeError ? 'TypeError' : 'Error'
+  };
+}
+
+function setProcessExitCode(value: number): void {
+  process.exitCode = value;
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  void startRuntimeServer();
 }

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -32,7 +32,7 @@ describe('runtime preview app', () => {
     expect(api.json()).toMatchObject({ code: 'UNAUTHENTICATED' });
   });
 
-  it('serves unauthenticated health endpoints for container readiness checks', async () => {
+  it('keeps liveness available while rejecting unconfigured Home Assistant logs from readiness', async () => {
     const frontendDistDir = await createFrontendDist();
     app = createRuntimePreviewApp({ frontendDistDir, adminToken: 'admin-token', setupToken: 'setup-token' });
 
@@ -40,9 +40,9 @@ describe('runtime preview app', () => {
     const ready = await app.inject({ method: 'GET', url: '/ready' });
 
     expect(health.statusCode).toBe(200);
-    expect(ready.statusCode).toBe(200);
+    expect(ready.statusCode).toBe(503);
     expect(health.json()).toMatchObject({ status: 'ok' });
-    expect(ready.json()).toMatchObject({ status: 'ready' });
+    expect(ready.json()).toMatchObject({ status: 'not_ready', reason: 'ha_logs_mount_unconfigured' });
   });
 
   it('reports not ready when the frontend index is missing', async () => {
@@ -155,16 +155,110 @@ describe('runtime preview app', () => {
 
   it('reports not ready when persistence health fails', async () => {
     const frontendDistDir = await createFrontendDist();
+    const haLogsDir = await createReadableHaLogs();
     const services = {
       ...createRuntimePreviewServices(),
       health: { check: async () => ({ ok: false, reason: 'persistence_unavailable' }) }
     };
-    app = createRuntimePreviewApp({ frontendDistDir, adminToken: 'admin-token', setupToken: 'setup-token', services });
+    app = createRuntimePreviewApp({ frontendDistDir, haLogsDir, adminToken: 'admin-token', setupToken: 'setup-token', services });
 
     const ready = await app.inject({ method: 'GET', url: '/ready' });
 
     expect(ready.statusCode).toBe(503);
     expect(ready.json()).toMatchObject({ status: 'not_ready', reason: 'persistence_unavailable' });
+  });
+
+  it('checks the configured Home Assistant logs mount during readiness', async () => {
+    const frontendDistDir = await createFrontendDist();
+    const haLogsDir = await mkdtemp(join(tmpdir(), 'ha-digest-ha-logs-'));
+    await writeFile(join(haLogsDir, 'home-assistant.log'), '2026-07-15 safe log line');
+    app = createRuntimePreviewApp({ frontendDistDir, haLogsDir, adminToken: 'admin-token', setupToken: 'setup-token' });
+
+    const ready = await app.inject({ method: 'GET', url: '/ready' });
+
+    expect(ready.statusCode).toBe(200);
+    expect(ready.json()).toMatchObject({ status: 'ready', checks: { haLogs: { status: 'ready' } } });
+  });
+
+  it('accepts a readable Home Assistant log file mount during readiness', async () => {
+    const frontendDistDir = await createFrontendDist();
+    const haLogsDir = await mkdtemp(join(tmpdir(), 'ha-digest-ha-log-file-'));
+    const haLogFile = join(haLogsDir, 'home-assistant.log');
+    await writeFile(haLogFile, '2026-07-15 safe log line');
+    app = createRuntimePreviewApp({ frontendDistDir, haLogsDir: haLogFile, adminToken: 'admin-token', setupToken: 'setup-token' });
+
+    const ready = await app.inject({ method: 'GET', url: '/ready' });
+
+    expect(ready.statusCode).toBe(200);
+    expect(ready.json()).toMatchObject({ status: 'ready', checks: { haLogs: { status: 'ready' } } });
+  });
+
+  it('rejects a missing configured Home Assistant logs mount from readiness', async () => {
+    const frontendDistDir = await createFrontendDist();
+    const missingHaLogsDir = join(await mkdtemp(join(tmpdir(), 'ha-digest-missing-parent-')), 'not-created');
+    app = createRuntimePreviewApp({ frontendDistDir, haLogsDir: missingHaLogsDir, adminToken: 'admin-token', setupToken: 'setup-token' });
+
+    const ready = await app.inject({ method: 'GET', url: '/ready' });
+
+    expect(ready.statusCode).toBe(503);
+    expect(ready.json()).toMatchObject({ status: 'not_ready', reason: 'ha_logs_mount_unavailable' });
+  });
+
+  it('rejects an empty configured Home Assistant logs mount from readiness', async () => {
+    const frontendDistDir = await createFrontendDist();
+    const haLogsDir = await mkdtemp(join(tmpdir(), 'ha-digest-empty-ha-logs-'));
+    app = createRuntimePreviewApp({ frontendDistDir, haLogsDir, adminToken: 'admin-token', setupToken: 'setup-token' });
+
+    const ready = await app.inject({ method: 'GET', url: '/ready' });
+
+    expect(ready.statusCode).toBe(503);
+    expect(ready.json()).toMatchObject({ status: 'not_ready', reason: 'ha_logs_mount_empty' });
+  });
+
+  it('rejects an unreadable configured Home Assistant logs mount from readiness', async () => {
+    const frontendDistDir = await createFrontendDist();
+    const haLogsDir = await mkdtemp(join(tmpdir(), 'ha-digest-unreadable-ha-logs-'));
+    try {
+      await chmod(haLogsDir, 0o000);
+      app = createRuntimePreviewApp({ frontendDistDir, haLogsDir, adminToken: 'admin-token', setupToken: 'setup-token' });
+
+      const ready = await app.inject({ method: 'GET', url: '/ready' });
+
+      expect(ready.statusCode).toBe(503);
+      expect(ready.json()).toMatchObject({ status: 'not_ready', reason: 'ha_logs_mount_unreadable' });
+    } finally {
+      await chmod(haLogsDir, 0o700);
+    }
+  });
+
+  it('rejects a directory that contains only metadata instead of a readable Home Assistant log', async () => {
+    const frontendDistDir = await createFrontendDist();
+    const haLogsDir = await mkdtemp(join(tmpdir(), 'ha-digest-metadata-only-ha-logs-'));
+    await mkdir(join(haLogsDir, 'metadata'));
+    app = createRuntimePreviewApp({ frontendDistDir, haLogsDir, adminToken: 'admin-token', setupToken: 'setup-token' });
+
+    const ready = await app.inject({ method: 'GET', url: '/ready' });
+
+    expect(ready.statusCode).toBe(503);
+    expect(ready.json()).toMatchObject({ status: 'not_ready', reason: 'ha_logs_mount_unavailable' });
+  });
+
+  it('rejects a directory with a non-readable Home Assistant log file', async () => {
+    const frontendDistDir = await createFrontendDist();
+    const haLogsDir = await mkdtemp(join(tmpdir(), 'ha-digest-unreadable-ha-log-file-'));
+    const logFile = join(haLogsDir, 'home-assistant.log');
+    await writeFile(logFile, '2026-07-15 safe log line');
+    try {
+      await chmod(logFile, 0o000);
+      app = createRuntimePreviewApp({ frontendDistDir, haLogsDir, adminToken: 'admin-token', setupToken: 'setup-token' });
+
+      const ready = await app.inject({ method: 'GET', url: '/ready' });
+
+      expect(ready.statusCode).toBe(503);
+      expect(ready.json()).toMatchObject({ status: 'not_ready', reason: 'ha_logs_mount_unreadable' });
+    } finally {
+      await chmod(logFile, 0o600);
+    }
   });
 
   it('closes runtime services when the app closes', async () => {
@@ -218,4 +312,10 @@ async function createFrontendDist(): Promise<string> {
   await mkdir(join(frontendDistDir, 'assets'), { recursive: true });
   await writeFile(join(frontendDistDir, 'assets', 'app.js'), 'window.__preview = true;');
   return frontendDistDir;
+}
+
+async function createReadableHaLogs(): Promise<string> {
+  const haLogsDir = await mkdtemp(join(tmpdir(), 'ha-digest-readable-ha-logs-'));
+  await writeFile(join(haLogsDir, 'home-assistant.log'), '2026-07-15 safe log line');
+  return haLogsDir;
 }
