@@ -8,6 +8,8 @@ test-results/
 .atl/
 AGENTS.md
 docs/review/
+openspec/
+docs/superpowers/
 .preview/
 .env*
 !.env.example

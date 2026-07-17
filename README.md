@@ -84,23 +84,33 @@ The smoke command installs Playwright Chromium if it is missing.
 
 ### Run the Docker preview
 
-The repository includes an early Docker preview so contributors can build the backend and frontend together. It serves the built Spanish-first UI and a protected preview API, but it is not the final production install path yet.
+The repository includes a Docker-first runtime preview for Home Assistant Core. It serves the built Spanish-first UI and protected preview API. It is not an HAOS/Supervised add-on and is not a production release yet.
 
 ```bash
 cp .env.example .env
 # Replace ADMIN_TOKEN and SETUP_TOKEN with long random values before starting.
-docker compose up --build
+docker compose up --build --detach
 ```
 
 Then open `http://localhost:3000`.
 
-The Compose preview is local-only by default: it binds `127.0.0.1:3000` and requires explicit `ADMIN_TOKEN` and `SETUP_TOKEN` values from `.env`. In the persistent runtime the setup token stays private and server-side; the current UI does not expose a manual setup-token entry flow yet. Do not bind the preview to `0.0.0.0` unless you understand this is still an early preview and have added your own network protection.
+The Compose preview is local-only by default: it binds `127.0.0.1:3000` and requires explicit `ADMIN_TOKEN` and `SETUP_TOKEN` values from `.env`. In the persistent runtime the setup token stays private and server-side; the current UI does not expose a manual setup-token entry flow yet. Do not change local mode to `0.0.0.0`; use the documented reverse-proxy mode instead.
 
-The default `SECURE_COOKIES=false` setting is only for this localhost HTTP preview. Use secure cookies for HTTPS or reverse-proxy deployments.
+The default `SECURE_COOKIES=false` setting is only for this localhost HTTP preview. For a TLS-terminating proxy, start with the explicit override, which requires trusted proxy headers and Secure cookies:
 
-The Compose file creates a `/data` volume for the partially real persistent runtime. Setup/settings secrets, digest job queue state, and report history are now backed by SQLite plus `/data/app.key`; external Home Assistant collection, live AI provider calls, live notifier delivery, and scheduler execution are still pending. The optional read-only `HA_LOGS_PATH` mount placeholder is for future Home Assistant log collection. The example path is outside the repository (`/tmp/ha-digest-preview/ha-logs`) so real Home Assistant logs are not normalized as project files; if you use a repo-local scratch folder anyway, `.preview/` is ignored by Git and Docker.
+```bash
+docker compose -f compose.yaml -f compose.reverse-proxy.yaml up --build --detach
+```
 
-The preview container also exposes unauthenticated `/health` and `/ready` endpoints for local Docker health checks.
+The Compose file creates a `/data` volume for the partially real persistent runtime. Setup/settings secrets, digest job queue state, and report history are backed by SQLite plus `/data/app.key`; external Home Assistant collection, live AI provider calls, live notifier delivery, and scheduler execution are still pending. Set `HA_LOG_FILE` in `.env` to one real log file. It is mounted read-only, and `/ready` returns HTTP 503 when it is missing, empty, metadata-only, or unreadable. Do not mount the full Home Assistant configuration directory or Docker socket.
+
+The preview container exposes unauthenticated `/health` and `/ready` endpoints. `/health` is liveness-only; `/ready` includes the frontend, SQLite, and readable HA-log checks. Run the disposable Docker boundary harness with:
+
+```bash
+pnpm verify:docker
+```
+
+For local mode, reverse-proxy requirements, backup/restore, encryption-key handling, destructive reset, and the current runtime boundary, see [Docker Runtime Operations](docs/operations/docker-runtime.md).
 
 ## Security notes
 

@@ -10,6 +10,7 @@
     "test:smoke": "playwright install chromium && playwright test",
     "test": "vitest run",
     "test:focused": "node scripts/check-focused-tests.mjs",
+    "verify:docker": "bash scripts/verify-docker-runtime.sh",
     "typecheck": "pnpm -r typecheck"
   },
   "devDependencies": {
