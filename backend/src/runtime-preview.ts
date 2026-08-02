@@ -22,13 +22,16 @@ type RuntimeCheck = { status: 'ready' } | { status: 'degraded'; reason: string }
 
 export type PersistentRuntimePreviewOptions = RuntimePreviewOptions & {
   dataDir?: string;
+  haMaxStates?: number;
+  haMaxLogLines?: number;
+  haMaxResponseBytes?: number;
+  haAnalysisTimeoutMs?: number;
 };
 
 export async function createPersistentRuntimePreviewApp(options: PersistentRuntimePreviewOptions): Promise<FastifyInstance> {
   return createRuntimePreviewApp({
     ...options,
-    injectSetupToken: false,
-    services: await createPersistentRuntimeServices({ dataDir: options.dataDir, now: options.now })
+    services: await createPersistentRuntimeServices({ dataDir: options.dataDir, now: options.now, haLogPath: options.haLogsDir ? join(options.haLogsDir, 'home-assistant.log') : undefined, haMaxStates: options.haMaxStates, haMaxLogLines: options.haMaxLogLines, haMaxResponseBytes: options.haMaxResponseBytes, haAnalysisTimeoutMs: options.haAnalysisTimeoutMs })
   });
 }
 
@@ -109,24 +112,26 @@ function createPreviewServices(now = () => new Date().toISOString()): BackendApi
     settings: {
       async get() {
         return {
-          haUrl: 'http://homeassistant.local:8123',
-          aiProvider: 'gemini',
-          secretRefs: { haTokenRef: 'preview:ha', aiKeyRef: 'preview:ai', notifierRefs: {} },
+          homeAssistant: { url: 'http://homeassistant.local:8123', token: { configured: true, mask: 'configured' } },
+          ai: { provider: 'gemini' as const, key: { configured: true, mask: 'configured' } },
+          notifications: { channel: 'none' as const },
           schedules: [],
-          privacyLevel: 'balanced',
+          privacyLevel: 'balanced' as const,
           retentionDays: 30
         };
       },
-      async update(input) {
-        return input;
+      async update() {
+        return this.get();
       }
     },
     digestJobs: {
       async enqueue(input) {
         return { status: 'queued', jobId: `preview:${input.triggerWindowId}` };
-      }
+      },
+      async get() { return null; },
+      async retryFailed() { return null; }
     },
-    reports: { async list() { return []; } },
+    reports: { async list() { return []; }, async get() { return null; } },
     notes: {
       async add(input) { return { id: 'preview-note', ...input, createdAt: now() }; },
       async listWindow() { return []; }

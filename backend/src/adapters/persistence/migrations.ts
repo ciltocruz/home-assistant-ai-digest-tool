@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-const MIGRATION_VERSION = 1;
+const MIGRATION_VERSION = 3;
 
 export function runMigrations(db: DatabaseSync): void {
   db.exec('pragma foreign_keys = on');
@@ -38,6 +38,17 @@ function applyMigrations(db: DatabaseSync): void {
     create table if not exists settings (
       key text primary key,
       value_json text not null,
+     updated_at text not null
+    );
+
+    create table if not exists onboarding_state (
+      singleton integer primary key check (singleton = 1),
+      current_step text not null,
+      completed_steps_json text not null,
+      draft_json text not null,
+      secret_refs_json text not null,
+      secret_metadata_json text not null,
+      completed integer not null default 0,
       updated_at text not null
     );
 
@@ -109,5 +120,28 @@ function applyMigrations(db: DatabaseSync): void {
       created_at text not null
     );
   `);
+  addDigestJobColumns(db);
+  db.prepare('insert or ignore into schema_migrations(version) values (?)').run(1);
+  db.prepare('insert or ignore into schema_migrations(version) values (?)').run(2);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(MIGRATION_VERSION);
+  db.prepare(
+    `insert or ignore into onboarding_state(singleton, current_step, completed_steps_json, draft_json, secret_refs_json, secret_metadata_json, completed, updated_at)
+     select 1,
+       case when exists(select 1 from settings where key = 'runtime' and value_json not like '%unconfigured%') then 'first_report' else 'home_assistant' end,
+       case when exists(select 1 from settings where key = 'runtime' and value_json not like '%unconfigured%') then '["home_assistant","ai_provider","notifications","schedule","privacy"]' else '[]' end,
+       '{}', '{}', '{}',
+       case when exists(select 1 from settings where key = 'runtime' and value_json not like '%unconfigured%') then 1 else 0 end,
+       strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`
+  ).run();
+}
+
+function addDigestJobColumns(db: DatabaseSync): void {
+  const columns = new Set((db.prepare('pragma table_info(digest_jobs)').all() as Array<{ name: string }>).map((column) => column.name));
+  const additions = [
+    ['stage', "text not null default 'queued'"], ['error_code', 'text'], ['error_message', 'text'],
+    ['correlation_id', 'text'], ['settings_snapshot_json', 'text'], ['report_id', 'text'], ['retry_count', 'integer not null default 0']
+  ] as const;
+  for (const [name, definition] of additions) if (!columns.has(name)) db.exec(`alter table digest_jobs add column ${name} ${definition}`);
+  db.exec("update digest_jobs set stage = case when status = 'completed' then 'completed' when status = 'failed' then 'failed' else 'queued' end where stage is null or stage = '' or (stage = 'queued' and status in ('completed', 'failed'))");
+  db.exec('create index if not exists idx_digest_jobs_report on digest_jobs(report_id)');
 }

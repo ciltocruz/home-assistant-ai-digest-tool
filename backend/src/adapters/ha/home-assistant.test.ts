@@ -169,6 +169,38 @@ describe('Home Assistant collectors and detectors', () => {
 
     expect(incidents).toEqual([]);
   });
+
+  it('assigns stable IDs to equivalent redacted log facts across collection times', async () => {
+    const logReader: HomeAssistantLogReader = { async readLogLines() { return ['2026-07-02 12:00:00 ERROR [homeassistant.components.recorder] failed token=secret']; } };
+    const first = await new HomeAssistantFactsCollector({ apiClient: { async listStates() { return []; } }, logReader, now: () => '2026-07-02T12:00:00.000Z' }).collect();
+    const second = await new HomeAssistantFactsCollector({ apiClient: { async listStates() { return []; } }, logReader, now: () => '2026-07-03T12:00:00.000Z' }).collect();
+    expect(first.facts[0]?.id).toBe(second.facts[0]?.id);
+    expect(JSON.stringify(first.facts)).not.toContain('secret');
+  });
+
+  it('keeps canonical log incident IDs stable when an equivalent bounded tail shifts position', async () => {
+    const line = '2026-07-02 12:00:00 ERROR [homeassistant.components.recorder] Database failed token=secret';
+    const first = await new HomeAssistantFactsCollector({
+      apiClient: { async listStates() { return []; } }, logReader: { async readLogLines() { return ['noise', line]; } }, now: () => now
+    }).collect();
+    const second = await new HomeAssistantFactsCollector({
+      apiClient: { async listStates() { return []; } }, logReader: { async readLogLines() { return ['other noise', 'more noise', line]; } }, now: () => now
+    }).collect();
+
+    const detector = new HomeAssistantIncidentDetector({ now: () => now });
+    await expect(detector.detect(first.facts)).resolves.toMatchObject([{ id: expect.any(String) }]);
+    expect((await detector.detect(first.facts))[0]?.id).toBe((await detector.detect(second.facts))[0]?.id);
+  });
+
+  it('intentionally gives exact duplicate log records the same canonical incident identity', async () => {
+    const line = '2026-07-02 12:00:00 ERROR [homeassistant.components.recorder] Database failed token=secret';
+    const facts = await new HomeAssistantFactsCollector({
+      apiClient: { async listStates() { return []; } }, logReader: { async readLogLines() { return [line, line]; } }, now: () => now
+    }).collect();
+    const incidents = await new HomeAssistantIncidentDetector({ now: () => now }).detect(facts.facts);
+
+    expect(incidents.map((incident) => incident.id)).toEqual([incidents[0]?.id, incidents[0]?.id]);
+  });
 });
 
 function state(entityId: string, value: string, changedAt: string, attributes: Record<string, unknown> = {}, updatedAt = changedAt) {

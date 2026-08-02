@@ -3,13 +3,36 @@ import {
   DigestSummarySchema,
   DigestWindowSchema,
   ErrorDtoSchema,
+  EditableSettingsDtoSchema,
+  OnboardingProgressSchema,
+  OnboardingStepCommandSchema,
+  ReportPresentationV1Schema,
   RedactedSettingsDtoSchema,
   ScheduleSchema,
+  SettingsUpdateCommandSchema,
   SetupValidationRequestSchema,
   SetupValidationResponseSchema
 } from './dtos';
 
 describe('shared DTOs', () => {
+  it('accepts resumable onboarding progress without serializing secret values or references', () => {
+    const command = OnboardingStepCommandSchema.parse({
+      step: 'home_assistant',
+      draft: { haUrl: 'http://homeassistant.local:8123' },
+      secrets: { haToken: 'sentinel-onboarding-secret' }
+    });
+    const progress = OnboardingProgressSchema.parse({
+      currentStep: 'ai_provider',
+      completedSteps: ['home_assistant'],
+      draft: { haUrl: 'http://homeassistant.local:8123' },
+      secretMetadata: { haToken: { configured: true, mask: 'se…et' } },
+      completed: false
+    });
+
+    expect(command.secrets.haToken).toBe('sentinel-onboarding-secret');
+    expect(JSON.stringify(progress)).not.toContain('sentinel-onboarding-secret');
+    expect(JSON.stringify(progress)).not.toContain('secret_ref');
+  });
   it('accepts raw secrets only in setup validation requests', () => {
     const request = SetupValidationRequestSchema.parse({
       haUrl: 'https://home-assistant.local:8123',
@@ -87,6 +110,27 @@ describe('shared DTOs', () => {
 
     expect(settings.secretRefs.aiKeyRef).toBe('secret_ai_key');
     expect(JSON.stringify(settings)).not.toContain('sentinel-raw-ai-credential');
+  });
+
+  it('accepts explicit secret operations while refusing raw values and references in editable settings', () => {
+    const command = SettingsUpdateCommandSchema.parse({
+      homeAssistant: { url: 'https://home-assistant.local:8123', token: { operation: 'keep_current' } },
+      ai: { provider: 'openai', key: { operation: 'replace', value: 'sentinel-new-provider-key' } },
+      notifications: { channel: 'none' },
+      schedules: [{ kind: 'daily', enabled: true, time: '08:00', timezone: 'Europe/Madrid' }],
+      privacyLevel: 'minimal',
+      retentionDays: 14
+    });
+
+    expect(command.ai.key).toEqual({ operation: 'replace', value: 'sentinel-new-provider-key' });
+    expect(() => EditableSettingsDtoSchema.parse({
+      homeAssistant: { url: 'https://home-assistant.local:8123', token: { configured: true, mask: '••••' }, tokenRef: 'secret-ha' },
+      ai: { provider: 'openai', key: { configured: true, mask: '••••' } },
+      notifications: { channel: 'none' },
+      schedules: command.schedules,
+      privacyLevel: command.privacyLevel,
+      retentionDays: command.retentionDays
+    })).toThrow();
   });
 
   it('accepts valid schedule times at HH:mm boundaries', () => {
@@ -172,6 +216,28 @@ describe('shared DTOs', () => {
 
     expect(summary.deliveryStatus).toBe('sent');
     expect(JSON.stringify(summary)).not.toContain('providerPayload');
+  });
+
+  it('accepts only durable manual job responses and credential-free report detail', async () => {
+    const { RunDigestRequestSchema, RunDigestResponseSchema, DigestJobStatusSchema, DigestDetailSchema } = await import('./dtos');
+    expect(RunDigestRequestSchema.parse({ kind: 'manual' })).toEqual({ kind: 'manual' });
+    expect(() => RunDigestRequestSchema.parse({ kind: 'daily' })).toThrow();
+    expect(RunDigestResponseSchema.parse({ status: 'queued', jobId: 'job-1' })).toEqual({ status: 'queued', jobId: 'job-1' });
+    expect(DigestJobStatusSchema.parse({ id: 'job-1', status: 'completed', stage: 'completed', attempts: 1, retryCount: 0, retryAvailable: false, reportId: 'digest-1', createdAt: '2026-07-06T01:00:00.000Z', updatedAt: '2026-07-06T01:00:00.000Z' })).toMatchObject({ reportId: 'digest-1' });
+    expect(DigestDetailSchema.parse({ id: 'digest-1', summary: { id: 'digest-1', window: { from: '2026-07-06T00:00:00.000Z', to: '2026-07-06T01:00:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-07-06T01:00:00.000Z', deliveryStatus: 'pending' }, rendered: { format: 'markdown', body: '# Digest' } }).rendered.body).toBe('# Digest');
+  });
+
+  it('accepts versioned structured report presentations from the API', () => {
+    expect(ReportPresentationV1Schema.parse({
+      version: 1,
+      mode: 'structured',
+      overview: { title: 'Home Assistant Digest', detail: 'One condition needs review.' },
+      attention: [{ id: 'attention-1', severity: 'critical', title: 'Garage door sensor', detail: 'Unavailable for 3 hours.' }],
+      observations: [{ id: 'observations-1', severity: 'info', title: 'Hallway temperature', detail: 'Changed more often than usual.' }],
+      allGood: [],
+      recommendations: [{ id: 'recommendation-1', severity: 'critical', title: 'Garage door sensor', detail: 'Unavailable for 3 hours.' }],
+      evidence: [{ id: 'evidence-1', title: 'Recorder window', detail: 'No gaps were reported.' }]
+    })).toMatchObject({ mode: 'structured', version: 1 });
   });
 
   it('returns field-safe errors without secret values', () => {

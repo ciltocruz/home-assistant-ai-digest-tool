@@ -20,5 +20,6 @@ export type CollectionResult = {
 
 export interface Collector {
   readonly id: string;
-  collect(): Promise<CollectionResult>;
+  collect(context: ExecutionContext): Promise<CollectionResult>;
 }
+import type { ExecutionContext } from './execution.js';

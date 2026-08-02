@@ -59,7 +59,7 @@ export function applyIgnoreRules(incidents: Incident[], rules: IgnoreRuleDto[], 
 
 export function prioritizeIncidents(incidents: Incident[]): Incident[] {
   const rank: Record<Incident['severity'], number> = { critical: 0, warning: 1, info: 2 };
-  return [...incidents].sort((a, b) => rank[a.severity] - rank[b.severity] || a.type.localeCompare(b.type));
+  return [...incidents].sort((a, b) => rank[a.severity] - rank[b.severity] || a.type.localeCompare(b.type) || a.id.localeCompare(b.id));
 }
 
 export function predictBatteryIncidents(

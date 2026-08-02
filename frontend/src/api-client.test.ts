@@ -10,19 +10,30 @@ const setupRequest = {
 };
 
 const settingsResponse = {
-  haUrl: setupRequest.haUrl,
-  aiProvider: 'gemini' as const,
-  secretRefs: {
-    haTokenRef: 'ref-home-assistant-access',
-    aiKeyRef: 'ref-ai-provider',
-    notifierRefs: { telegram: 'ref-telegram' }
-  },
+  homeAssistant: { url: setupRequest.haUrl, token: { configured: true, mask: '••••ha' } },
+  ai: { provider: 'gemini' as const, key: { configured: true, mask: '••••ai' } },
+  notifications: { channel: 'telegram' as const, chatId: '123456', botToken: { configured: true, mask: '••••telegram' } },
   schedules: [{ kind: 'daily' as const, enabled: true, time: '08:00', timezone: 'Europe/Madrid' }],
   privacyLevel: 'balanced' as const,
   retentionDays: 90
 };
 
 describe('createApiClient', () => {
+  test('loads and saves onboarding progress with the bootstrap bearer without persisting raw secrets in responses', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const client = createApiClient({ setupToken: 'setup bootstrap value', fetch: async (url, init = {}) => {
+      calls.push({ url: String(url), init });
+      return jsonResponse(200, { currentStep: 'ai_provider', completedSteps: ['home_assistant'], draft: { haUrl: setupRequest.haUrl }, secretMetadata: { haToken: { configured: true, mask: 'se…et' } }, completed: false });
+    } });
+
+    const onboarding = client as typeof client & { getOnboarding(): Promise<unknown>; saveOnboarding(input: unknown): Promise<unknown> };
+    const loaded = await onboarding.getOnboarding();
+    const saved = await onboarding.saveOnboarding({ step: 'home_assistant', draft: { haUrl: setupRequest.haUrl }, secrets: { haToken: setupRequest.haToken } });
+
+    expect(calls.map(({ url, init }) => [url, init.method])).toEqual([['/api/onboarding', 'GET'], ['/api/onboarding', 'PATCH']]);
+    expect(calls.every(({ init }) => new Headers(init.headers).get('authorization') === 'Bearer setup bootstrap value')).toBe(true);
+    expect(JSON.stringify([loaded, saved])).not.toContain(setupRequest.haToken);
+  });
   test('validates setup through the shared DTO contract and stores the CSRF token', async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const client = createApiClient({
@@ -62,7 +73,14 @@ describe('createApiClient', () => {
     });
 
     await client.getSettings();
-    await client.updateSettings(settingsResponse);
+    await client.updateSettings({
+      homeAssistant: { url: setupRequest.haUrl, token: { operation: 'keep_current' } },
+      ai: { provider: 'gemini', key: { operation: 'keep_current' } },
+      notifications: { channel: 'telegram', chatId: '123456', botToken: { operation: 'keep_current' } },
+      schedules: settingsResponse.schedules,
+      privacyLevel: settingsResponse.privacyLevel,
+      retentionDays: settingsResponse.retentionDays
+    });
     await client.runDigest({ kind: 'manual' });
     await client.listHistory();
     await client.addNote({ text: 'Observed restart', occurredAt: '2026-07-10T10:00:00.000Z', tags: ['maintenance'] });
@@ -90,7 +108,14 @@ describe('createApiClient', () => {
     for (const call of calls.filter((entry) => (entry.init.method ?? 'GET') !== 'GET')) {
       expect(call.init.headers).toMatchObject({ 'x-csrf-token': 'csrf sample value', 'content-type': 'application/json' });
     }
-    expect(JSON.parse(String(calls[1]?.init.body))).toEqual(settingsResponse);
+    expect(JSON.parse(String(calls[1]?.init.body))).toEqual({
+      homeAssistant: { url: setupRequest.haUrl, token: { operation: 'keep_current' } },
+      ai: { provider: 'gemini', key: { operation: 'keep_current' } },
+      notifications: { channel: 'telegram', chatId: '123456', botToken: { operation: 'keep_current' } },
+      schedules: settingsResponse.schedules,
+      privacyLevel: settingsResponse.privacyLevel,
+      retentionDays: settingsResponse.retentionDays
+    });
     expect(JSON.parse(String(calls[2]?.init.body))).toEqual({ kind: 'manual' });
     expect(JSON.parse(String(calls[4]?.init.body))).toEqual({ text: 'Observed restart', occurredAt: '2026-07-10T10:00:00.000Z', tags: ['maintenance'] });
     expect(JSON.parse(String(calls[7]?.init.body))).toEqual({ match: 'sensor.noisy', type: 'entity', reason: 'Known noisy fixture' });
@@ -108,6 +133,33 @@ describe('createApiClient', () => {
       code: 'INVALID_RESPONSE',
       requestId: 'client'
     });
+  });
+
+  test('accepts queued manual jobs and keeps report detail validation separate', async () => {
+    const client = createApiClient({ fetch: async (url, init = {}) => url.endsWith('/api/digests/run')
+      ? jsonResponse(202, { status: 'queued', jobId: 'job-1' })
+      : routeResponse(String(url), init) });
+    const result = await client.runDigest({ kind: 'manual' });
+    expect(result).toEqual({ status: 'queued', jobId: 'job-1' });
+    await expect(client.getDigest('digest-1')).resolves.toMatchObject({ id: 'digest-1', rendered: { format: 'markdown' } });
+  });
+
+  test('reads durable job progress and submits a bounded retry through the safe API contract', async () => {
+    const calls: string[] = [];
+    const job = { id: 'job-1', status: 'failed', stage: 'failed', attempts: 1, retryCount: 0, retryAvailable: true, errorCode: 'HOME_ASSISTANT_UNAVAILABLE', errorMessage: 'No se pudieron recopilar datos de Home Assistant. Revise la conexión y el token.', createdAt: '2026-08-01T10:00:00.000Z', updatedAt: '2026-08-01T10:00:00.000Z' };
+    const client = createApiClient({ csrfToken: 'csrf-token', fetch: async (url, init = {}) => {
+      calls.push(`${String(url)}:${init.method ?? 'GET'}`);
+      return jsonResponse(200, String(url).endsWith('/retry') ? { ...job, status: 'queued', stage: 'queued', retryCount: 1, retryAvailable: false } : job);
+    } });
+
+    await expect(client.getDigestJob('job-1')).resolves.toMatchObject({ stage: 'failed', retryAvailable: true });
+    await expect(client.retryDigestJob('job-1')).resolves.toMatchObject({ status: 'queued', retryCount: 1, retryAvailable: false });
+    expect(calls).toEqual(['/api/digests/jobs/job-1:GET', '/api/digests/jobs/job-1/retry:POST']);
+  });
+
+  test('keeps a safe contract diagnostic for malformed manual report details', async () => {
+    const client = createApiClient({ fetch: async (url) => url.endsWith('/api/digests/bad') ? jsonResponse(200, { id: 'bad' }) : jsonResponse(404, { code: 'NOT_FOUND', message: 'Not found.', requestId: 'missing' }) });
+    await expect(client.getDigest('bad')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', message: expect.stringContaining('invalid') });
   });
 
   test('validates sendDigest input through the shared DTO contract before sending', async () => {
@@ -237,6 +289,7 @@ function routeResponse(url: string, init: RequestInit): Response {
   if (url.endsWith('/api/settings') && method === 'PUT') return jsonResponse(200, settingsResponse);
   if (url.endsWith('/api/digests/run') && method === 'POST') return jsonResponse(200, { jobId: 'job-1', status: 'queued' });
   if (url.endsWith('/api/digests/history') && method === 'GET') return jsonResponse(200, [digestSummaryResponse]);
+  if (url.endsWith('/api/digests/digest-1') && method === 'GET') return jsonResponse(200, { id: 'digest-1', summary: digestSummaryResponse, rendered: { format: 'markdown', body: '# Synthetic report' } });
   if (url.endsWith('/api/notes') && method === 'POST') return jsonResponse(200, noteResponse);
   if (url.endsWith('/api/notes?from=2026-07-10T00%3A00%3A00.000Z&to=2026-07-11T00%3A00%3A00.000Z') && method === 'GET') return jsonResponse(200, [noteResponse]);
   if (url.endsWith('/api/ignores') && method === 'GET') return jsonResponse(200, [ignoreResponse]);

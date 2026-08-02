@@ -68,12 +68,20 @@ Implementation review notes are maintainer-local working artifacts and MUST NOT 
 ## Phase 5: Verification, Docker, Docs
 
 - [x] 5.1 Add Playwright smoke flows for onboarding, manual digest, history empty state, notes, ignores, and notifier test-send.
-- [ ] 5.2 Add `Dockerfile`, `compose.yaml`, and `/data` volume wiring for backend, frontend assets, SQLite, logs, and mounted HA logs.
+- [x] 5.2 Add `Dockerfile`, `compose.yaml`, and `/data` volume wiring for backend, frontend assets, SQLite, logs, and mounted HA logs.
   - [x] 5.2a Add buildable Docker runtime preview with frontend asset serving, `/data` volume, and HA logs mount placeholder.
   - [x] 5.2b Wire preview runtime startup to real `/data` SQLite settings, secrets, digest job, and report-history stores while keeping live HA/AI/notifier adapters fake.
   - [x] Docker runtime remediation Task 4 (Slice 2): harden the Docker runtime and provide explicit local/reverse-proxy Compose modes.
-  - Completion gate: keep umbrella task 5.2 incomplete until Docker runtime remediation Tasks 5-6 (container proof/recovery contract and final acceptance) are complete. Slice 1 runtime behavior (Tasks 1-3) and Slice 2 Docker hardening (Task 4) are complete.
-- [ ] 5.3 Write `README.md` and `docs/` for Docker-only support, privacy/secrets, HA token/log mounts, providers, Telegram, email, and markdown reports.
+  - [x] Docker runtime remediation Task 5 (Slice 3): add container boundary verification and recovery operations documentation.
+  - Completion gate passed: Docker runtime remediation Tasks 1-6 are complete, including container startup-failure logging proof in the final acceptance gate.
+- [x] 5.3 Write `README.md` and `docs/` for Docker-only support, privacy/secrets, HA token/log mounts, providers, Telegram, email, and markdown reports.
+
+## Final MVP Verification Remediation — maintainer-approved `size:exception`
+
+- [x] R1 Add default monitored-entity proposals with priority explanations and user tuning preferences.
+- [x] R2 Enforce configurable history-retention cleanup and a bounded persistent report count.
+- [x] R3 Add polling, storage, and concurrency admission limits with explicit delay/skip reasons; existing job-store retry limits remain in force.
+- [x] R4 Replace Docker source-string checks with executable built-container behavior tests.
 
 ## Future Work
 

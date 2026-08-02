@@ -8,6 +8,7 @@ import type { AIProvider, RedactedDigestInput } from '../domain/providers.js';
 import type { ReportRenderer, RenderedDigest } from '../domain/renderers.js';
 import type { DeliveryStore, IgnoreRuleStore, NoteStore, ReportStore } from '../domain/stores.js';
 import { applyIgnoreRules, buildRedactedDigestInput, prioritizeIncidents } from './incident-processing.js';
+import { createExecutionContext, type ExecutionContext } from '../domain/execution.js';
 
 export type TransactionBoundary = {
   run<T>(operation: () => Promise<T>): Promise<T>;
@@ -69,10 +70,11 @@ export class DigestOrchestrator {
   async runNext(): Promise<DigestOrchestratorResult> {
     const job = await this.options.jobStore.leaseNext();
     if (!job) return { status: 'idle' };
+    const execution = createExecutionContext();
 
     let context: Parameters<DigestRunContextStore['save']>[0];
     try {
-      context = await this.buildContext(job);
+      context = await this.buildContext(job, execution);
     } catch (error) {
       const stage = error instanceof DigestStageFailure ? error.stage : 'collector';
       return this.retryWithoutContext(job, stage, error);
@@ -80,7 +82,7 @@ export class DigestOrchestrator {
 
     let digest: Awaited<ReturnType<AIProvider['generate']>>;
     try {
-      digest = await this.options.provider.generate(context.providerInput);
+      digest = await this.options.provider.generate(context.providerInput, execution);
     } catch (error) {
       this.reportFailure(job.id, 'provider', error);
       await this.options.transaction.run(async () => {
@@ -92,7 +94,7 @@ export class DigestOrchestrator {
 
     let rendered: RenderedDigest;
     try {
-      rendered = await this.options.renderer.render(digest);
+      rendered = await this.options.renderer.render(digest, execution);
     } catch (error) {
       this.reportFailure(job.id, 'renderer', error);
       await this.options.transaction.run(async () => {
@@ -141,14 +143,15 @@ export class DigestOrchestrator {
       for (const delivery of sentDeliveries) await this.options.deliveryStore.record(delivery);
       await this.options.jobStore.complete(job.id);
     });
+    execution.dispose();
     return { status: 'completed', jobId: job.id, reportId };
   }
 
-  private async buildContext(job: DigestJob): Promise<Parameters<DigestRunContextStore['save']>[0]> {
+  private async buildContext(job: DigestJob, execution: ExecutionContext): Promise<Parameters<DigestRunContextStore['save']>[0]> {
     const window = parseWindow(job.triggerWindowId, this.now());
     let collections: Awaited<ReturnType<Collector['collect']>>[];
     try {
-      collections = await Promise.all(this.options.collectors.map((collector) => collector.collect()));
+      collections = await Promise.all(this.options.collectors.map((collector) => collector.collect(execution)));
     } catch (error) {
       throw new DigestStageFailure('collector', error);
     }
@@ -156,7 +159,7 @@ export class DigestOrchestrator {
     const unsupportedSignals = collections.flatMap((collection) => collection.unsupportedSignals);
     let detected: Incident[];
     try {
-      detected = (await Promise.all(this.options.detectors.map((detector) => detector.detect(facts)))).flat();
+      detected = (await Promise.all(this.options.detectors.map((detector) => detector.detect(facts, execution)))).flat();
     } catch (error) {
       throw new DigestStageFailure('detector', error);
     }

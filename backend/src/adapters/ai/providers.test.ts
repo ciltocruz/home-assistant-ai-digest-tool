@@ -45,6 +45,13 @@ describe('AI provider adapters', () => {
     });
   });
 
+  it('orders equivalent incidents deterministically before rendering local digest items', async () => {
+    const provider = new FakeAIProvider();
+    const reordered = { ...input, incidents: [...input.incidents, { ...input.incidents[0]!, id: 'a-incident', summary: 'A unavailable' }] };
+    const digest = await provider.generate(reordered);
+    expect(digest.attentionItems.map((item) => item.title)).toEqual(['A unavailable', 'sensor.kitchen is unavailable']);
+  });
+
   it('posts OpenAI-compatible redacted payloads through an injected HTTP client', async () => {
     const requests: HttpRequest[] = [];
     const provider = new OpenAIProvider({
@@ -175,6 +182,19 @@ describe('AI provider adapters', () => {
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toBe('Gemini provider request failed before receiving a response');
     expect((error as Error).message).not.toContain('gemini-test-secret');
+  });
+
+  it('propagates a parent analysis cancellation to the provider HTTP boundary without exposing its key', async () => {
+    const controller = new AbortController();
+    const provider = new OpenAIProvider({
+      apiKey: OPENAI_TEST_KEY,
+      httpClient: async (request) => new Promise((_, reject) => request.signal?.addEventListener('abort', () => reject(new Error(OPENAI_TEST_KEY)), { once: true }))
+    });
+    const request = provider.generate(input, { signal: controller.signal, checkpoint: () => { if (controller.signal.aborted) throw controller.signal.reason; }, deadlineAtMs: Date.now() + 1_000, dispose: () => undefined });
+    controller.abort(new Error('ANALYSIS_CANCELLED'));
+
+    await expect(request).rejects.toThrow('ANALYSIS_CANCELLED');
+    await expect(request).rejects.not.toThrow(OPENAI_TEST_KEY);
   });
 });
 

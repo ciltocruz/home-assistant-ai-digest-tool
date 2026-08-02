@@ -32,7 +32,7 @@ COPY --from=build /app/backend/dist ./backend/dist
 COPY --from=build /app/packages/shared/package.json ./packages/shared/package.json
 COPY --from=build /app/packages/shared/dist ./packages/shared/dist
 COPY --from=build /app/frontend/dist ./frontend-dist
-RUN chown -R root:root /app && mkdir -p /data/logs /ha-logs && chown -R app:app /data
+RUN mkdir -p /data/logs /ha-logs && chown -R app:app /data
 
 EXPOSE 3000
 VOLUME ["/data"]

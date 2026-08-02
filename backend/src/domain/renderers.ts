@@ -1,4 +1,5 @@
 import type { StructuredDigest } from './providers.js';
+import type { ExecutionContext } from './execution.js';
 
 export type RenderedDigest = {
   format: 'markdown';
@@ -6,5 +7,5 @@ export type RenderedDigest = {
 };
 
 export interface ReportRenderer {
-  render(digest: StructuredDigest): Promise<RenderedDigest>;
+  render(digest: StructuredDigest, context: ExecutionContext): Promise<RenderedDigest>;
 }

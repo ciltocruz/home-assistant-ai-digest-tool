@@ -201,7 +201,7 @@ function incident(summary = 'Sensor unavailable'): Incident {
 }
 
 function job(id: string): DigestJob {
-  return { id, triggerWindowId: `manual:${window.from}:${window.to}`, kind: 'manual', status: 'running', attempts: 0, availableAt: now, createdAt: now, updatedAt: now };
+  return { id, triggerWindowId: `manual:${window.from}:${window.to}`, kind: 'manual', status: 'running', stage: 'queued', attempts: 0, retryCount: 0, retryAvailable: false, availableAt: now, createdAt: now, updatedAt: now };
 }
 
 class FakeJobStore {
@@ -217,6 +217,7 @@ class FakeReportStore implements ReportStore {
   saved: Array<Parameters<ReportStore['save']>[0] & { id: string }> = [];
   async save(report: Parameters<ReportStore['save']>[0]) { this.saved.push({ ...report, id: report.id }); }
   async list() { return this.saved.map((report) => report.summary); }
+  async get(id: string) { return this.saved.find((report) => report.id === id) ?? null; }
 }
 
 class FakeDeliveryStore implements DeliveryStore {

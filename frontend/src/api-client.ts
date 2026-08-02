@@ -1,12 +1,17 @@
 import {
   DeliveryResultSchema,
+  DigestDetailSchema,
+  DigestJobStatusSchema,
   DigestHistoryResponseSchema,
   IgnoreRuleCreateSchema,
   IgnoreRuleDtoSchema,
   NoteCreateSchema,
   NoteDtoSchema,
   NotifierTestRequestSchema,
-  RedactedSettingsDtoSchema,
+  OnboardingProgressSchema,
+  OnboardingStepCommandSchema,
+  SettingsUpdateCommandSchema,
+  EditableSettingsDtoSchema,
   RunDigestRequestSchema,
   RunDigestResponseSchema,
   SendDigestRequestSchema,
@@ -14,18 +19,22 @@ import {
   SetupValidationResponseSchema,
   TestResultSchema,
   type DeliveryResult,
+  type DigestDetail,
+  type DigestJobStatus,
   type DigestHistoryResponse,
   type IgnoreRuleCreate,
   type IgnoreRuleDto,
   type NoteCreate,
   type NoteDto,
   type NotifierTestRequest,
-  type RedactedSettingsDto,
+  type OnboardingProgress,
+  type OnboardingStepCommand,
+  type EditableSettingsDto,
   type RunDigestRequest,
   type RunDigestResponse,
   type SendDigestRequest,
   type SetupValidationRequest,
-  type SetupValidationResponse,
+  type SetupValidationResponse, type SettingsUpdateCommand,
   type TestResult
 } from '@ha-digest/shared';
 import { z } from 'zod';
@@ -76,12 +85,20 @@ export function createApiClient(options: ApiClientOptions = {}) {
     if (!response.ok) throw toApiClientError(body);
 
     const parsed = schema.safeParse(body);
-    if (!parsed.success) throw new ApiClientError('INVALID_RESPONSE', 'The server returned an unexpected redacted response shape.', 'client');
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      const path = issue?.path.length ? issue.path.join('.') : 'response';
+      throw new ApiClientError('INVALID_RESPONSE', `The server returned an invalid ${path}: ${issue?.message ?? 'unexpected response shape'}.`, 'client');
+    }
     return parsed.data;
   }
 
   return {
     getCsrfToken: () => csrfToken,
+    getSession: async (): Promise<void> => {
+      const response = await request('/api/session', z.object({ csrfToken: z.string().min(1) }), { method: 'GET' });
+      csrfToken = response.csrfToken;
+    },
     validateSetup: async (input: SetupValidationRequest): Promise<SetupValidationResponse> => {
       const payload = SetupValidationRequestSchema.parse(input);
       const response = await request('/api/setup', SetupValidationResponseSchema, {
@@ -92,10 +109,20 @@ export function createApiClient(options: ApiClientOptions = {}) {
       csrfToken = response.csrfToken;
       return response;
     },
-    getSettings: () => request('/api/settings', RedactedSettingsDtoSchema),
-    updateSettings: (input: RedactedSettingsDto) => request('/api/settings', RedactedSettingsDtoSchema, { method: 'PUT', body: JSON.stringify(RedactedSettingsDtoSchema.parse(input)) }),
+    getOnboarding: (): Promise<OnboardingProgress> => request('/api/onboarding', OnboardingProgressSchema, { method: 'GET', headers: { authorization: `Bearer ${options.setupToken ?? ''}` } }),
+    saveOnboarding: (input: OnboardingStepCommand): Promise<OnboardingProgress> => request('/api/onboarding', OnboardingProgressSchema, { method: 'PATCH', headers: { authorization: `Bearer ${options.setupToken ?? ''}` }, body: JSON.stringify(OnboardingStepCommandSchema.parse(input)) }),
+    completeOnboarding: async (): Promise<SetupValidationResponse> => {
+      const response = await request('/api/onboarding/complete', SetupValidationResponseSchema, { method: 'POST', headers: { authorization: `Bearer ${options.setupToken ?? ''}` }, body: JSON.stringify({}) });
+      csrfToken = response.csrfToken;
+      return response;
+    },
+    getSettings: () => request('/api/settings', EditableSettingsDtoSchema),
+    updateSettings: (input: SettingsUpdateCommand) => request('/api/settings', EditableSettingsDtoSchema, { method: 'PUT', body: JSON.stringify(SettingsUpdateCommandSchema.parse(input)) }),
     runDigest: (input: RunDigestRequest): Promise<RunDigestResponse> => request('/api/digests/run', RunDigestResponseSchema, { method: 'POST', body: JSON.stringify(RunDigestRequestSchema.parse(input)) }),
+    getDigestJob: (id: string): Promise<DigestJobStatus> => request(`/api/digests/jobs/${encodeURIComponent(id)}`, DigestJobStatusSchema),
+    retryDigestJob: (id: string): Promise<DigestJobStatus> => request(`/api/digests/jobs/${encodeURIComponent(id)}/retry`, DigestJobStatusSchema, { method: 'POST' }),
     listHistory: (): Promise<DigestHistoryResponse> => request('/api/digests/history', DigestHistoryResponseSchema),
+    getDigest: (id: string): Promise<DigestDetail> => request(`/api/digests/${encodeURIComponent(id)}`, DigestDetailSchema),
     addNote: (input: NoteCreate): Promise<NoteDto> => request('/api/notes', NoteDtoSchema, { method: 'POST', body: JSON.stringify(NoteCreateSchema.parse(input)) }),
     listNotes: (window: { from: string; to: string }): Promise<NoteDto[]> => {
       const params = new URLSearchParams({ from: window.from, to: window.to });
@@ -105,6 +132,7 @@ export function createApiClient(options: ApiClientOptions = {}) {
     addIgnore: (input: IgnoreRuleCreate): Promise<IgnoreRuleDto> => request('/api/ignores', IgnoreRuleDtoSchema, { method: 'POST', body: JSON.stringify(IgnoreRuleCreateSchema.parse(input)) }),
     removeIgnore: (id: string): Promise<void> => request(`/api/ignores/${encodeURIComponent(id)}`, z.unknown(), { method: 'DELETE' }).then(() => undefined),
     testNotifier: (input: NotifierTestRequest): Promise<TestResult> => request('/api/notifiers/test', TestResultSchema, { method: 'POST', body: JSON.stringify(NotifierTestRequestSchema.parse(input)) }),
+    testCurrentNotifier: (): Promise<TestResult> => request('/api/notifiers/test-current', TestResultSchema, { method: 'POST', body: JSON.stringify({ channel: 'telegram' }) }),
     sendDigest: (digestId: string, targetRef: string): Promise<DeliveryResult> => {
       const payload: SendDigestRequest = SendDigestRequestSchema.parse({ digestId, targetRef });
       return request('/api/notifiers/send', DeliveryResultSchema, { method: 'POST', body: JSON.stringify(payload) });

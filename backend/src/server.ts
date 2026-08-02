@@ -27,6 +27,10 @@ export async function startRuntimeServer(
       setupToken: config.setupToken,
       secureCookies: config.secureCookies,
       trustProxy: config.trustProxy,
+      haMaxStates: config.haMaxStates,
+      haMaxLogLines: config.haMaxLogLines,
+      haMaxResponseBytes: config.haMaxResponseBytes,
+      haAnalysisTimeoutMs: config.haAnalysisTimeoutMs,
       failureReporter: logger.reportApiFailure
     });
     await app.listen({ host: config.host, port: config.port });

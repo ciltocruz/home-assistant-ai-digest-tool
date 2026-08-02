@@ -17,6 +17,12 @@ services:
       DATA_DIR: /data
       LOG_DIR: /data/logs
       HA_LOGS_DIR: /ha-logs
+      HA_MAX_STATES: "${HA_MAX_STATES:-500}"
+      HA_MAX_LOG_LINES: "${HA_MAX_LOG_LINES:-200}"
+      HA_MAX_RESPONSE_BYTES: "${HA_MAX_RESPONSE_BYTES:-1000000}"
+      HA_ANALYSIS_TIMEOUT_MS: "${HA_ANALYSIS_TIMEOUT_MS:-60000}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     read_only: true
     cap_drop:
       - ALL

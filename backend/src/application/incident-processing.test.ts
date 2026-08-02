@@ -118,6 +118,15 @@ describe('incident processing', () => {
     expect(prioritizeIncidents(filtered).map((item) => item.severity)).toEqual(['critical', 'info']);
   });
 
+  it('uses the incident ID as the final deterministic tie-breaker for equal priority', () => {
+    const equalPriority = [
+      { ...incident('log', 'warning', 'Z'), id: 'z-log' },
+      { ...incident('log', 'warning', 'A'), id: 'a-log' }
+    ];
+
+    expect(prioritizeIncidents(equalPriority).map((item) => item.id)).toEqual(['a-log', 'z-log']);
+  });
+
   it('applies area and message ignore rule semantics separately from incident type', () => {
     const incidents = [
       incident('entity', 'warning', 'Kitchen sensor unavailable', 'Kitchen'),

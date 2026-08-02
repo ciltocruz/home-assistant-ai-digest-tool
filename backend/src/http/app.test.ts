@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { SetupValidationResponseSchema, type DigestSummary, type MaskedSettings, type NoteCreate, type RedactedSettingsDto } from '@ha-digest/shared';
+import { SetupValidationResponseSchema, type DigestSummary, type EditableSettingsDto, type MaskedSettings, type NoteCreate, type OnboardingProgress } from '@ha-digest/shared';
 import { createApp, type BackendApiServices } from './app.js';
 
 const NOW = '2026-07-08T10:00:00.000Z';
@@ -177,6 +177,19 @@ describe('backend API auth, CSRF, and protected routes', () => {
     expect(() => SetupValidationResponseSchema.parse(response.json())).not.toThrow();
   });
 
+  it('loads and saves resumable onboarding checkpoints with the setup bearer only', async () => {
+    const services = createServices();
+    const progress: OnboardingProgress = { currentStep: 'ai_provider', completedSteps: ['home_assistant'], draft: { haUrl: 'http://homeassistant.local:8123' }, secretMetadata: { haToken: { configured: true, mask: 'se…et' } }, completed: false };
+    services.onboarding = { get: async () => progress, save: async () => progress };
+    app = createApp({ services, auth: authOptions(), now: () => NOW });
+
+    const loaded = await app.inject({ method: 'GET', url: '/api/onboarding', headers: { authorization: 'Bearer setup-token' } });
+    const saved = await app.inject({ method: 'PATCH', url: '/api/onboarding', headers: { authorization: 'Bearer setup-token' }, payload: { step: 'home_assistant', draft: { haUrl: 'http://homeassistant.local:8123' }, secrets: { haToken: SECRET_HA_TOKEN } } });
+
+    expect([loaded.statusCode, saved.statusCode]).toEqual([200, 200]);
+    expect(JSON.stringify([loaded.json(), saved.json()])).not.toContain(SECRET_HA_TOKEN);
+  });
+
   it('registers protected API routes using injected stores and fake notifier services', async () => {
     const services = createServices();
     app = createApp({ services, auth: authOptions(), now: () => NOW });
@@ -186,6 +199,7 @@ describe('backend API auth, CSRF, and protected routes', () => {
     const settings = await app.inject({ method: 'GET', url: '/api/settings', headers: { cookie } });
     const run = await app.inject({ method: 'POST', url: '/api/digests/run', headers: mutationHeaders, payload: { kind: 'manual' } });
     const history = await app.inject({ method: 'GET', url: '/api/digests/history', headers: { cookie } });
+    const detail = await app.inject({ method: 'GET', url: '/api/digests/digest-1', headers: { cookie } });
     const note = await app.inject({ method: 'POST', url: '/api/notes', headers: mutationHeaders, payload: validNoteCreate() });
     const notes = await app.inject({
       method: 'GET',
@@ -209,10 +223,54 @@ describe('backend API auth, CSRF, and protected routes', () => {
 
     expect([settings.statusCode, note.statusCode, ignore.statusCode]).toEqual([200, 201, 201]);
     expect([history.json(), notes.json(), ignores.json()].map((rows) => rows.length)).toEqual([1, 1, 1]);
+    expect(run.statusCode).toBe(202);
     expect(run.json()).toEqual({ jobId: 'job-1', status: 'queued' });
+    expect(detail.json()).toEqual(expect.objectContaining({ id: 'digest-1', rendered: { format: 'markdown', body: '# Stored digest' } }));
     expect(notifierTest.json()).toMatchObject({ status: 'success' });
     expect(notifierSend.json()).toMatchObject({ status: 'sent', targetRef: 'secret:telegram' });
     expect(JSON.stringify(services.calls)).not.toContain(SECRET_TELEGRAM_TOKEN);
+  });
+
+  it('adds the versioned report presentation without changing the canonical Markdown response', async () => {
+    const services = createServices();
+    services.reports.get = async () => ({
+      id: 'digest-1',
+      summary: {
+        id: 'digest-1',
+        window: { from: '2026-07-08T00:00:00.000Z', to: '2026-07-09T00:00:00.000Z' },
+        severityCounts: { critical: 1, warning: 0, info: 0 },
+        createdAt: NOW,
+        deliveryStatus: 'sent'
+      },
+      rendered: {
+        format: 'markdown' as const,
+        body: '# Home Assistant Digest\n\n**Severity:** critical\n\nThe garage sensor needs review.\n\n## Attention items\n\n- **Garage door sensor** (critical): The sensor has been unavailable for 3 hours.'
+      }
+    });
+    app = createApp({ services, auth: authOptions(), now: () => NOW });
+    const { cookie } = await authenticated(app);
+
+    const response = await app.inject({ method: 'GET', url: '/api/digests/digest-1', headers: { cookie } });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      rendered: { format: 'markdown', body: expect.stringContaining('Garage door sensor') },
+      presentation: {
+        version: 1,
+        mode: 'structured',
+        attention: [{ id: 'attention-1', severity: 'critical', title: 'Garage door sensor', detail: 'The sensor has been unavailable for 3 hours.' }]
+      }
+    });
+  });
+
+  it('returns an actionable error when the durable worker is unavailable', async () => {
+    const services = createServices();
+    delete services.digestWorker;
+    app = createApp({ services, auth: authOptions(), now: () => NOW });
+    const { cookie, csrfToken } = await authenticated(app);
+    const response = await app.inject({ method: 'POST', url: '/api/digests/run', headers: { cookie, 'x-csrf-token': csrfToken }, payload: { kind: 'manual' } });
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({ code: 'ANALYSIS_UNAVAILABLE', message: expect.stringContaining('no está disponible') });
   });
 });
 
@@ -227,16 +285,16 @@ async function authenticated(app: FastifyInstance) {
 
 function createServices(): BackendApiServices & { calls: unknown[] } {
   const calls: unknown[] = [];
-  const settingsDto: RedactedSettingsDto = {
-    haUrl: 'http://homeassistant.local:8123',
-    aiProvider: 'gemini',
-    secretRefs: { haTokenRef: 'secret:ha', aiKeyRef: 'secret:ai', notifierRefs: { telegram: 'secret:telegram' } },
+  const settingsDto: EditableSettingsDto = {
+    homeAssistant: { url: 'http://homeassistant.local:8123', token: { configured: true, mask: '••••ha' } },
+    ai: { provider: 'gemini', key: { configured: true, mask: '••••ai' } },
+    notifications: { channel: 'telegram', chatId: '123456', botToken: { configured: true, mask: '••••telegram' } },
     schedules: [{ kind: 'daily', enabled: true, time: '08:00', timezone: 'UTC' }],
     privacyLevel: 'balanced',
     retentionDays: 30
   };
   const maskedSettings: MaskedSettings = {
-    haUrl: settingsDto.haUrl,
+    haUrl: settingsDto.homeAssistant.url,
     ai: { provider: 'gemini', keyMask: '••••-key', ref: 'secret:ai' },
     notifiers: [{ id: 'telegram-default', channel: 'telegram', targetRef: 'secret:telegram', label: 'Telegram', secretMask: '••••-gram' }]
   };
@@ -255,9 +313,10 @@ function createServices(): BackendApiServices & { calls: unknown[] } {
   return {
     calls,
     setup: { complete: async () => maskedSettings },
-    settings: { get: async () => settingsDto, update: async (input) => input },
-    digestJobs: { enqueue: async () => ({ status: 'queued', jobId: 'job-1' }) },
-    reports: { list: async () => [digestSummary] },
+    settings: { get: async () => settingsDto, update: async () => settingsDto },
+    digestJobs: { enqueue: async () => ({ status: 'queued', jobId: 'job-1' }), get: async () => null, retryFailed: async () => null },
+    digestWorker: { wake: () => undefined },
+    reports: { list: async () => [digestSummary], get: async () => ({ id: 'digest-1', summary: digestSummary, rendered: { format: 'markdown', body: '# Stored digest' } }) },
     notes: { add: async () => noteDto, listWindow: async () => [noteDto] },
     ignores: { add: async () => ignoreDto, remove: async () => undefined, listActive: async () => [ignoreDto] },
     notifiers: {

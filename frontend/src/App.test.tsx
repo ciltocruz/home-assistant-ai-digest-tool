@@ -19,50 +19,57 @@ describe('App', () => {
     expect(html).toContain('Home Assistant AI Digest');
     expect(html).toContain('Conecta Home Assistant');
     expect(html).toContain('Proveedor de IA');
-    expect(html).toContain('Horario y privacidad');
+    expect(html).toContain('Horario');
+    expect(html).toContain('Privacidad');
     expect(html).toContain('Primer informe');
     expect(html).toContain('Los secretos se envían solo al backend local y se muestran enmascarados tras la validación.');
-    expect(html).toContain('El informe manual estará disponible después de persistir ajustes e historial.');
+    expect(html).not.toContain('Informe manual');
     expect(html).not.toContain('análisis redactado');
   });
 
-  test('renders dashboard copy from the Spanish catalog', () => {
+  test('keeps the skip link while withholding operational navigation during setup', () => {
+    const html = renderToStaticMarkup(<App />);
+
+    expect(html).toContain('href="#onboarding-flow"');
+    expect(html).toContain('Saltar al contenido principal');
+    expect(html).not.toContain('aria-label="Navegación principal"');
+  });
+
+  test('does not render dashboard copy from the Spanish catalog before onboarding is verified', () => {
     const html = renderToStaticMarkup(<App />);
 
     expect(t('dashboard.manualDigest.title')).toBe(messages.es.dashboard.manualDigest.title);
-    expect(html).toContain(messages.es.dashboard.manualDigest.title);
-    expect(html).toContain(messages.es.dashboard.history.unavailable.title);
-    expect(html).toContain(messages.es.dashboard.notes.title);
-    expect(html).toContain(messages.es.dashboard.ignoredWarnings.title);
-    expect(html).toContain(messages.es.dashboard.telegramTest.title);
-    expect(html).toContain(messages.es.dashboard.settings.title);
+    expect(html).not.toContain(messages.es.dashboard.manualDigest.title);
+    expect(html).not.toContain(messages.es.dashboard.history.unavailable.title);
+    expect(html).not.toContain('Notas del operador');
+    expect(html).not.toContain('Avisos ignorados');
+    expect(html).not.toContain('Enviar prueba de Telegram');
+    expect(html).not.toContain('Privacidad y retención');
   });
 
-  test('renders unavailable dashboard actions as disabled and explicit', () => {
+  test('does not reveal unavailable dashboard actions before onboarding is verified', () => {
     const html = renderToStaticMarkup(<App api={{ validateSetup: vi.fn() }} />);
 
-    expect(html).toContain('El informe manual estará disponible después de persistir ajustes e historial.');
-    expect(html).toContain('Guarda un canal de Telegram en el primer arranque antes de probar la entrega.');
-    expect(html).toContain('disabled=""');
-    expect(html).not.toContain('Lanzar informe</button>');
-    expect(html).not.toContain('Enviar prueba</button>');
+    expect(html).not.toContain('Informe manual');
+    expect(html).not.toContain('Enviar prueba');
+    expect(html).toContain('Configuración guiada');
   });
 
-  test('keeps API-backed control cards hidden until the controls API is available', () => {
+  test('keeps API-backed control cards behind the onboarding gate', () => {
     const html = renderToStaticMarkup(<App api={{ validateSetup: vi.fn(), runDigest: vi.fn() }} />);
 
-    expect(html).toContain('Añade contexto manual');
-    expect(html).toContain('Silencia entidades');
+    expect(html).not.toContain('Añade contexto manual');
+    expect(html).not.toContain('Silencia entidades');
   });
 
-  test('renders manual digest action when the digest API is available', () => {
+  test('does not render the manual digest action from an unverified partial API', () => {
     const html = renderToStaticMarkup(<App api={{ runDigest: vi.fn() }} />);
 
-    expect(html).toContain('Lanzar informe</button>');
-    expect(html).not.toContain('No disponible todavía</button>');
+    expect(html).not.toContain('Lanzar informe</button>');
+    expect(html).toContain('Configuración guiada');
   });
 
-  test('does not treat a partial controls API as the full controls contract', () => {
+  test('does not treat a partial controls API as proof that onboarding is complete', () => {
     const partialControlsApi = {
       validateSetup: vi.fn(),
       runDigest: vi.fn(),
@@ -73,7 +80,8 @@ describe('App', () => {
 
     const html = renderToStaticMarkup(<App api={partialControlsApi} />);
 
-    expect(html).toContain('Guarda un canal de Telegram en el primer arranque antes de probar la entrega.');
+    expect(html).not.toContain('Enviar prueba');
+    expect(html).toContain('Configuración guiada');
   });
 
   test('passes the configured bootstrap setup token to the production API client', async () => {

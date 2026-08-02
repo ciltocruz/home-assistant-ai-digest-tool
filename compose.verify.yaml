@@ -1,0 +1,32 @@
+services:
+  app:
+    healthcheck:
+      interval: 2s
+      timeout: 1s
+      retries: 3
+      start_period: 1s
+    depends_on:
+      fake-ha:
+        condition: service_started
+    networks:
+      - verification
+      - host-access
+  fake-ha:
+    image: node:22-slim
+    command: ["node", "/verify/fake-ha.mjs"]
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    volumes:
+      - ./docker/verify/fake-ha.mjs:/verify/fake-ha.mjs:ro
+    networks:
+      - verification
+
+networks:
+  verification:
+    internal: true
+  host-access: {}

@@ -17,10 +17,10 @@ describe('SQLite migrations', () => {
       .map((row) => (row as { name: string }).name);
 
     expect(tables).toEqual(
-      expect.arrayContaining(['deliveries', 'digest_jobs', 'ignore_rules', 'notes', 'reports', 'secrets', 'settings'])
+      expect.arrayContaining(['deliveries', 'digest_jobs', 'ignore_rules', 'notes', 'onboarding_state', 'reports', 'secrets', 'settings'])
     );
     expect(db.prepare('select version from schema_migrations').all().map((row) => ({ ...(row as { version: number }) }))).toEqual([
-      { version: 1 }
+      { version: 1 }, { version: 2 }, { version: 3 }
     ]);
   });
 
@@ -44,8 +44,33 @@ describe('SQLite migrations', () => {
     runMigrations(db);
 
     expect(db.prepare('select version from schema_migrations').all().map((row) => ({ ...(row as { version: number }) }))).toEqual([
-      { version: 1 }
+      { version: 1 }, { version: 2 }, { version: 3 }
     ]);
+  });
+
+  it('backfills completed onboarding for an existing configured runtime', async () => {
+    const db = await openTestDatabase();
+    db.exec('create table settings (key text primary key, value_json text not null, updated_at text not null)');
+    db.prepare('insert into settings(key, value_json, updated_at) values (?, ?, ?)').run('runtime', JSON.stringify({ secretRefs: { haTokenRef: 'secret_ha', aiKeyRef: 'secret_ai' } }), '2026-08-01T00:00:00.000Z');
+
+    runMigrations(db);
+
+    expect(db.prepare('select current_step, completed from onboarding_state where singleton = 1').get()).toEqual({ current_step: 'first_report', completed: 1 });
+  });
+
+  it('upgrades completed legacy jobs with durable lifecycle columns and a completed stage', async () => {
+    const db = await openTestDatabase();
+    db.exec(`create table digest_jobs (
+      id text primary key, trigger_window_id text not null unique, kind text not null, status text not null,
+      attempts integer not null default 0, available_at text not null, lease_until text, last_error text,
+      created_at text not null, updated_at text not null
+    )`);
+    db.prepare(`insert into digest_jobs(id, trigger_window_id, kind, status, attempts, available_at, created_at, updated_at)
+      values ('legacy-job', 'manual:legacy', 'manual', 'completed', 0, '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z')`).run();
+
+    runMigrations(db);
+
+    expect(db.prepare('select stage, retry_count, report_id from digest_jobs where id = ?').get('legacy-job')).toEqual({ stage: 'completed', retry_count: 0, report_id: null });
   });
 });
 

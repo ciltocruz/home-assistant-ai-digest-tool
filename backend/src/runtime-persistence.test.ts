@@ -32,14 +32,14 @@ describe('persistent runtime services', () => {
     const settings = await services.settings.get();
 
     expect(setup.haUrl).toBe('http://homeassistant.local:8123');
-    expect(setup.ai).toMatchObject({ provider: 'gemini', ref: settings.secretRefs.aiKeyRef });
-    expect(setup.notifiers[0]).toMatchObject({ channel: 'telegram', targetRef: settings.secretRefs.notifierRefs?.telegram });
+    expect(setup.ai).toMatchObject({ provider: 'gemini' });
+    expect(setup.notifiers[0]).toMatchObject({ channel: 'telegram' });
     expect(JSON.stringify({ setup, settings })).not.toContain(HA_SECRET);
     expect(JSON.stringify({ setup, settings })).not.toContain(AI_SECRET);
     expect(JSON.stringify({ setup, settings })).not.toContain(TELEGRAM_SECRET);
     expect(settings).toMatchObject({
-      haUrl: 'http://homeassistant.local:8123',
-      aiProvider: 'gemini',
+      homeAssistant: { url: 'http://homeassistant.local:8123', token: { configured: true } },
+      ai: { provider: 'gemini', key: { configured: true } },
       privacyLevel: 'balanced',
       retentionDays: 30
     });
@@ -85,7 +85,7 @@ describe('persistent runtime services', () => {
     const settings = await reopened.settings.get();
     const history = await reopened.reports.list();
 
-    expect(settings.aiProvider).toBe('openai');
+    expect(settings.ai.provider).toBe('openai');
     expect(duplicateJob).toEqual({ status: 'already_queued', jobId: firstJob.jobId });
     expect(history).toEqual([
       {
@@ -103,6 +103,68 @@ describe('persistent runtime services', () => {
         deliveryStatus: 'pending'
       }
     ]);
+  });
+
+  it('reopens persisted onboarding at the next screen with secret metadata only', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-runtime-onboarding-'));
+    const first = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
+    if (!first.onboarding) throw new Error('Expected persisted onboarding service.');
+
+    await first.onboarding.save({ step: 'home_assistant', draft: { haUrl: 'http://homeassistant.local:8123' }, secrets: { haToken: HA_SECRET } });
+    const reopened = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
+    const progress = await reopened.onboarding?.get();
+
+    expect(progress).toEqual(expect.objectContaining({ currentStep: 'ai_provider', completedSteps: ['home_assistant'], draft: { haUrl: 'http://homeassistant.local:8123' } }));
+    expect(JSON.stringify(progress)).not.toContain(HA_SECRET);
+  });
+
+  it('retrieves stored report content after a runtime restart without exposing credentials', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-runtime-detail-'));
+    const first = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
+    await (first.reports as unknown as ReportStore).save(report('digest-detail', NOW));
+    const reopened = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
+
+    const detail = await (reopened.reports as unknown as ReportStore).get('digest-detail');
+    expect(detail).toEqual(expect.objectContaining({ id: 'digest-detail', rendered: { format: 'markdown', body: '# digest-detail' } }));
+    expect(JSON.stringify(detail)).not.toContain(HA_SECRET);
+  });
+
+  it('removes expired history on save using configured retention without changing settings', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-runtime-retention-'));
+    const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
+    await services.setup.complete({ haUrl: 'http://homeassistant.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET });
+    const settings = await services.settings.get();
+    await services.settings.update(settingsUpdate(settings, 7));
+
+    await (services.reports as unknown as ReportStore).save(report('digest-expired', '2026-07-01T10:00:00.000Z'));
+    await (services.reports as unknown as ReportStore).save(report('digest-current', '2026-07-10T10:00:00.000Z'));
+
+    expect(await services.reports.list()).toEqual([expect.objectContaining({ id: 'digest-current' })]);
+    expect(await services.settings.get()).toMatchObject({ retentionDays: 7 });
+  });
+
+  it('keeps history at the retention boundary while removing older entries', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-runtime-retention-boundary-'));
+    const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
+    await services.setup.complete({ haUrl: 'http://homeassistant.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET });
+    const settings = await services.settings.get();
+    await services.settings.update(settingsUpdate(settings, 1));
+
+    await (services.reports as unknown as ReportStore).save(report('digest-before-boundary', '2026-07-11T09:59:59.999Z'));
+    await (services.reports as unknown as ReportStore).save(report('digest-at-boundary', '2026-07-11T10:00:00.000Z'));
+
+    expect((await services.reports.list()).map((item) => item.id)).toEqual(['digest-at-boundary']);
+  });
+
+  it('caps stored reports at the configured storage limit after preserving current retention', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-runtime-storage-limit-'));
+    const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW, maxStoredReports: 2 });
+
+    await (services.reports as unknown as ReportStore).save(report('digest-oldest', '2026-07-10T08:00:00.000Z'));
+    await (services.reports as unknown as ReportStore).save(report('digest-middle', '2026-07-10T09:00:00.000Z'));
+    await (services.reports as unknown as ReportStore).save(report('digest-newest', '2026-07-10T10:00:00.000Z'));
+
+    expect((await services.reports.list()).map((item) => item.id)).toEqual(['digest-newest', 'digest-middle']);
   });
 
   it('fails startup when an existing database has encrypted secrets but app.key is missing', async () => {
@@ -198,14 +260,30 @@ describe('persistent runtime services', () => {
 
     const reopened = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
     const settings = await reopened.settings.get();
-    const secrets = await openSecretStore(dataDir);
 
-    await expect(secrets.resolve(settings.secretRefs.haTokenRef)).resolves.toBe(HA_SECRET);
-    await expect(secrets.resolve(settings.secretRefs.aiKeyRef)).resolves.toBe(AI_SECRET);
-    await expect(secrets.resolve(settings.secretRefs.notifierRefs?.telegram ?? '')).resolves.toBe(JSON.stringify({
-      botToken: TELEGRAM_SECRET,
-      chatId: '123456'
-    }));
+    expect(settings).toMatchObject({
+      homeAssistant: { token: { configured: true } },
+      ai: { key: { configured: true } },
+      notifications: { channel: 'telegram', chatId: '123456', botToken: { configured: true } }
+    });
+    expect(JSON.stringify(settings)).not.toContain(HA_SECRET);
+    expect(JSON.stringify(settings)).not.toContain(AI_SECRET);
+    expect(JSON.stringify(settings)).not.toContain(TELEGRAM_SECRET);
+  });
+
+  it('rejects an aborted analysis store save before the SQLite insert and leaves history unchanged', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-runtime-aborted-save-'));
+    const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
+    const controller = new AbortController();
+    controller.abort(new Error('ANALYSIS_DEADLINE_EXCEEDED'));
+
+    await expect((services.reports as unknown as ReportStore).save(report('late-report', NOW), {
+      signal: controller.signal,
+      checkpoint: () => { throw controller.signal.reason; },
+      deadlineAtMs: Date.now(),
+      dispose: () => undefined
+    })).rejects.toThrow('ANALYSIS_DEADLINE_EXCEEDED');
+    expect(await services.reports.list()).toEqual([]);
   });
 });
 
@@ -223,4 +301,31 @@ async function openSecretStore(dataDir: string): Promise<SQLiteSecretStore> {
   const db = new DatabaseSync(join(dataDir, 'app.db'));
   runMigrations(db);
   return SQLiteSecretStore.create({ db, dataDir });
+}
+
+function settingsUpdate(settings: Awaited<ReturnType<Awaited<ReturnType<typeof createPersistentRuntimeServices>>['settings']['get']>>, retentionDays: number) {
+  return {
+    homeAssistant: { url: settings.homeAssistant.url, token: { operation: 'keep_current' as const } },
+    ai: { provider: settings.ai.provider, key: { operation: 'keep_current' as const } },
+    notifications: settings.notifications.channel === 'telegram'
+      ? { channel: 'telegram' as const, chatId: settings.notifications.chatId, botToken: { operation: 'keep_current' as const } }
+      : { channel: 'none' as const },
+    schedules: settings.schedules.length ? settings.schedules : [{ kind: 'daily' as const, enabled: true, time: '08:00', timezone: 'Europe/Madrid' }],
+    privacyLevel: settings.privacyLevel,
+    retentionDays
+  };
+}
+
+function report(id: string, createdAt: string): Parameters<ReportStore['save']>[0] {
+  return {
+    id,
+    rendered: { format: 'markdown', body: `# ${id}` },
+    summary: {
+      id,
+      window: { from: createdAt, to: createdAt },
+      severityCounts: { critical: 0, warning: 0, info: 1 },
+      createdAt,
+      deliveryStatus: 'pending'
+    }
+  };
 }

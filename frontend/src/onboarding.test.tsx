@@ -9,8 +9,10 @@ import { ApiClientError } from './api-client.js';
 import {
   OnboardingFlow,
   advanceOnboardingStep,
+  createOnboardingCheckpoint,
   completeOnboarding,
   createInitialOnboardingState,
+  restoreOnboardingState,
   type OnboardingApi
 } from './onboarding.js';
 
@@ -39,28 +41,67 @@ afterEach(() => {
 });
 
 describe('onboarding flow', () => {
-  test('renders a Spanish multi-step onboarding UI without echoing secrets', () => {
+  test('creates one safe checkpoint command per screen without carrying unrelated secrets', () => {
+    const checkpoint = createOnboardingCheckpoint({ ...createInitialOnboardingState(), draft: validDraft });
+
+    expect(checkpoint).toEqual({ step: 'home_assistant', draft: { haUrl: validDraft.haUrl }, secrets: { haToken: validDraft.haToken } });
+    expect(JSON.stringify(checkpoint)).not.toContain(validDraft.aiKey);
+    expect(JSON.stringify(checkpoint)).not.toContain(validDraft.telegramBotToken);
+  });
+  test('restores the persisted fourth screen with only non-secret draft data after reload', () => {
+    const restored = restoreOnboardingState({
+      currentStep: 'schedule',
+      completedSteps: ['home_assistant', 'ai_provider', 'notifications'],
+      draft: { haUrl: validDraft.haUrl, aiProvider: 'gemini', notifier: 'telegram', telegramChatId: validDraft.telegramChatId },
+      secretMetadata: { haToken: { configured: true, mask: 'se…et' }, aiKey: { configured: true, mask: 'se…et' } },
+      completed: false
+    });
+
+    expect(restored.step).toBe('schedule');
+    expect(restored.draft.haUrl).toBe(validDraft.haUrl);
+    expect(JSON.stringify(restored)).not.toContain(validDraft.haToken);
+    expect(JSON.stringify(restored)).not.toContain(validDraft.aiKey);
+  });
+  test('renders only the active Spanish onboarding step without echoing secrets', () => {
     const html = renderToStaticMarkup(<OnboardingFlow state={createInitialOnboardingState()} />);
 
     expect(html).toContain('Conecta Home Assistant');
     expect(html).toContain('Proveedor de IA');
     expect(html).toContain('Canal de aviso');
-    expect(html).toContain('Horario y privacidad');
+    expect(html).toContain('Horario');
+    expect(html).toContain('Privacidad');
     expect(html).toContain('Primer informe');
     expect(html).toContain('Token de Home Assistant');
-    expect(html).toContain('Clave del proveedor');
-    expect(html).toContain('Token del bot de Telegram');
-    expect(html).toContain('ID del chat de Telegram');
-    expect(html).toContain('Guardaremos este horario y nivel de privacidad antes de lanzar el primer informe.');
-    expect(html).toContain('Hora del informe');
-    expect(html).toContain('Zona horaria');
-    expect(html).toContain('Nivel de privacidad');
-    expect(html).toContain('Días de retención');
+    expect(html).toContain('Necesitamos acceder a Home Assistant');
+    expect(html).not.toContain('Clave del proveedor');
+    expect(html).not.toContain('Token del bot de Telegram');
+    expect(html).not.toContain('Hora del informe');
     expect(html).toContain('Continuar a proveedor de IA');
     expect(html).not.toContain('Validar y lanzar primer informe');
     expect(html).not.toContain(validDraft.haToken);
     expect(html).not.toContain(validDraft.aiKey);
     expect(html).not.toContain(validDraft.telegramBotToken);
+  });
+
+  test('names first-screen controls for accessible and password-manager-safe completion', () => {
+    const html = renderToStaticMarkup(<OnboardingFlow state={createInitialOnboardingState()} />);
+
+    expect(html).toContain('name="haUrl"');
+    expect(html).toContain('autoComplete="url"');
+    expect(html).toContain('name="haToken"');
+    expect(html).toContain('autoComplete="off"');
+  });
+
+  test('shows an actionable error instead of silently returning when setup API is missing', async () => {
+    const { container } = await mountOnboardingFlow(undefined);
+    const form = container.querySelector<HTMLFormElement>('form.onboarding-flow');
+    if (!form) throw new Error('Expected onboarding form to render.');
+
+    await act(async () => form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true })));
+
+    expect(container.textContent).toContain('falta SETUP_TOKEN');
+    expect(container.textContent?.match(/falta SETUP_TOKEN/g)).toHaveLength(1);
+    expect(container.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(false);
   });
 
   test('allows the default Telegram path to progress when rendered fields are filled', () => {
@@ -90,7 +131,7 @@ describe('onboarding flow', () => {
       }
     });
 
-    expect(readyForSchedule.step).toBe('schedulePrivacy');
+    expect(readyForSchedule.step).toBe('schedule');
     expect(readyForSchedule.errors).toEqual({});
   });
 
@@ -101,6 +142,14 @@ describe('onboarding flow', () => {
 
     expect(html).toContain('Validar y lanzar primer informe');
     expect(html).not.toContain('Continuar a proveedor de IA');
+  });
+
+  test('uses semantic names and input types on the restored schedule screen', () => {
+    const html = renderToStaticMarkup(<OnboardingFlow state={{ ...createInitialOnboardingState(), step: 'schedule' }} />);
+
+    expect(html).toContain('name="dailyTime"');
+    expect(html).toContain('type="time"');
+    expect(html).toContain('name="timezone"');
   });
 
   test('requires schedule and privacy values before the first digest step', () => {
@@ -148,17 +197,10 @@ describe('onboarding flow', () => {
   test('validates setup through the API client, stores only masked settings, and queues the first digest', async () => {
     const calls: Array<{ method: string; body: unknown }> = [];
     const api: OnboardingApi = {
-      getSettings: async () => ({
-        haUrl: validDraft.haUrl,
-        aiProvider: 'gemini' as const,
-        secretRefs: { haTokenRef: 'ref-ha', aiKeyRef: 'ref-ai', notifierRefs: { telegram: 'ref-telegram' } },
-        schedules: [],
-        privacyLevel: 'minimal' as const,
-        retentionDays: 30
-      }),
+      getSettings: async () => editableSettings(),
       updateSettings: async (body) => {
         calls.push({ method: 'updateSettings', body });
-        return body;
+        return editableSettings();
       },
       validateSetup: async (body) => {
         calls.push({ method: 'validateSetup', body });
@@ -181,7 +223,7 @@ describe('onboarding flow', () => {
 
     expect(calls).toEqual([
       { method: 'validateSetup', body: { haUrl: validDraft.haUrl, haToken: validDraft.haToken, aiProvider: 'gemini', aiKey: validDraft.aiKey, telegram: { botToken: validDraft.telegramBotToken, chatId: validDraft.telegramChatId } } },
-      { method: 'updateSettings', body: { haUrl: validDraft.haUrl, aiProvider: 'gemini', secretRefs: { haTokenRef: 'ref-ha', aiKeyRef: 'ref-ai', notifierRefs: { telegram: 'ref-telegram' } }, schedules: [{ kind: 'daily', enabled: true, time: '08:00', timezone: 'Europe/Madrid' }], privacyLevel: 'balanced', retentionDays: 90 } },
+      { method: 'updateSettings', body: expectedSettingsUpdate({ time: '08:00', privacyLevel: 'balanced', retentionDays: 90 }) },
       { method: 'runDigest', body: expect.objectContaining({ kind: 'manual', window: { from: expect.any(String), to: expect.any(String) } }) }
     ]);
     expectFirstDigestWindowContract(calls[2]?.body);
@@ -197,15 +239,8 @@ describe('onboarding flow', () => {
   test('guards rapid final submits while the onboarding request is already submitting', async () => {
     const setupRequest = deferred<Awaited<ReturnType<OnboardingApi['validateSetup']>>>();
     const api: OnboardingApi = {
-      getSettings: vi.fn(async () => ({
-        haUrl: validDraft.haUrl,
-        aiProvider: 'gemini' as const,
-        secretRefs: { haTokenRef: 'ref-ha', aiKeyRef: 'ref-ai', notifierRefs: { telegram: 'ref-telegram' } },
-        schedules: [],
-        privacyLevel: 'minimal' as const,
-        retentionDays: 30
-      })),
-      updateSettings: vi.fn(async (body) => body),
+      getSettings: vi.fn(async () => editableSettings()),
+      updateSettings: vi.fn(async () => editableSettings()),
       validateSetup: vi.fn(() => setupRequest.promise),
       runDigest: vi.fn(async () => ({ jobId: 'job-first-digest', status: 'queued' as const }))
     };
@@ -239,15 +274,8 @@ describe('onboarding flow', () => {
 
   test('does not queue another first digest when submitting after completion', async () => {
     const api: OnboardingApi = {
-      getSettings: vi.fn(async () => ({
-        haUrl: validDraft.haUrl,
-        aiProvider: 'gemini' as const,
-        secretRefs: { haTokenRef: 'ref-ha', aiKeyRef: 'ref-ai', notifierRefs: { telegram: 'ref-telegram' } },
-        schedules: [],
-        privacyLevel: 'minimal' as const,
-        retentionDays: 30
-      })),
-      updateSettings: vi.fn(async (body) => body),
+      getSettings: vi.fn(async () => editableSettings()),
+      updateSettings: vi.fn(async () => editableSettings()),
       validateSetup: vi.fn(async () => ({
         csrfToken: 'csrf sample value',
         settings: {
@@ -311,18 +339,11 @@ describe('onboarding flow', () => {
     const calls: string[] = [];
     let updateAttempts = 0;
     const api: OnboardingApi = {
-      getSettings: async () => ({
-        haUrl: validDraft.haUrl,
-        aiProvider: 'gemini',
-        secretRefs: { haTokenRef: 'ref-ha', aiKeyRef: 'ref-ai', notifierRefs: { telegram: 'ref-telegram' } },
-        schedules: [],
-        privacyLevel: 'minimal',
-        retentionDays: 30
-      }),
+      getSettings: async () => editableSettings(),
       updateSettings: async (body) => {
         updateAttempts += 1;
         calls.push('updateSettings');
-        if (updateAttempts === 2) return body;
+        if (updateAttempts === 2) return editableSettings();
         throw new ApiClientError('SETTINGS_FAILED', 'Settings persistence failed.', 'req-settings');
       },
       validateSetup: async () => {
@@ -360,19 +381,12 @@ describe('onboarding flow', () => {
     const calls: Array<{ method: string; body?: unknown }> = [];
     let updateAttempts = 0;
     const api: OnboardingApi = {
-      getSettings: async () => ({
-        haUrl: validDraft.haUrl,
-        aiProvider: 'gemini',
-        secretRefs: { haTokenRef: 'ref-ha', aiKeyRef: 'ref-ai', notifierRefs: { telegram: 'ref-telegram' } },
-        schedules: [],
-        privacyLevel: 'minimal',
-        retentionDays: 30
-      }),
+      getSettings: async () => editableSettings(),
       updateSettings: async (body) => {
         updateAttempts += 1;
         calls.push({ method: 'updateSettings', body });
         if (updateAttempts === 1) throw new ApiClientError('SETTINGS_FAILED', 'Settings persistence failed.', 'req-settings');
-        return body;
+        return editableSettings();
       },
       validateSetup: async (body) => {
         calls.push({ method: 'validateSetup', body });
@@ -404,8 +418,8 @@ describe('onboarding flow', () => {
 
     expect(calls).toEqual([
       { method: 'validateSetup', body: { haUrl: validDraft.haUrl, haToken: validDraft.haToken, aiProvider: 'gemini', aiKey: validDraft.aiKey, telegram: { botToken: validDraft.telegramBotToken, chatId: validDraft.telegramChatId } } },
-      { method: 'updateSettings', body: { haUrl: validDraft.haUrl, aiProvider: 'gemini', secretRefs: { haTokenRef: 'ref-ha', aiKeyRef: 'ref-ai', notifierRefs: { telegram: 'ref-telegram' } }, schedules: [{ kind: 'daily', enabled: true, time: '08:00', timezone: 'Europe/Madrid' }], privacyLevel: 'balanced', retentionDays: 90 } },
-      { method: 'updateSettings', body: { haUrl: validDraft.haUrl, aiProvider: 'gemini', secretRefs: { haTokenRef: 'ref-ha', aiKeyRef: 'ref-ai', notifierRefs: { telegram: 'ref-telegram' } }, schedules: [{ kind: 'daily', enabled: true, time: '21:30', timezone: 'Europe/Madrid' }], privacyLevel: 'detailed', retentionDays: 14 } },
+      { method: 'updateSettings', body: expectedSettingsUpdate({ time: '08:00', privacyLevel: 'balanced', retentionDays: 90 }) },
+      { method: 'updateSettings', body: expectedSettingsUpdate({ time: '21:30', privacyLevel: 'detailed', retentionDays: 14 }) },
       { method: 'runDigest', body: expect.objectContaining({ kind: 'manual', window: { from: expect.any(String), to: expect.any(String) } }) }
     ]);
     expect(failed.status).toBe('failed');
@@ -417,14 +431,7 @@ describe('onboarding flow', () => {
 
   test('validates current schedule and privacy draft before retrying post-setup persistence', async () => {
     const api: OnboardingApi = {
-      getSettings: vi.fn(async () => ({
-        haUrl: validDraft.haUrl,
-        aiProvider: 'gemini' as const,
-        secretRefs: { haTokenRef: 'ref-ha', aiKeyRef: 'ref-ai', notifierRefs: { telegram: 'ref-telegram' } },
-        schedules: [],
-        privacyLevel: 'minimal' as const,
-        retentionDays: 30
-      })),
+      getSettings: vi.fn(async () => editableSettings()),
       updateSettings: vi.fn(async () => {
         throw new ApiClientError('SETTINGS_FAILED', 'Settings persistence failed.', 'req-settings');
       }),
@@ -458,17 +465,10 @@ describe('onboarding flow', () => {
   test('retries first digest with the same stable window without setup validation after digest queue failure', async () => {
     const calls: Array<{ method: string; body?: unknown }> = [];
     const api: OnboardingApi = {
-      getSettings: async () => ({
-        haUrl: validDraft.haUrl,
-        aiProvider: 'gemini',
-        secretRefs: { haTokenRef: 'ref-ha', aiKeyRef: 'ref-ai', notifierRefs: { telegram: 'ref-telegram' } },
-        schedules: [],
-        privacyLevel: 'minimal',
-        retentionDays: 30
-      }),
+      getSettings: async () => editableSettings(),
       updateSettings: async (body) => {
         calls.push({ method: 'updateSettings', body });
-        return body;
+        return editableSettings();
       },
       validateSetup: async () => {
         calls.push({ method: 'validateSetup' });
@@ -510,17 +510,10 @@ describe('onboarding flow', () => {
   test('persists current schedule and privacy edits before retrying a failed first digest', async () => {
     const calls: Array<{ method: string; body?: unknown }> = [];
     const api: OnboardingApi = {
-      getSettings: async () => ({
-        haUrl: validDraft.haUrl,
-        aiProvider: 'gemini',
-        secretRefs: { haTokenRef: 'ref-ha', aiKeyRef: 'ref-ai', notifierRefs: { telegram: 'ref-telegram' } },
-        schedules: [],
-        privacyLevel: 'minimal',
-        retentionDays: 30
-      }),
+      getSettings: async () => editableSettings(),
       updateSettings: async (body) => {
         calls.push({ method: 'updateSettings', body });
-        return body;
+        return editableSettings();
       },
       validateSetup: async () => {
         calls.push({ method: 'validateSetup' });
@@ -614,7 +607,7 @@ describe('onboarding flow', () => {
   });
 });
 
-async function mountOnboardingFlow(api: OnboardingApi) {
+async function mountOnboardingFlow(api?: OnboardingApi) {
   const container = document.createElement('div');
   document.body.append(container);
   const root = createRoot(container);
@@ -648,4 +641,26 @@ function expectFirstDigestWindowContract(body: unknown) {
   expect(Number.isNaN(toMs)).toBe(false);
   expect(fromMs).toBeLessThan(toMs);
   expect(toMs - fromMs).toBe(24 * 60 * 60 * 1000);
+}
+
+function editableSettings() {
+  return {
+    homeAssistant: { url: validDraft.haUrl, token: { configured: true as const, mask: '••••ha' } },
+    ai: { provider: 'gemini' as const, key: { configured: true as const, mask: '••••ai' } },
+    notifications: { channel: 'telegram' as const, chatId: validDraft.telegramChatId, botToken: { configured: true as const, mask: '••••telegram' } },
+    schedules: [],
+    privacyLevel: 'minimal' as const,
+    retentionDays: 30
+  };
+}
+
+function expectedSettingsUpdate({ time, privacyLevel, retentionDays }: { time: string; privacyLevel: 'balanced' | 'detailed'; retentionDays: number }) {
+  return {
+    homeAssistant: { url: validDraft.haUrl, token: { operation: 'keep_current' } },
+    ai: { provider: 'gemini', key: { operation: 'keep_current' } },
+    notifications: { channel: 'telegram', chatId: validDraft.telegramChatId, botToken: { operation: 'keep_current' } },
+    schedules: [{ kind: 'daily', enabled: true, time, timezone: 'Europe/Madrid' }],
+    privacyLevel,
+    retentionDays
+  };
 }

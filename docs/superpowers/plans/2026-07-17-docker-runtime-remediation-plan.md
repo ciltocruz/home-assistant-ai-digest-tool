@@ -58,12 +58,12 @@ Slice boundary: Slice 1 (PR #1, base feature/tracker branch) runtime contracts/r
 
 **Files:** Create `scripts/verify-docker-runtime.sh`, `docs/operations/docker-runtime.md`; modify `README.md`, `package.json`.
 
-- [ ] Add `pnpm verify:docker`: build/smoke both modes; verify proxy headers/Secure cookies, unreadable-log unhealthy transition, denied `/app` writes, allowed `/tmp`/`/data`, restart persistence, and trap cleanup.
-- [ ] Document stopped whole-`/data` backup/restore, key permissions, immutable `app.key`, invalid-key failure, destructive reset, and HA DB-adapter deferral.
-- [ ] Run `pnpm verify:docker`; expect PASS. Boundary: `test: add Docker boundary verification`.
+- [x] Add `pnpm verify:docker`: build/smoke both modes; verify proxy headers/Secure cookies, unreadable-log unhealthy transition, denied `/app` writes, allowed `/tmp`/`/data`, restart persistence, and trap cleanup.
+- [x] Document stopped whole-`/data` backup/restore, key permissions, immutable `app.key`, invalid-key failure, destructive reset, and HA DB-adapter deferral.
+- [x] Run `pnpm verify:docker`; expect PASS. Boundary: `test: add Docker boundary verification`.
 
 ### Task 6: Acceptance gate
 
-- [ ] Run `pnpm run ci`; expect exit 0.
-- [ ] Run `pnpm verify:docker`; expect exit 0, no secrets, hardening, readiness, startup logs, safe modes, persistence.
-- [ ] Scan placeholders, inconsistent names, and coverage; expect no findings.
+- [x] Run `pnpm run ci`; expect exit 0.
+- [x] Run `pnpm verify:docker`; expect exit 0, no secrets, hardening, readiness, startup logs, safe modes, persistence.
+- [x] Scan placeholders, inconsistent names, and coverage; expect no findings.

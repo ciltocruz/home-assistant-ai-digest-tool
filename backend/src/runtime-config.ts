@@ -15,6 +15,10 @@ export type RuntimeConfig = {
   dataDir: string;
   logDir: string;
   haLogsDir?: string;
+  haMaxStates: number;
+  haMaxLogLines: number;
+  haMaxResponseBytes: number;
+  haAnalysisTimeoutMs: number;
 };
 
 export function loadRuntimeConfig(environment: NodeJS.ProcessEnv): RuntimeConfig {
@@ -43,7 +47,11 @@ export function loadRuntimeConfig(environment: NodeJS.ProcessEnv): RuntimeConfig
     frontendDistDir: resolve(environment.FRONTEND_DIST_DIR ?? './frontend-dist'),
     dataDir,
     logDir: resolve(environment.LOG_DIR ?? `${dataDir}/logs`),
-    haLogsDir: environment.HA_LOGS_DIR ? resolve(environment.HA_LOGS_DIR) : undefined
+    haLogsDir: environment.HA_LOGS_DIR ? resolve(environment.HA_LOGS_DIR) : undefined,
+    haMaxStates: parsePositiveInteger('HA_MAX_STATES', environment.HA_MAX_STATES, 500),
+    haMaxLogLines: parsePositiveInteger('HA_MAX_LOG_LINES', environment.HA_MAX_LOG_LINES, 200),
+    haMaxResponseBytes: parsePositiveInteger('HA_MAX_RESPONSE_BYTES', environment.HA_MAX_RESPONSE_BYTES, 1_000_000),
+    haAnalysisTimeoutMs: parsePositiveInteger('HA_ANALYSIS_TIMEOUT_MS', environment.HA_ANALYSIS_TIMEOUT_MS, 60_000)
   };
 }
 
@@ -68,6 +76,12 @@ function parsePort(value: string | undefined): number {
   const port = Number(value ?? '3000');
   if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error('PORT must be an integer from 1 to 65535.');
   return port;
+}
+
+function parsePositiveInteger(name: string, value: string | undefined, fallback: number): number {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`${name} must be a positive integer.`);
+  return parsed;
 }
 
 function requireEnvironmentValue(environment: NodeJS.ProcessEnv, name: string): string {

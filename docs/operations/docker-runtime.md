@@ -1,13 +1,13 @@
 # Docker Runtime Operations
 
-This how-to is for operators running the Docker-first preview with Home Assistant Core. Home Assistant OS and Supervised are not supported by this runtime.
+This how-to is for operators running the Docker-first runtime with Home Assistant Core. Home Assistant OS and Supervised are not supported by this runtime.
 
 ## Start in local mode
 
 Local mode is the default. It publishes only on loopback and deliberately uses non-Secure cookies for direct localhost HTTP.
 
 1. Copy `.env.example` to `.env` and set long, unique `ADMIN_TOKEN` and `SETUP_TOKEN` values. Do not commit this file.
-2. Set `HA_LOG_FILE` to one existing Home Assistant log file. The container mounts that file read-only; do not mount the full Home Assistant configuration directory.
+2. Set `HA_LOG_FILE` to one existing Home Assistant log file. The container mounts that file read-only; do not mount the full Home Assistant configuration directory. Optional `HA_MAX_STATES`, `HA_MAX_LOG_LINES`, and `HA_MAX_RESPONSE_BYTES` constrain manual analysis.
 3. Start the service:
 
    ```bash
@@ -21,6 +21,12 @@ Local mode is the default. It publishes only on loopback and deliberately uses n
    ```
 
 `/health` reports process liveness. `/ready` additionally requires the frontend, SQLite data, and a readable HA log. A missing, empty, metadata-only, or unreadable HA log returns HTTP 503 and makes the Docker health check unhealthy.
+
+## Run one protected local analysis
+
+Complete the protected six-screen onboarding with the Home Assistant URL and a dedicated long-lived token, then use the dashboard's **Lanzar informe** action. The server accepts only authenticated, CSRF-protected manual runs. It makes one bounded read-only `GET /api/states` request and reads a bounded tail of `/ha-logs/home-assistant.log`; it never mounts `/config`, uses Supervisor APIs, or mutates Home Assistant. The report is deterministic, stored in `/data`, and available after restart through history/detail routes.
+
+If a source is unauthorized, malformed, oversized, unavailable, or another analysis is already active, the request returns a safe code and stores no partial report. Roll back by deploying the previous image/Compose version while preserving `/data`.
 
 ## Start behind a controlled reverse proxy
 
@@ -40,7 +46,27 @@ Run the disposable verification harness from a checkout with Docker available:
 pnpm verify:docker
 ```
 
-The command builds and starts isolated local and reverse-proxy Compose projects. It checks the forwarded-HTTPS/Secure-cookie contract, honest HA-log readiness, `/app` write denial, `/tmp` and `/data` writes, and `/data` persistence across a restart. It creates a temporary log fixture and volume, and its exit trap removes the temporary containers, volume, and files. It does not print its supplied test tokens; failure diagnostics redact them.
+The command builds and starts isolated local and reverse-proxy Compose projects. Its local overlay uses an internal fake Home Assistant service plus a mounted synthetic log to prove the six-screen persisted onboarding, authenticated REST collection, mounted-log analysis, report retrieval after restart, and a controlled source failure that adds no report. It verifies that onboarding, settings, completed jobs, and reports survive a restart. It also checks the forwarded-HTTPS/Secure-cookie contract, honest HA-log readiness, `/app` write denial, and `/tmp` and `/data` writes. It uses bounded waits; its exit trap removes the temporary containers, volumes, networks, and files. It does not print its supplied tokens, cookies, CSRF values, or authorization headers; failure diagnostics redact them.
+
+### Verifier timeout and cleanup contract
+
+The verifier owns a 180 seconds execution deadline. Callers must allow its 20-second cleanup grace and five-second cushion (205 seconds total), rather than killing it during teardown. Inspect the active contract instead of duplicating those values in automation:
+
+```bash
+bash scripts/verify-docker-runtime.sh --print-timeout-contract
+```
+
+Use the fast port/isolation check when Docker lifecycle coverage is not needed:
+
+```bash
+pnpm verify:docker:preflight
+```
+
+Preflight reserves the requested `VERIFY_DOCKER_PORT` exactly, or falls back from the historic port to an available local port when none is requested. It does not build images or start Compose services. A full run uses a fresh workspace, project name, and port; readiness and health diagnostics include the final observed HTTP and Docker-health states when the deadline expires.
+
+The verifier cleans its own containers, networks, volumes, port holder, and workspace on normal exit, failure, SIGINT, and SIGTERM. At startup it can recover a stale verifier-owned record left by an untrappable termination, but skips live, incomplete, young, malformed, or unrelated records. If a run is interrupted, allow cleanup to finish before starting another one.
+
+Rollback: revert the verifier script, its tests, `compose.verify.yaml`, this section, and the preflight package command together. These files affect only disposable verification resources; no product runtime data or Home Assistant behavior changes.
 
 ## Back up all persistent data
 
@@ -107,4 +133,4 @@ This creates an empty `/data` volume and a new key on first start. It cannot rec
 
 ## Current boundary
 
-The runtime persists local settings, encrypted secrets, digest jobs, and report history. It does not yet include a Home Assistant database adapter. Use the narrow read-only HA log mount only; no Docker socket, host networking, privileged mode, or full Home Assistant configuration mount is supported.
+The runtime persists local settings, encrypted secrets, and report history. Manual analysis uses HA REST states plus the narrow read-only HA-log mount; it does not include a Home Assistant database adapter. No Docker socket, host networking, privileged mode, full Home Assistant configuration mount, AI call, notifier delivery, scheduler, or queue execution is supported.

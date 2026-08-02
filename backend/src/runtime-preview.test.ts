@@ -131,11 +131,12 @@ describe('runtime preview app', () => {
     const duplicateRun = await app.inject({ method: 'POST', url: '/api/digests/run', headers: { cookie: reopenedCookie, 'x-csrf-token': (login.json() as { csrfToken: string }).csrfToken }, payload: { kind: 'manual' } });
 
     expect(setup.statusCode).toBe(200);
-    expect(settings.json()).toMatchObject({ aiProvider: 'gemini', privacyLevel: 'balanced' });
-    expect(duplicateRun.json()).toEqual({ status: 'already_queued', jobId: (firstRun.json() as { jobId: string }).jobId });
+    expect(settings.json()).toMatchObject({ ai: { provider: 'gemini' }, privacyLevel: 'balanced' });
+    expect(firstRun.json()).toMatchObject({ code: 'ANALYSIS_UNAVAILABLE' });
+    expect(duplicateRun.json()).toMatchObject({ code: 'ANALYSIS_UNAVAILABLE' });
   });
 
-  it('does not inject the setup token into persistent runtime HTML', async () => {
+  it('injects the setup token into persistent runtime HTML without changing API authorization', async () => {
     const frontendDistDir = await createFrontendDist();
     const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-preview-no-token-'));
     app = await createPersistentRuntimePreviewApp({
@@ -148,9 +149,13 @@ describe('runtime preview app', () => {
     const index = await app.inject({ method: 'GET', url: '/' });
 
     expect(index.statusCode).toBe(200);
-    expect(index.body).not.toContain('setup-token-must-stay-server-side');
-    expect(index.body).not.toContain('window.__HA_DIGEST_BOOTSTRAP__');
+    expect(index.body).toContain('window.__HA_DIGEST_BOOTSTRAP__');
+    expect(index.body).toContain('setup-token-must-stay-server-side');
     expect(index.body).toContain('<div id="root"></div>');
+
+    const protectedApi = await app.inject({ method: 'GET', url: '/api/digests/history' });
+    expect(protectedApi.statusCode).toBe(401);
+    expect(protectedApi.json()).toMatchObject({ code: 'UNAUTHENTICATED' });
   });
 
   it('reports not ready when persistence health fails', async () => {
@@ -297,9 +302,9 @@ describe('runtime preview app', () => {
 function createRuntimePreviewServices(): BackendApiServices {
   return {
     setup: { async complete(input) { return { haUrl: input.haUrl, ai: { provider: input.aiProvider, keyMask: 'configured', ref: 'preview:ai' }, notifiers: [] }; } },
-    settings: { async get() { return { haUrl: 'http://homeassistant.local:8123', aiProvider: 'gemini', secretRefs: { haTokenRef: 'preview:ha', aiKeyRef: 'preview:ai', notifierRefs: {} }, schedules: [], privacyLevel: 'balanced', retentionDays: 30 }; }, async update(input) { return input; } },
-    digestJobs: { async enqueue(input) { return { status: 'queued', jobId: `preview:${input.triggerWindowId}` }; } },
-    reports: { async list() { return []; } },
+    settings: { async get() { return { homeAssistant: { url: 'http://homeassistant.local:8123', token: { configured: true, mask: 'configured' } }, ai: { provider: 'gemini' as const, key: { configured: true, mask: 'configured' } }, notifications: { channel: 'none' as const }, schedules: [], privacyLevel: 'balanced' as const, retentionDays: 30 }; }, async update() { return this.get(); } },
+    digestJobs: { async enqueue(input) { return { status: 'queued', jobId: `preview:${input.triggerWindowId}` }; }, async get() { return null; }, async retryFailed() { return null; } },
+    reports: { async list() { return []; }, async get() { return null; } },
     notes: { async add(input) { return { id: 'preview-note', ...input, createdAt: '2026-07-12T10:00:00.000Z' }; }, async listWindow() { return []; } },
     ignores: { async add(input) { return { id: 'preview-ignore', match: input.match, type: input.type, reason: input.reason, expiresAt: input.expiresAt, createdAt: '2026-07-12T10:00:00.000Z' }; }, async remove() {}, async listActive() { return []; } },
     notifiers: { async test() { return { status: 'failed', message: 'Preview runtime does not send live notifications yet.', checkedAt: '2026-07-12T10:00:00.000Z' }; }, async send(input) { return { status: 'skipped', targetRef: input.targetRef, message: 'Preview runtime does not send live notifications yet.' }; } }

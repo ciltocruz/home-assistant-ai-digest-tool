@@ -1,5 +1,6 @@
 import type { PrivacyLevel } from '@ha-digest/shared';
 import type { Incident } from './detectors.js';
+import type { ExecutionContext } from './execution.js';
 
 export type RedactedDigestInput = {
   window: { from: string; to: string };
@@ -19,5 +20,5 @@ export type StructuredDigest = {
 
 export interface AIProvider {
   readonly id: 'openai' | 'gemini' | string;
-  generate(input: RedactedDigestInput): Promise<StructuredDigest>;
+  generate(input: RedactedDigestInput, context: ExecutionContext): Promise<StructuredDigest>;
 }

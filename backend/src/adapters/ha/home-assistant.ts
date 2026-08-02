@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
 import type { CollectedFact, CollectionResult, Collector, UnsupportedSignal } from '../../domain/collectors.js';
 import type { Incident, IncidentDetector, IncidentSeverity } from '../../domain/detectors.js';
+import { createExecutionContext, type ExecutionContext } from '../../domain/execution.js';
 
 export type HomeAssistantState = {
   entity_id: string;
@@ -10,11 +12,11 @@ export type HomeAssistantState = {
 };
 
 export interface HomeAssistantApiClient {
-  listStates(): Promise<HomeAssistantState[]>;
+  listStates(context?: ExecutionContext): Promise<HomeAssistantState[]>;
 }
 
 export interface HomeAssistantLogReader {
-  readLogLines(): Promise<string[]>;
+  readLogLines(context?: ExecutionContext): Promise<string[]>;
 }
 
 type HomeAssistantFactKind = 'state' | 'log';
@@ -75,13 +77,16 @@ export class HomeAssistantFactsCollector implements Collector {
     private readonly unsupportedReporter = new DockerCoreUnsupportedSignalReporter()
   ) {}
 
-  async collect(): Promise<CollectionResult> {
+  async collect(context = createExecutionContext()): Promise<CollectionResult> {
+    context.checkpoint();
     const observedAt = this.options.now?.() ?? new Date().toISOString();
-    const states = (await this.options.apiClient.listStates()).slice(0, this.options.maxStates ?? DEFAULT_MAX_STATES);
-    const logLines = (await this.options.logReader.readLogLines()).slice(0, this.options.maxLogLines ?? DEFAULT_MAX_LOG_LINES);
+    const states = (await this.options.apiClient.listStates(context)).slice(0, this.options.maxStates ?? DEFAULT_MAX_STATES);
+    context.checkpoint();
+    const logLines = (await this.options.logReader.readLogLines(context)).slice(0, this.options.maxLogLines ?? DEFAULT_MAX_LOG_LINES);
+    context.checkpoint();
 
     return {
-      facts: [...states.map((state) => stateFact(state, observedAt)), ...logLines.map((line, index) => logFact(line, index, observedAt))],
+      facts: [...states.map((state) => stateFact(state, observedAt)), ...logLines.map((line) => logFact(line, observedAt))],
       unsupportedSignals: this.unsupportedReporter.unsupportedSignals()
     };
   }
@@ -92,7 +97,8 @@ export class HomeAssistantIncidentDetector implements IncidentDetector {
 
   constructor(private readonly options: DetectorOptions = {}) {}
 
-  async detect(facts: CollectedFact[]): Promise<Incident[]> {
+  async detect(facts: CollectedFact[], context = createExecutionContext()): Promise<Incident[]> {
+    context.checkpoint();
     const detectedAt = this.options.now?.() ?? new Date().toISOString();
     return facts.flatMap((fact) => {
       const attributes = fact.attributes as HomeAssistantFactAttributes | undefined;
@@ -124,10 +130,11 @@ function stateFact(state: HomeAssistantState, observedAt: string): CollectedFact
   };
 }
 
-function logFact(line: string, index: number, observedAt: string): CollectedFact {
+function logFact(line: string, observedAt: string): CollectedFact {
   const message = redactText(line);
+  const identity = canonicalLogIdentity(message);
   return {
-    id: `ha_log:${observedAt}:${index}`,
+    id: `ha_log:${createHash('sha256').update(identity).digest('hex').slice(0, 16)}`,
     source: 'ha_log',
     observedAt,
     summary: message,
@@ -207,6 +214,12 @@ function logLevel(line: string): string {
   if (/\bERROR\b/i.test(line)) return 'ERROR';
   if (/\bWARNING\b/i.test(line)) return 'WARNING';
   return 'INFO';
+}
+
+function canonicalLogIdentity(message: string): string {
+  const match = message.match(/^(?<timestamp>\S+\s+\S+)\s+(?<level>\w+)(?:\s+\([^)]*\))?\s+\[(?<logger>[^\]]+)]\s*(?<detail>[\s\S]*)$/);
+  if (!match?.groups) return `unknown|${logLevel(message)}||${message}`;
+  return `${match.groups.timestamp}|${match.groups.level.toUpperCase()}|${match.groups.logger}|${match.groups.detail}`;
 }
 
 function isStale(updatedAt: string | undefined, observedAt: string, staleAfterHours: number): boolean {

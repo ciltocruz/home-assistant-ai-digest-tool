@@ -5,7 +5,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { ApiClientError } from './api-client.js';
-import { DashboardHistory, loadDigestHistory, type DashboardApi } from './dashboard.js';
+import { Dashboard, DashboardHistory, loadDigestHistory, type DashboardApi } from './dashboard.js';
 
 Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: true, value: true });
 
@@ -31,6 +31,7 @@ describe('DashboardHistory', () => {
     const html = renderToStaticMarkup(<DashboardHistory state={state} />);
 
     expect(state.status).toBe('empty');
+    expect(html).toContain('<h1>Informes</h1>');
     expect(html).toContain('Aún no hay informes');
     expect(html).toContain('Cuando lances el primer informe, aparecerá aquí con su ventana analizada y estado de entrega.');
   });
@@ -62,6 +63,14 @@ describe('DashboardHistory', () => {
     expect(html).toContain('Enviado');
   });
 
+  test('makes every saved report an accessible deep link', async () => {
+    const state = await loadDigestHistory(fakeDashboardApi([historyItem]));
+    const html = renderToStaticMarkup(<DashboardHistory state={state} />);
+
+    expect(html).toContain('href="/reports/digest-1"');
+    expect(html).toContain('Abrir informe del 10 jul 2026, 10:00');
+  });
+
   test('renders the analyzed window for each history item', async () => {
     const state = await loadDigestHistory(fakeDashboardApi([historyItem]));
     const html = renderToStaticMarkup(<DashboardHistory state={state} />);
@@ -83,6 +92,22 @@ describe('DashboardHistory', () => {
     });
 
     expect(container.textContent).toContain('Aún no hay informes');
+  });
+
+  test('does not request history before session creation and refreshes after the session exists', async () => {
+    const api = { listHistory: vi.fn(async () => [historyItem]) };
+    const { container, root } = await mountDashboardHistory(undefined);
+
+    expect(api.listHistory).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('Historial pendiente de conexión');
+
+    await act(async () => {
+      root.render(<DashboardHistory api={api} />);
+      await Promise.resolve();
+    });
+
+    expect(api.listHistory).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain('1 informe guardado');
   });
 
   test('mounted production path renders list results from api prop', async () => {
@@ -121,6 +146,28 @@ describe('DashboardHistory', () => {
     expect(container.textContent).not.toContain('synthetic_secret_marker_for_history');
   });
 
+  test('offers one recovery action after a history failure and reloads only the history', async () => {
+    const api = {
+      listHistory: vi.fn()
+        .mockRejectedValueOnce(new ApiClientError('HISTORY_FAILED', 'Backend rejected request', 'req-history'))
+        .mockResolvedValueOnce([historyItem])
+    };
+    const { container } = await mountDashboardHistory(api);
+    await flushAsyncWork();
+
+    expect(container.textContent).toContain('No se pudo cargar el historial');
+    const retry = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Reintentar historial');
+    expect(retry).toBeDefined();
+
+    await act(async () => {
+      retry?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(api.listHistory).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain('1 informe guardado');
+  });
+
   test('sets loading state again when the api prop changes', async () => {
     const firstApi = { listHistory: vi.fn(async () => [historyItem]) };
     const secondRequest = deferred<Awaited<ReturnType<DashboardApi['listHistory']>>>();
@@ -145,13 +192,63 @@ describe('DashboardHistory', () => {
 
     expect(container.textContent).toContain('Aún no hay informes');
   });
+
+  test('refreshes saved history when a completed report signals a new lifecycle revision', async () => {
+    const api = { listHistory: vi.fn(async () => [historyItem]) };
+    const { container, root } = await mountDashboardHistory(api);
+    await flushAsyncWork();
+
+    expect(api.listHistory).toHaveBeenCalledTimes(1);
+    await act(async () => { root.render(<DashboardHistory api={api} refreshKey={1} />); await Promise.resolve(); });
+
+    expect(api.listHistory).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain('1 informe guardado');
+  });
+});
+
+describe('Dashboard', () => {
+  test('orders current attention, active report, latest report, and history preview without configuration controls', () => {
+    const previousReport = {
+      ...historyItem,
+      id: 'digest-0',
+      createdAt: '2026-07-10T09:00:00.000Z',
+      window: { from: '2026-07-10T08:00:00.000Z', to: '2026-07-10T09:00:00.000Z' }
+    };
+
+    const html = renderToStaticMarkup(<Dashboard state={{ status: 'ready', items: [historyItem, previousReport] }} activeReport={<p>Estado del informe activo</p>} />);
+
+    const currentState = html.indexOf('Estado actual');
+    const activeReport = html.indexOf('Informe activo');
+    const latestReport = html.indexOf('Último informe');
+    const historyPreview = html.indexOf('Historial reciente');
+    expect(html).toContain('<h1 class="dashboard-title">Panel</h1>');
+    expect(currentState).toBeGreaterThan(-1);
+    expect(html).toContain('3 incidencias requieren atención');
+    expect(activeReport).toBeGreaterThan(currentState);
+    expect(latestReport).toBeGreaterThan(activeReport);
+    expect(historyPreview).toBeGreaterThan(latestReport);
+    expect(html).toContain('1 informe anterior');
+    expect(html).not.toContain('Notas del operador');
+    expect(html).not.toContain('Avisos ignorados');
+    expect(html).not.toContain('Privacidad y retención');
+  });
+
+  test('gives a clear no-report state and routes the next action to reports', () => {
+    const html = renderToStaticMarkup(<Dashboard state={{ status: 'empty' }} activeReport={<p>Sin informe activo</p>} />);
+
+    expect(html).toContain('Sin incidencias pendientes');
+    expect(html).toContain('Todavía no hay ningún informe guardado.');
+    expect(html).toContain('Sin informes anteriores.');
+    expect(html).toContain('href="/reports"');
+    expect(html).toContain('Ver informes');
+  });
 });
 
 function fakeDashboardApi(items: Awaited<ReturnType<DashboardApi['listHistory']>>): DashboardApi {
   return { listHistory: async () => items };
 }
 
-async function mountDashboardHistory(api: DashboardApi) {
+async function mountDashboardHistory(api?: DashboardApi) {
   const container = document.createElement('div');
   document.body.append(container);
   const root = createRoot(container);

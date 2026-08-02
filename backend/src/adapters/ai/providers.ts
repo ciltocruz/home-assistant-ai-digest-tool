@@ -1,4 +1,5 @@
 import type { AIProvider, RedactedDigestInput, StructuredDigest } from '../../domain/providers.js';
+import { combineAbortSignals, type ExecutionContext } from '../../domain/execution.js';
 
 export type ProviderHttpRequest = {
   method: 'POST';
@@ -31,12 +32,13 @@ const DEFAULT_PROVIDER_TIMEOUT_MS = 30_000;
 export class FakeAIProvider implements AIProvider {
   readonly id = 'fake';
 
-  async generate(input: RedactedDigestInput): Promise<StructuredDigest> {
+  async generate(input: RedactedDigestInput, context?: ExecutionContext): Promise<StructuredDigest> {
+    context?.checkpoint();
     const severity = highestSeverity(input.incidents.map((incident) => incident.severity));
     return {
       severity,
       summary: `${input.incidents.length} incident${input.incidents.length === 1 ? '' : 's'} needs attention for ${input.window.from} → ${input.window.to}.`,
-      attentionItems: input.incidents.map((incident) => ({
+      attentionItems: [...input.incidents].sort((a, b) => a.id.localeCompare(b.id)).map((incident) => ({
         title: incident.summary,
         severity: incident.severity,
         detail: incident.redactedEvidence.join('; ')
@@ -57,10 +59,11 @@ export class OpenAIProvider implements AIProvider {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS;
   }
 
-  async generate(input: RedactedDigestInput): Promise<StructuredDigest> {
+  async generate(input: RedactedDigestInput, context?: ExecutionContext): Promise<StructuredDigest> {
+    context?.checkpoint();
     const response = await safeProviderRequest(
       'OpenAI',
-      withTimeout(this.timeoutMs, (signal) => this.httpClient({
+      withTimeout(this.timeoutMs, context?.signal, (signal) => this.httpClient({
         method: 'POST',
         url: OPENAI_URL,
         signal,
@@ -76,9 +79,11 @@ export class OpenAIProvider implements AIProvider {
             { role: 'user', content: redactedPrompt(input) }
           ]
         }
-      }))
+      })),
+      context
     );
 
+    context?.checkpoint();
     if (response.status < 200 || response.status >= 300) throw new Error(`OpenAI provider request failed with status ${response.status}`);
     const payload = await response.json();
     return parseStructuredDigest(extractOpenAIContent(payload), 'OpenAI');
@@ -97,10 +102,11 @@ export class GeminiProvider implements AIProvider {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS;
   }
 
-  async generate(input: RedactedDigestInput): Promise<StructuredDigest> {
+  async generate(input: RedactedDigestInput, context?: ExecutionContext): Promise<StructuredDigest> {
+    context?.checkpoint();
     const response = await safeProviderRequest(
       'Gemini',
-      withTimeout(this.timeoutMs, (signal) => this.httpClient({
+      withTimeout(this.timeoutMs, context?.signal, (signal) => this.httpClient({
         method: 'POST',
         url: `${GEMINI_URL}/${encodeURIComponent(this.model)}:generateContent?key=${encodeURIComponent(this.options.apiKey)}`,
         signal,
@@ -114,30 +120,32 @@ export class GeminiProvider implements AIProvider {
           ],
           generationConfig: { responseMimeType: 'application/json' }
         }
-      }))
+      })),
+      context
     );
 
+    context?.checkpoint();
     if (response.status < 200 || response.status >= 300) throw new Error(`Gemini provider request failed with status ${response.status}`);
     const payload = await response.json();
     return parseStructuredDigest(extractGeminiContent(payload), 'Gemini');
   }
 }
 
-async function safeProviderRequest(provider: string, request: Promise<ProviderHttpResponse>): Promise<ProviderHttpResponse> {
+async function safeProviderRequest(provider: string, request: Promise<ProviderHttpResponse>, context?: ExecutionContext): Promise<ProviderHttpResponse> {
   try {
     return await request;
   } catch {
+    if (context?.signal.aborted) context.checkpoint();
     throw new Error(`${provider} provider request failed before receiving a response`);
   }
 }
 
-async function withTimeout<T>(timeoutMs: number, operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+async function withTimeout<T>(timeoutMs: number, parentSignal: AbortSignal | undefined, operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const cancellation = combineAbortSignals(parentSignal, timeoutMs);
   try {
-    return await operation(controller.signal);
+    return await operation(cancellation.signal);
   } finally {
-    clearTimeout(timeout);
+    cancellation.dispose();
   }
 }
 

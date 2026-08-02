@@ -1,4 +1,5 @@
 import type { CollectedFact } from './collectors.js';
+import type { ExecutionContext } from './execution.js';
 
 export type IncidentSeverity = 'critical' | 'warning' | 'info';
 
@@ -14,5 +15,5 @@ export type Incident = {
 
 export interface IncidentDetector {
   readonly id: string;
-  detect(facts: CollectedFact[]): Promise<Incident[]>;
+  detect(facts: CollectedFact[], context: ExecutionContext): Promise<Incident[]>;
 }

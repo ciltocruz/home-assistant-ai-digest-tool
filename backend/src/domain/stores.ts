@@ -1,5 +1,6 @@
 import type { DeliveryResult, DigestSummary, IgnoreRuleCreate, IgnoreRuleDto, NoteCreate, NoteDto } from '@ha-digest/shared';
 import type { RenderedDigest } from './renderers.js';
+import type { ExecutionContext } from './execution.js';
 
 export type SecretKind = 'home_assistant' | 'ai_provider' | 'notifier';
 
@@ -17,8 +18,9 @@ export interface SecretStore {
 }
 
 export interface ReportStore {
-  save(report: { id: string; rendered: RenderedDigest; summary: DigestSummary }): Promise<void>;
+  save(report: { id: string; rendered: RenderedDigest; summary: DigestSummary }, context?: ExecutionContext): Promise<void>;
   list(): Promise<DigestSummary[]>;
+  get(id: string): Promise<{ id: string; rendered: RenderedDigest; summary: DigestSummary } | null>;
 }
 
 export interface NoteStore {

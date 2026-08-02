@@ -1,22 +1,25 @@
 import crypto from 'node:crypto';
 import fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import {
-  DigestWindowSchema, IgnoreRuleCreateSchema, NoteCreateSchema, NotifierTestRequestSchema, RedactedSettingsDtoSchema,
+  DigestWindowSchema, EditableSettingsDtoSchema, IgnoreRuleCreateSchema, NoteCreateSchema, NotifierTestRequestSchema, OnboardingProgressSchema, OnboardingStepCommandSchema, SettingsUpdateCommandSchema,
   RunDigestRequestSchema, SendDigestRequestSchema, SetupValidationRequestSchema,
-  type DeliveryResult, type DigestHistoryResponse, type IgnoreRuleCreate, type IgnoreRuleDto, type MaskedSettings,
-  type NoteDto, type NotifierTestRequest, type RedactedSettingsDto, type RunDigestRequest, type RunDigestResponse,
+  type DeliveryResult, type DigestDetail, type DigestHistoryResponse, type IgnoreRuleCreate, type IgnoreRuleDto, type MaskedSettings,
+  type DigestJobStatus, type EditableSettingsDto, type NoteDto, type NotifierTestRequest, type OnboardingProgress, type OnboardingStepCommand, type RunDigestRequest, type RunDigestResponse, type SettingsUpdateCommand,
   type SendDigestRequest, type SetupValidationRequest, type TestResult
 } from '@ha-digest/shared';
 import type { DigestJobStore } from '../domain/jobs.js';
 import type { IgnoreRuleStore, NoteStore, ReportStore } from '../domain/stores.js';
+import { projectReportPresentation } from '../application/report-presentation.js';
 
 export type BackendApiServices = {
   health?: { check(): Promise<{ ok: true } | { ok: false; reason: string }> };
   close?: () => void | Promise<void>;
   setup: { complete(input: SetupValidationRequest): Promise<MaskedSettings> };
-  settings: { get(): Promise<RedactedSettingsDto>; update(input: RedactedSettingsDto): Promise<RedactedSettingsDto> };
-  digestJobs: Pick<DigestJobStore, 'enqueue'>;
-  reports: Pick<ReportStore, 'list'>;
+  onboarding?: { get(): Promise<OnboardingProgress>; save(input: OnboardingStepCommand): Promise<OnboardingProgress>; complete?(): Promise<MaskedSettings> };
+  settings: { get(): Promise<EditableSettingsDto>; update(input: SettingsUpdateCommand): Promise<EditableSettingsDto>; notificationTarget?(channel: 'telegram'): Promise<string> };
+  digestJobs: Pick<DigestJobStore, 'enqueue' | 'get' | 'retryFailed'>;
+  digestWorker?: { wake(): void };
+  reports: Pick<ReportStore, 'list' | 'get'>;
   notes: Pick<NoteStore, 'add' | 'listWindow'>;
   ignores: Pick<IgnoreRuleStore, 'add' | 'remove' | 'listActive'>;
   notifiers: {
@@ -85,6 +88,12 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     return startSession(reply, options.auth, sessions, currentTimeMs(), request.id);
   });
 
+  app.get('/api/session', async (request, reply) => {
+    const session = authenticate(request, options.auth, sessions, currentTimeMs());
+    if (!session) return sendError(reply, 401, 'UNAUTHENTICATED', 'Authenticated session required.', request.id);
+    return { csrfToken: session.csrfToken };
+  });
+
   app.delete('/api/session', async (request, reply) => {
     const sessionId = readCookie(request, SESSION_COOKIE);
     if (sessionId) sessions.delete(sessionId);
@@ -103,6 +112,31 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     return reply.send({ settings, csrfToken: session.csrfToken });
   });
 
+  app.get('/api/onboarding', async (request, reply): Promise<OnboardingProgress | FastifyReply> => {
+    if (!hasSetupBearer(request, options.auth.setupToken)) return sendError(reply, 401, 'UNAUTHENTICATED', 'Setup token is required.', request.id);
+    if (!options.services.onboarding) return sendError(reply, 503, 'ONBOARDING_UNAVAILABLE', 'Persisted onboarding is unavailable.', request.id);
+    return OnboardingProgressSchema.parse(await options.services.onboarding.get());
+  });
+  app.patch('/api/onboarding', async (request, reply): Promise<OnboardingProgress | FastifyReply> => {
+    if (!hasSetupBearer(request, options.auth.setupToken)) return sendError(reply, 401, 'UNAUTHENTICATED', 'Setup token is required.', request.id);
+    if (!options.services.onboarding) return sendError(reply, 503, 'ONBOARDING_UNAVAILABLE', 'Persisted onboarding is unavailable.', request.id);
+    const input = parseRequest(OnboardingStepCommandSchema, request.body, reply, request.id);
+    return input.ok ? OnboardingProgressSchema.parse(await options.services.onboarding.save(input.value)) : input.response;
+  });
+  app.post('/api/onboarding/complete', async (request, reply) => {
+    if (!hasSetupBearer(request, options.auth.setupToken)) return sendError(reply, 401, 'UNAUTHENTICATED', 'Setup token is required.', request.id);
+    if (!options.services.onboarding?.complete) return sendError(reply, 503, 'ONBOARDING_UNAVAILABLE', 'Persisted onboarding is unavailable.', request.id);
+    try {
+      const settings = await options.services.onboarding.complete();
+      const session = createSession(options.auth, sessions, currentTimeMs());
+      reply.header('set-cookie', sessionCookie(session, options.auth));
+      return reply.send({ settings, csrfToken: session.csrfToken });
+    } catch (error) {
+      if (error instanceof Error && error.message === 'ONBOARDING_INCOMPLETE') return sendError(reply, 400, 'ONBOARDING_INCOMPLETE', 'Complete todos los pasos requeridos antes de lanzar el informe.', request.id);
+      throw error;
+    }
+  });
+
   app.addHook('preHandler', async (request, reply) => {
     if (isPublicRoute(request) || options.publicRequest?.(request)) return;
 
@@ -113,20 +147,48 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     }
   });
 
-  app.get('/api/settings', async () => options.services.settings.get());
+  app.get('/api/settings', async () => EditableSettingsDtoSchema.parse(await options.services.settings.get()));
   app.put('/api/settings', async (request, reply) => {
-    const input = parseRequest(RedactedSettingsDtoSchema, request.body, reply, request.id);
+    const input = parseRequest(SettingsUpdateCommandSchema, request.body, reply, request.id);
     if (!input.ok) return input.response;
-    return options.services.settings.update(input.value);
+    try {
+      return EditableSettingsDtoSchema.parse(await options.services.settings.update(input.value));
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('SETTINGS_REQUIRED_SECRET')) {
+        return sendError(reply, 400, 'SETTINGS_REQUIRED_SECRET', 'A required secret is not configured. Replace it before saving.', request.id);
+      }
+      if (error instanceof Error && error.message === 'SETTINGS_SAVE_FAILED') {
+        return sendError(reply, 503, 'SETTINGS_SAVE_FAILED', 'Settings could not be saved. Check storage and try again.', request.id);
+      }
+      throw error;
+    }
   });
 
   app.post('/api/digests/run', async (request, reply): Promise<RunDigestResponse | FastifyReply> => {
     const input = parseRequest(RunDigestRequestSchema, request.body, reply, request.id);
     if (!input.ok) return input.response;
-    const triggerWindowId = buildTriggerWindowId(input.value, now());
-    return options.services.digestJobs.enqueue({ kind: input.value.kind, triggerWindowId });
+    if (!options.services.digestWorker) return sendError(reply, 503, 'ANALYSIS_UNAVAILABLE', 'El análisis manual no está disponible. Revise la configuración del servicio.', request.id);
+    const result = await options.services.digestJobs.enqueue({ kind: input.value.kind, triggerWindowId: buildTriggerWindowId(input.value, now()), settingsSnapshot: await options.services.settings.get() });
+    options.services.digestWorker.wake();
+    return reply.code(202).send(result);
+  });
+  app.get('/api/digests/jobs/:id', async (request, reply): Promise<DigestJobStatus | FastifyReply> => {
+    const job = await options.services.digestJobs.get(String((request.params as { id: string }).id));
+    return job ? presentJob(job) : sendError(reply, 404, 'NOT_FOUND', 'No se encontró el trabajo del informe.', request.id);
+  });
+  app.post('/api/digests/jobs/:id/retry', async (request, reply): Promise<DigestJobStatus | FastifyReply> => {
+    const job = await options.services.digestJobs.retryFailed(String((request.params as { id: string }).id));
+    if (!job) return sendError(reply, 404, 'NOT_FOUND', 'No se encontró el trabajo del informe.', request.id);
+    if (job.status === 'queued') options.services.digestWorker?.wake();
+    return reply.code(202).send(presentJob(job));
   });
   app.get('/api/digests/history', async (): Promise<DigestHistoryResponse> => options.services.reports.list());
+  app.get('/api/digests/:id', async (request, reply): Promise<DigestDetail | FastifyReply> => {
+    const detail = await options.services.reports.get(String((request.params as { id: string }).id));
+    return detail
+      ? { ...detail, presentation: projectReportPresentation(detail) }
+      : sendError(reply, 404, 'NOT_FOUND', 'Digest not found.', request.id);
+  });
 
   app.post('/api/notes', async (request, reply): Promise<NoteDto | FastifyReply> => {
     const input = parseRequest(NoteCreateSchema, request.body, reply, request.id);
@@ -156,6 +218,17 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     const input = parseRequest(NotifierTestRequestSchema, request.body, reply, request.id);
     if (!input.ok) return input.response;
     return options.services.notifiers.test(input.value);
+  });
+  app.post('/api/notifiers/test-current', async (request, reply): Promise<TestResult | FastifyReply> => {
+    const body = asRecord(request.body);
+    if (body.channel !== 'telegram') return sendError(reply, 400, 'VALIDATION_FAILED', 'Only Telegram can be tested from saved settings.', request.id);
+    if (!options.services.settings.notificationTarget) return sendError(reply, 503, 'NOTIFIER_UNAVAILABLE', 'Saved notification testing is unavailable.', request.id);
+    try {
+      return options.services.notifiers.test({ channel: 'telegram', targetRef: await options.services.settings.notificationTarget('telegram'), message: 'Home Assistant AI Digest notification test' });
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('SETTINGS_REQUIRED_SECRET')) return sendError(reply, 400, 'SETTINGS_REQUIRED_SECRET', 'Configure a Telegram bot token before testing delivery.', request.id);
+      throw error;
+    }
   });
   app.post('/api/notifiers/send', async (request, reply): Promise<DeliveryResult | FastifyReply> => {
     const input = parseRequest(SendDigestRequestSchema, request.body, reply, request.id);
@@ -207,8 +280,13 @@ function buildTriggerWindowId(request: RunDigestRequest, fallback: string): stri
   return `${request.kind}:${fallback}`;
 }
 
+function presentJob(job: Awaited<ReturnType<DigestJobStore['get']>> extends infer T ? NonNullable<T> : never): DigestJobStatus {
+  const { id, status, stage, attempts, retryCount, retryAvailable, reportId, errorCode, errorMessage, createdAt, updatedAt } = job;
+  return { id, status, stage, attempts, retryCount, retryAvailable, ...(reportId ? { reportId } : {}), ...(errorCode ? { errorCode } : {}), ...(errorMessage ? { errorMessage } : {}), createdAt, updatedAt };
+}
+
 function isPublicRoute(request: FastifyRequest): boolean {
-  return (request.method === 'POST' && request.url === '/api/session') || (request.method === 'POST' && request.url === '/api/setup');
+  return (request.method === 'POST' && request.url === '/api/session') || (request.method === 'POST' && request.url === '/api/setup') || request.url.startsWith('/api/onboarding');
 }
 
 function reportFailure(reporter: CreateAppOptions['failureReporter'], event: OperationalFailureEvent): void {

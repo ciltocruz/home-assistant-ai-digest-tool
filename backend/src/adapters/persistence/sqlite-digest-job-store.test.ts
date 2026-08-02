@@ -135,6 +135,36 @@ describe('SQLiteDigestJobStore', () => {
     });
     expect(await store.leaseNext({ leaseSeconds: 60 })).toBeNull();
   });
+
+  it('persists stages, report linkage, recovery, and one manual retry across a reopened database', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'ha-digest-job-lifecycle-'));
+    const databasePath = join(directory, 'app.db');
+    let now = new Date('2026-08-01T10:00:00.000Z');
+    const firstDb = await openTestDatabase(databasePath);
+    runMigrations(firstDb);
+    const first = new SQLiteDigestJobStore(firstDb, { now: () => now });
+    const queued = await first.enqueue({ triggerWindowId: 'manual:restart-window', kind: 'manual', settingsSnapshot: { privacyLevel: 'balanced' } });
+    await first.leaseNext({ leaseSeconds: 30 });
+    await first.setStage(queued.jobId, 'generating');
+    firstDb.close();
+
+    now = new Date('2026-08-01T10:00:31.000Z');
+    const reopenedDb = await openTestDatabase(databasePath);
+    const reopened = new SQLiteDigestJobStore(reopenedDb, { now: () => now });
+    const recovered = await reopened.leaseNext({ leaseSeconds: 30 });
+    expect(recovered).toMatchObject({ id: queued.jobId, status: 'running', stage: 'generating' });
+
+    await reopened.fail(queued.jobId, 'HOME_ASSISTANT_UNAVAILABLE', 'No se pudieron recopilar datos de Home Assistant. Revise la conexión y el token.');
+    expect(await reopened.get(queued.jobId)).toMatchObject({ status: 'failed', stage: 'failed', errorCode: 'HOME_ASSISTANT_UNAVAILABLE', retryAvailable: true });
+    expect(await reopened.retryFailed(queued.jobId)).toMatchObject({ id: queued.jobId, status: 'queued', stage: 'queued', retryCount: 1 });
+    expect(await reopened.retryFailed(queued.jobId)).toMatchObject({ id: queued.jobId, status: 'queued', retryCount: 1 });
+
+    await reopened.leaseNext({ leaseSeconds: 30 });
+    await reopened.complete(queued.jobId, 'report-1');
+    expect(await reopened.get(queued.jobId)).toMatchObject({ status: 'completed', stage: 'completed', reportId: 'report-1', retryAvailable: false });
+    reopenedDb.close();
+    await rm(directory, { recursive: true, force: true });
+  });
 });
 
 function readJobRetryState(db: Awaited<ReturnType<typeof openTestDatabase>>, id: string) {
