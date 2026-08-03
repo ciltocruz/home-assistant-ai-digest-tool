@@ -285,14 +285,53 @@ describe('persistent runtime services', () => {
     })).rejects.toThrow('ANALYSIS_DEADLINE_EXCEEDED');
     expect(await services.reports.list()).toEqual([]);
   });
+
+  it('runs the v2 worker against fake HA, AI, and Telegram endpoints without a fake-provider fallback', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-v2-runtime-'));
+    const logPath = join(dataDir, 'home-assistant.log');
+    await writeFile(logPath, '2026-07-12 10:00:00 ERROR [mqtt] connection token=do-not-send\n');
+    const events = { configEntries: 0, ai: 0, telegram: 0 };
+    const services = await createPersistentRuntimeServices({
+      dataDir, now: () => NOW, haLogPath: logPath,
+      haWebSocketFactory: () => fakeHaSocket(events),
+      providerHttpClient: async () => {
+        events.ai += 1;
+        return { status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'MQTT failed', recommendation: 'Restart MQTT' }) }] } }] }) };
+      },
+      telegramHttpClient: async () => { events.telegram += 1; return { status: 200, json: async () => ({ ok: true }) }; },
+      reportUrl: (request) => `https://digest.local/reports/${request.runId}`
+    });
+    await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET, telegram: { botToken: TELEGRAM_SECRET, chatId: '42' } });
+    const queued = await services.digestJobs.enqueue({ kind: 'manual', triggerWindowId: 'v2:success' });
+
+    await (services.digestWorker as { runOnce(): Promise<void> } | undefined)?.runOnce();
+
+    expect(queued.status).toBe('queued');
+    expect(events).toEqual({ configEntries: 1, ai: 1, telegram: 1 });
+    await expect(services.digestJobs.get(queued.jobId)).resolves.toMatchObject({ status: 'completed', reportId: expect.stringMatching(/^v2-report:/) });
+  });
+
+  it('records provider-wide v2 failure instead of silently substituting a fake analysis', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-v2-no-fallback-'));
+    const logPath = join(dataDir, 'home-assistant.log');
+    await writeFile(logPath, '2026-07-12 10:00:00 ERROR [mqtt] connection failed\n');
+    const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW, haLogPath: logPath, providerHttpClient: async () => ({ status: 503, json: async () => ({}) }) });
+    await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'openai', aiKey: AI_SECRET });
+    const queued = await services.digestJobs.enqueue({ kind: 'manual', triggerWindowId: 'v2:no-fallback' });
+
+    await (services.digestWorker as { runOnce(): Promise<void> } | undefined)?.runOnce();
+
+    await expect(services.digestJobs.get(queued.jobId)).resolves.toMatchObject({ status: 'failed', errorCode: 'AI_PROVIDER_UNAVAILABLE' });
+  });
 });
 
 function authOptions() {
-  return { adminToken: 'admin-sentinel-value', setupToken: 'setup-sentinel-value', sessionTtlMs: 60_000 };
+  return { sessionTtlMs: 60_000 };
 }
 
 async function authenticatedGet(app: ReturnType<typeof createApp>, url: string) {
-  const login = await app.inject({ method: 'POST', url: '/api/session', payload: { adminToken: 'admin-sentinel-value' } });
+  await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: 'persistent-runtime-password', language: 'en' } });
+  const login = await app.inject({ method: 'POST', url: '/api/session', payload: { password: 'persistent-runtime-password' } });
   return app.inject({ method: 'GET', url, headers: { cookie: login.headers['set-cookie'] } });
 }
 
@@ -328,4 +367,24 @@ function report(id: string, createdAt: string): Parameters<ReportStore['save']>[
       deliveryStatus: 'pending'
     }
   };
+}
+
+function fakeHaSocket(events: { configEntries: number }) {
+  const socket = {
+    onopen: null as ((event: unknown) => void) | null,
+    onmessage: null as ((event: { data: unknown }) => void) | null,
+    onerror: null as ((event: unknown) => void) | null,
+    onclose: null as ((event: unknown) => void) | null,
+    close: () => undefined,
+    send: (data: string) => {
+      const request = JSON.parse(data) as { type: string; id?: number };
+      if (request.type === 'auth') queueMicrotask(() => socket.onmessage?.({ data: JSON.stringify({ type: 'auth_ok' }) }));
+      if (request.type === 'config_entries/get') {
+        events.configEntries += 1;
+        queueMicrotask(() => socket.onmessage?.({ data: JSON.stringify({ type: 'result', id: request.id, success: true, result: [{ domain: 'mqtt', title: 'MQTT', state: 'loaded' }] }) }));
+      }
+    }
+  };
+  queueMicrotask(() => socket.onopen?.({}));
+  return socket;
 }

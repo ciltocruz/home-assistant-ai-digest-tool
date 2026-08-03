@@ -336,8 +336,7 @@ exit 1
 
     expect(stderr).toBe('');
     expect(stdout).toContain('Verified secret-safe startup failure logging.');
-    expect(`${stdout}${stderr}`).not.toContain('docker-runtime-verification-admin-token');
-    expect(`${stdout}${stderr}`).not.toContain('docker-runtime-verification-setup-token');
+    expect(`${stdout}${stderr}`).not.toContain('docker-runtime-verification-credential');
   }, 215_000);
 
   it('reports a successful executable verification result', async () => {

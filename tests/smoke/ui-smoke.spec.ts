@@ -14,9 +14,11 @@ type MockState = {
   history: Array<Record<string, unknown>>;
   historyFailure: boolean;
   reportPresentations: Record<string, unknown>;
+  hasAdmin: boolean;
+  loggedIn: boolean;
+  language: 'en' | 'es';
 };
 
-const SMOKE_SETUP_SENTINEL = 'SMOKE_SENTINEL_SETUP_ACCESS';
 const SMOKE_HA_AUTH_SENTINEL = 'SMOKE_SENTINEL_HA_AUTH_VALUE';
 const SMOKE_AI_CREDENTIAL_SENTINEL = 'SMOKE_SENTINEL_AI_CREDENTIAL';
 const SMOKE_TELEGRAM_CREDENTIAL_SENTINEL = 'SMOKE_SENTINEL_TELEGRAM_CREDENTIAL';
@@ -33,16 +35,14 @@ const settings = {
   retentionDays: 90
 } as const;
 
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript((setupToken) => {
-    window.__HA_DIGEST_BOOTSTRAP__ = { setupToken };
-  }, SMOKE_SETUP_SENTINEL);
-});
-
-test('completes onboarding and runs the first deterministic manual digest', async ({ page }) => {
+test('registers, signs in, completes onboarding, and runs the first deterministic manual digest', async ({ page }) => {
   const state = await mockRuntimeApi(page);
+  state.hasAdmin = false; state.loggedIn = false;
 
   await page.goto('/');
+  await page.getByLabel('Language').selectOption('es');
+  await page.getByLabel('Password').fill('smoke-account-password');
+  await page.getByRole('button', { name: 'Create account' }).click();
   const onboarding = page.getByRole('form', { name: 'Configuración guiada' });
   await onboarding.getByLabel('URL de Home Assistant').fill('http://homeassistant.local:8123');
   await onboarding.getByLabel('Token de Home Assistant').fill(SMOKE_HA_AUTH_SENTINEL);
@@ -226,14 +226,14 @@ test('confirms ignore removal and passes keyboard flow', async ({ page }) => {
   await remove.click();
   const dialog = page.getByRole('dialog', { name: 'Quitar aviso ignorado' });
   await expect(dialog).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Quitar aviso' })).toBeFocused();
+  await expect(dialog.getByRole('button', { name: 'Quitar' })).toBeFocused();
 
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
   await expect(remove).toBeFocused();
 
   await remove.click();
-  await page.getByRole('button', { name: 'Quitar aviso' }).click();
+  await dialog.getByRole('button', { name: 'Quitar' }).click();
   await expect(page.getByText('El aviso ignorado se quitó correctamente.')).toBeVisible();
   await expect(page.getByText('sensor.ruidoso')).toHaveCount(0);
 });
@@ -311,7 +311,10 @@ async function mockRuntimeApi(page: Page): Promise<MockState> {
     savedSettings: settingsResponse(),
     history: [],
     historyFailure: false,
-    reportPresentations: {}
+    reportPresentations: {},
+    hasAdmin: true,
+    loggedIn: true,
+    language: 'es'
   };
 
   await page.route('/api/**', async (route) => {
@@ -319,17 +322,10 @@ async function mockRuntimeApi(page: Page): Promise<MockState> {
     const url = new URL(request.url());
     const body = request.postDataJSON();
 
-    if (url.pathname === '/api/setup' && request.method() === 'POST') {
-      return json(route, {
-        csrfToken: SMOKE_CSRF_SENTINEL,
-        settings: {
-          haUrl: body.haUrl,
-          ai: { provider: body.aiProvider, keyMask: 'configured', ref: 'ref:ai' },
-          notifiers: [{ id: 'telegram', channel: 'telegram', targetRef: 'ref:telegram', label: 'Telegram', secretMask: 'configured' }]
-        }
-      });
-    }
-    if (url.pathname === '/api/session' && request.method() === 'GET') return json(route, { csrfToken: SMOKE_CSRF_SENTINEL });
+    if (url.pathname === '/api/auth/status' && request.method() === 'GET') return json(route, { hasAdmin: state.hasAdmin });
+    if (url.pathname === '/api/auth/register' && request.method() === 'POST') { state.hasAdmin = true; state.loggedIn = true; state.language = body.language; return json(route, { csrfToken: SMOKE_CSRF_SENTINEL, language: state.language }); }
+    if (url.pathname === '/api/session' && request.method() === 'POST') { state.loggedIn = true; return json(route, { csrfToken: SMOKE_CSRF_SENTINEL, language: state.language }); }
+    if (url.pathname === '/api/session' && request.method() === 'GET') return state.loggedIn ? json(route, { csrfToken: SMOKE_CSRF_SENTINEL, language: state.language }) : json(route, { code: 'UNAUTHENTICATED', message: 'Sign in required.', requestId: 'smoke' }, 401);
 
     if (url.pathname === '/api/onboarding' && request.method() === 'GET') return json(route, onboardingProgress(state));
     if (url.pathname === '/api/onboarding' && request.method() === 'PATCH') {

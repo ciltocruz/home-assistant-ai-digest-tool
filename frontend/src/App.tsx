@@ -1,10 +1,10 @@
 import './styles.css';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { ApiClientError, redactSensitiveText } from './api-client.js';
 import { createApiClient } from './api-client.js';
 import { Dashboard, DashboardHistory, type DashboardApi } from './dashboard.js';
 import { ExperienceShell } from './experience-shell.js';
-import { t } from './i18n/index.js';
+import { setLocale, t } from './i18n/index.js';
 import { JobLifecycle, rememberActiveJob, restoreActiveJobIds, type JobLifecycleApi } from './job-lifecycle.js';
 import { OnboardingFlow, createInitialOnboardingState, restoreOnboardingState, type OnboardingApi, type OnboardingState } from './onboarding.js';
 import { ReportDetail } from './report-detail.js';
@@ -12,32 +12,27 @@ import type { AppRoute } from './router.js';
 import { SettingsPanel, type SettingsApi } from './settings.js';
 import type { DigestDetail, RunDigestRequest, RunDigestResponse } from '@ha-digest/shared';
 
-type BootstrapConfig = {
-  setupToken?: string;
-};
-
-declare global {
-  var __HA_DIGEST_BOOTSTRAP__: BootstrapConfig | undefined;
-}
-
 type AppApi = Partial<OnboardingApi & DashboardApi & JobLifecycleApi & { getDigest(id: string): Promise<DigestDetail> }>;
-type SessionApi = { getSession(): Promise<void> };
+type SessionApi = { getSession(): Promise<{ language: 'en' | 'es' }>; getAuthStatus(): Promise<{ hasAdmin: boolean }>; register(password: string, language: 'en' | 'es'): Promise<{ language: 'en' | 'es' }>; login(password: string): Promise<{ language: 'en' | 'es' }> };
 
 type ManualDigestApi = {
   runDigest(input: RunDigestRequest): Promise<RunDigestResponse>;
 };
 
 export function App({ api }: { api?: AppApi } = {}) {
-  const setupToken = resolveSetupToken();
-  const [candidateApi] = useState<(AppApi & Partial<SessionApi>) | undefined>(() => api ?? (setupToken ? createApiClient({ setupToken }) : undefined));
+  const [candidateApi] = useState<(AppApi & Partial<SessionApi>) | undefined>(() => api ?? createApiClient());
   const [onboardingState] = useState<OnboardingState>(createInitialOnboardingState);
   const [sessionReady, setSessionReady] = useState(() => Boolean(api));
+  const [authState, setAuthState] = useState<'loading' | 'register' | 'login' | 'ready'>(() => api ? 'ready' : 'loading');
   const [activeJobIds, setActiveJobIds] = useState(restoreActiveJobIds);
   const [historyRevision, setHistoryRevision] = useState(0);
   useEffect(() => {
-    if (api || !candidateApi || typeof candidateApi.getSession !== 'function') return;
-    void candidateApi.getSession().then(() => setSessionReady(true)).catch(() => setSessionReady(false));
+    if (api || !candidateApi || typeof candidateApi.getSession !== 'function' || typeof candidateApi.getAuthStatus !== 'function') return;
+    void candidateApi.getAuthStatus!().then(({ hasAdmin }) => candidateApi.getSession!()
+      .then((session) => { setLocale(session.language); setSessionReady(true); setAuthState('ready'); })
+      .catch(() => setAuthState(hasAdmin ? 'login' : 'register'))).catch(() => setAuthState('login'));
   }, [api, candidateApi]);
+  if (authState !== 'ready') return <AccountScreen mode={authState} api={candidateApi} onAuthenticated={() => { setSessionReady(true); setAuthState('ready'); }} />;
   const onboardingApi = hasOnboardingApi(candidateApi) ? candidateApi : undefined;
   const dashboardApi = sessionReady && hasDashboardApi(candidateApi) ? candidateApi : undefined;
   const manualDigestApi = sessionReady && hasManualDigestApi(candidateApi) ? candidateApi : undefined;
@@ -138,7 +133,9 @@ function hasDashboardApi(api: AppApi | undefined): api is AppApi & DashboardApi 
 }
 
 function hasOnboardingApi(api: AppApi | undefined): api is AppApi & OnboardingApi {
-  return typeof api?.validateSetup === 'function'
+  return typeof api?.getOnboarding === 'function'
+    && typeof api.saveOnboarding === 'function'
+    && typeof api.completeOnboarding === 'function'
     && typeof api.getSettings === 'function'
     && typeof api.updateSettings === 'function'
     && typeof api.runDigest === 'function';
@@ -156,14 +153,23 @@ function hasSettingsApi(api: AppApi | undefined): api is AppApi & SettingsApi {
   return typeof api?.getSettings === 'function' && typeof api.updateSettings === 'function';
 }
 
-export function resolveSetupToken(): string {
-  const globalToken = globalThis.__HA_DIGEST_BOOTSTRAP__?.setupToken?.trim();
-  if (globalToken) return globalToken;
-
-  const metaToken = typeof document === 'undefined'
-    ? ''
-    : document.querySelector<HTMLMetaElement>('meta[name="ha-digest-setup-token"]')?.content.trim();
-  if (metaToken) return metaToken;
-
-  return '';
+function AccountScreen({ mode, api, onAuthenticated }: { mode: 'loading' | 'register' | 'login'; api?: Partial<SessionApi>; onAuthenticated(): void }) {
+  const [password, setPassword] = useState('');
+  const [language, setLanguage] = useState<'en' | 'es'>('en');
+  const [error, setError] = useState('');
+  if (mode === 'loading') return <main className="onboarding-root"><p>Checking secure access…</p></main>;
+  async function submit(event: FormEvent) {
+    event.preventDefault(); setError('');
+    try {
+       const session = mode === 'register' ? await api?.register?.(password, language) : await api?.login?.(password);
+       if (session) setLocale(session.language);
+      onAuthenticated();
+    } catch (reason) { setError(reason instanceof Error ? redactSensitiveText(reason.message) : 'Sign-in failed.'); }
+  }
+  return <main className="onboarding-root" id="onboarding-flow"><form className="onboarding-step-content" onSubmit={(event) => void submit(event)}>
+    <p className="onboarding-eyebrow">{mode === 'register' ? 'First run' : 'Welcome back'}</p><h1>{mode === 'register' ? 'Create your administrator account' : 'Sign in'}</h1>
+    {mode === 'register' ? <label>Language<select value={language} onChange={(event) => setLanguage(event.currentTarget.value as 'en' | 'es')}><option value="en">English</option><option value="es">Español</option></select></label> : null}
+    <label>Password<input aria-label="Password" type="password" autoComplete={mode === 'register' ? 'new-password' : 'current-password'} minLength={12} required value={password} onChange={(event) => setPassword(event.currentTarget.value)} /></label>
+    <button type="submit">{mode === 'register' ? 'Create account' : 'Sign in'}</button>{error ? <p role="alert">{error}</p> : null}
+  </form></main>;
 }

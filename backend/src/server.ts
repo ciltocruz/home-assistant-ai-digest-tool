@@ -24,8 +24,6 @@ export async function startRuntimeServer(
       frontendDistDir: config.frontendDistDir,
       dataDir: config.dataDir,
       haLogsDir: config.haLogsDir,
-      adminToken: config.adminToken,
-      setupToken: config.setupToken,
       secureCookies: config.secureCookies,
       trustProxy: config.trustProxy,
       haMaxStates: config.haMaxStates,

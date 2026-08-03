@@ -42,10 +42,4 @@ describe('runtime configuration', () => {
   });
 });
 
-function tokens(environment: Record<string, string> = {}): NodeJS.ProcessEnv {
-  return {
-    ADMIN_TOKEN: 'admin-token',
-    SETUP_TOKEN: 'setup-token',
-    ...environment
-  };
-}
+function tokens(environment: Record<string, string> = {}): NodeJS.ProcessEnv { return environment; }

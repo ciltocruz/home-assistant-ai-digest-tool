@@ -15,7 +15,7 @@ import {
   type SetupValidationResponse,
 } from '@ha-digest/shared';
 import { ApiClientError, redactSensitiveText } from './api-client.js';
-import { t, type TranslationKey } from './i18n/index.js';
+import { currentLocale, t, type TranslationKey } from './i18n/index.js';
 
 export type OnboardingStep = 'homeAssistant' | 'aiProvider' | 'notifier' | 'schedule' | 'privacy' | 'firstDigest' | 'schedulePrivacy';
 
@@ -45,13 +45,14 @@ export type OnboardingState = {
 };
 
 export type OnboardingApi = {
+  /** Test seam for pre-auth fixtures; the browser client uses account sessions. */
   validateSetup(input: SetupValidationRequest): Promise<SetupValidationResponse>;
   getSettings(): Promise<EditableSettingsDto>;
   updateSettings(input: SettingsUpdateCommand): Promise<EditableSettingsDto>;
   runDigest(input: RunDigestRequest): Promise<RunDigestResponse>;
   getOnboarding?(): Promise<OnboardingProgress>;
   saveOnboarding?(input: { step: OnboardingProgress['currentStep']; draft: Record<string, unknown>; secrets: Record<string, string> }): Promise<OnboardingProgress>;
-  completeOnboarding?(): Promise<SetupValidationResponse>;
+  completeOnboarding?(): Promise<{ settings: MaskedSettings }>;
 };
 
 type OnboardingSetupProgress = {
@@ -72,44 +73,39 @@ const continueActionKeys = {
   schedulePrivacy: 'onboarding.actions.continue.schedulePrivacy',
 } satisfies Record<Exclude<OnboardingStep, 'firstDigest'>, TranslationKey>;
 
-const STEP_META: Record<Exclude<OnboardingStep, 'schedulePrivacy'>, { icon: string; eyebrow: string; title: string; desc: string }> = {
+function copy(en: string, es: string): string { return currentLocale() === 'es' ? es : en; }
+function stepMeta(): Record<Exclude<OnboardingStep, 'schedulePrivacy'>, { icon: string; eyebrow: string; title: string; desc: string }> { return {
   homeAssistant: {
     icon: '🏠',
-    eyebrow: 'Paso 1 de 5',
-    title: 'Conecta Home Assistant',
-    desc: 'Necesitamos la URL y un token de acceso de larga duración para leer el estado de tu instalación.',
+    eyebrow: copy('Screen 1 of 5', 'Pantalla 1 de 5'), title: copy('Connect Home Assistant', 'Conecta Home Assistant'),
+    desc: copy('Add the URL and a long-lived access token for your installation.', 'Añade la URL y un token de acceso de larga duración para tu instalación.'),
   },
   aiProvider: {
     icon: '🤖',
-    eyebrow: 'Paso 2 de 5',
-    title: 'Elige tu proveedor de IA',
-    desc: 'El proveedor analiza las incidencias y genera el resumen. Tu clave nunca se registra ni se muestra completa.',
+    eyebrow: copy('Screen 2 of 5', 'Pantalla 2 de 5'), title: copy('Choose your AI provider', 'Elige tu proveedor de IA'),
+    desc: copy('The provider analyzes incidents and creates the report. Its key is always masked.', 'El proveedor analiza las incidencias y genera el informe. Su clave siempre queda enmascarada.'),
   },
   notifier: {
     icon: '📬',
-    eyebrow: 'Paso 3 de 5',
-    title: 'Canal de notificaciones',
-    desc: 'Los informes siempre están disponibles en el panel. Telegram es opcional y se puede configurar después.',
+    eyebrow: copy('Screen 3 of 5', 'Pantalla 3 de 5'), title: copy('Notification channel', 'Canal de notificaciones'),
+    desc: copy('Reports are always available in the dashboard. Telegram is optional.', 'Los informes siempre están disponibles en el panel. Telegram es opcional.'),
   },
   schedule: {
     icon: '⏰',
-    eyebrow: 'Paso 4 de 5',
-    title: 'Horario de informes',
-    desc: 'Define cuándo se generarán los informes automáticos. Siempre puedes lanzar uno manualmente desde el panel.',
+    eyebrow: copy('Screen 4 of 5', 'Pantalla 4 de 5'), title: copy('Report schedule', 'Horario de informes'),
+    desc: copy('Set when automatic reports run. You can always run one manually.', 'Define cuándo se generan los informes automáticos. Siempre puedes lanzar uno manualmente.'),
   },
   privacy: {
     icon: '🔒',
-    eyebrow: 'Paso 5 de 5',
-    title: 'Privacidad y retención',
-    desc: 'Controla qué contexto puede enviarse a la IA y durante cuánto tiempo se conservan los informes en local.',
+    eyebrow: copy('Screen 5 of 5', 'Pantalla 5 de 5'), title: copy('Privacy and retention', 'Privacidad y retención'),
+    desc: copy('Choose what context can reach AI and how long local reports are retained.', 'Elige qué contexto puede enviarse a la IA y cuánto tiempo se conservan los informes locales.'),
   },
   firstDigest: {
     icon: '🚀',
-    eyebrow: 'Todo listo',
-    title: '¡Configuración completa!',
-    desc: 'La configuración se ha guardado. Tu primer informe está en cola.',
+    eyebrow: copy('Ready', 'Todo listo'), title: copy('Setup complete', 'Configuración completa'),
+    desc: copy('Your settings are saved and the first report is queued.', 'La configuración está guardada y el primer informe está en cola.'),
   },
-};
+}; }
 
 export function createInitialOnboardingState(): OnboardingState {
   return {
@@ -196,19 +192,12 @@ export async function completeOnboarding(
 
   if (state.setupProgress) return persistSettingsAndQueueDigest(state, api, state.setupProgress);
 
-  if (api.completeOnboarding) {
-    try {
-      const setup = await api.completeOnboarding();
-      onSessionCreated?.();
-      return persistSettingsAndQueueDigest(state, api, { maskedSettings: setup.settings });
-    } catch (error) {
-      return {
-        ...state,
-        draft: scrubSecrets(state.draft),
-        status: 'failed',
-        errors: { form: [redactSensitiveText(error instanceof Error ? error.message : 'No se pudo completar la configuración.')] },
-      };
-    }
+  if (api.completeOnboarding) try {
+    const setup = await api.completeOnboarding();
+    onSessionCreated?.();
+    return persistSettingsAndQueueDigest(state, api, { maskedSettings: setup.settings });
+  } catch (error) {
+    return { ...state, draft: scrubSecrets(state.draft), status: 'failed', errors: { form: [redactSensitiveText(error instanceof Error ? error.message : 'Could not complete onboarding.')] } };
   }
 
   const errors = steps.slice(0, -1).reduce<Record<string, string[]>>(
@@ -219,19 +208,13 @@ export async function completeOnboarding(
     return { ...state, draft: scrubSecrets(state.draft), status: 'failed', errors, step: stepForField(Object.keys(errors)[0] ?? '') };
   }
 
+  if (!api.validateSetup) return { ...state, draft: scrubSecrets(state.draft), status: 'failed', errors: { form: ['Authenticated onboarding is unavailable.'] } };
   try {
     const setup = await api.validateSetup(toSetupRequest(state.draft));
-    onSessionCreated?.();
     return persistSettingsAndQueueDigest(state, api, { maskedSettings: setup.settings });
   } catch (error) {
     const fieldErrors = error instanceof ApiClientError ? redactErrors(error.fieldErrors, state.draft) : undefined;
-    return {
-      ...state,
-      draft: scrubSecrets(state.draft),
-      status: 'failed',
-      step: stepForField(Object.keys(fieldErrors ?? {})[0] ?? ''),
-      errors: fieldErrors ?? { form: [redactSensitiveText(error instanceof Error ? error.message : 'No se pudo completar la configuración.')] },
-    };
+    return { ...state, draft: scrubSecrets(state.draft), status: 'failed', step: stepForField(Object.keys(fieldErrors ?? {})[0] ?? ''), errors: fieldErrors ?? { form: [redactSensitiveText(error instanceof Error ? error.message : 'Could not complete onboarding.')] } };
   }
 }
 
@@ -281,7 +264,7 @@ export function OnboardingFlow({
       return;
     }
     if (!api) {
-      setState((current) => ({ ...current, status: 'failed', errors: { form: [t('onboarding.errors.missingSetupToken')] } }));
+      setState((current) => ({ ...current, status: 'failed', errors: { form: ['Authenticated onboarding is unavailable.'] } }));
       return;
     }
     if (isSubmitting.current || ['validating', 'saving', 'launching', 'queued', 'complete'].includes(state.status)) return;
@@ -337,7 +320,7 @@ export function OnboardingFlow({
       <main className="onboarding-main" id="onboarding-flow">
         {!api && (
           <div className="onboarding-message-card" role="alert">
-            {t('onboarding.missingSetupToken')}
+            Authenticated onboarding is unavailable.
           </div>
         )}
 
@@ -372,7 +355,7 @@ function StepContent({
   isBusy: boolean;
 }) {
   const step = state.step === 'schedulePrivacy' ? 'privacy' : state.step as Exclude<OnboardingStep, 'schedulePrivacy'>;
-  const meta = STEP_META[step];
+  const meta = stepMeta()[step];
   const hasErrors = Object.keys(state.errors).length > 0;
 
   return (
@@ -395,7 +378,7 @@ function StepContent({
         <button type="submit" className="btn-primary" disabled={isBusy}>
           {isBusy && <span className="spinner" aria-hidden="true" />}
           {state.step === 'firstDigest'
-            ? isBusy ? 'Validando...' : t('onboarding.actions.validateSetup')
+            ? isBusy ? copy('Validating…', 'Validando…') : t('onboarding.actions.validateSetup')
             : t(continueActionKeys[state.step as Exclude<OnboardingStep, 'firstDigest'>])}
         </button>
         {state.status === 'failed' && state.step === 'firstDigest' && (
@@ -438,7 +421,7 @@ function HomeAssistantFields({
   return (
     <>
       <div className="field-group">
-        <label htmlFor="haUrl">URL de Home Assistant</label>
+        <label htmlFor="haUrl">{copy('Home Assistant URL', 'URL de Home Assistant')}</label>
         <div className="field-input-wrap">
           <span className="field-input-icon" aria-hidden="true">🌐</span>
           <input
@@ -458,7 +441,7 @@ function HomeAssistantFields({
       </div>
 
       <div className="field-group">
-        <label htmlFor="haToken">Token de Home Assistant</label>
+        <label htmlFor="haToken">{copy('Home Assistant token', 'Token de Home Assistant')}</label>
         <div className="field-input-wrap">
           <span className="field-input-icon" aria-hidden="true">🔑</span>
           <input
@@ -469,7 +452,7 @@ function HomeAssistantFields({
             required
             value={state.draft.haToken}
             onChange={updateDraft('haToken')}
-            placeholder="Pega tu token aquí…"
+            placeholder={copy('Paste your token…', 'Pega tu token aquí…')}
             style={{ paddingLeft: '2.75rem' }}
           />
         </div>
@@ -491,7 +474,7 @@ function AiProviderFields({
   return (
     <>
       <div className="field-group">
-        <label>Proveedor</label>
+        <label>{copy('Provider', 'Proveedor')}</label>
         <div className="provider-cards">
           {(['gemini', 'openai'] as AiProvider[]).map((provider) => (
             <button
@@ -510,7 +493,7 @@ function AiProviderFields({
       </div>
 
       <div className="field-group">
-        <label htmlFor="aiKey">Clave API del proveedor</label>
+        <label htmlFor="aiKey">{copy('Provider API key', 'Clave API del proveedor')}</label>
         <div className="field-input-wrap">
           <span className="field-input-icon" aria-hidden="true">🔐</span>
           <input
@@ -521,7 +504,7 @@ function AiProviderFields({
             required
             value={state.draft.aiKey}
             onChange={updateDraft('aiKey')}
-            placeholder="Pega tu clave aquí…"
+            placeholder={copy('Paste your key…', 'Pega tu clave aquí…')}
             style={{ paddingLeft: '2.75rem' }}
           />
         </div>
@@ -543,7 +526,7 @@ function NotifierFields({
   return (
     <>
       <div className="field-group">
-        <label>Canal de notificaciones</label>
+        <label>{copy('Notification channel', 'Canal de notificaciones')}</label>
         <div className="notifier-options">
           <button
             type="button"
@@ -552,8 +535,8 @@ function NotifierFields({
           >
             <div className="notifier-option-icon">📄</div>
             <div className="notifier-option-info">
-              <p className="notifier-option-name">Solo panel web</p>
-              <p className="notifier-option-desc">Los informes se guardan y son visibles desde este panel.</p>
+              <p className="notifier-option-name">{copy('Dashboard only', 'Solo panel web')}</p>
+              <p className="notifier-option-desc">{copy('Reports are saved and visible in this dashboard.', 'Los informes se guardan y son visibles desde este panel.')}</p>
             </div>
           </button>
           <button
@@ -564,7 +547,7 @@ function NotifierFields({
             <div className="notifier-option-icon">✈️</div>
             <div className="notifier-option-info">
               <p className="notifier-option-name">Telegram</p>
-              <p className="notifier-option-desc">Recibe el resumen por Telegram además del panel.</p>
+              <p className="notifier-option-desc">{copy('Receive the summary in Telegram as well as the dashboard.', 'Recibe el resumen por Telegram además del panel.')}</p>
             </div>
           </button>
         </div>
@@ -573,7 +556,7 @@ function NotifierFields({
       {state.draft.notifier === 'telegram' && (
         <>
           <div className="field-group">
-            <label htmlFor="telegramBotToken">Token del bot de Telegram</label>
+            <label htmlFor="telegramBotToken">{copy('Telegram bot token', 'Token del bot de Telegram')}</label>
             <div className="field-input-wrap">
               <span className="field-input-icon" aria-hidden="true">🤖</span>
               <input
@@ -591,7 +574,7 @@ function NotifierFields({
           </div>
 
           <div className="field-group">
-            <label htmlFor="telegramChatId">ID del chat de Telegram</label>
+            <label htmlFor="telegramChatId">{copy('Telegram chat ID', 'ID del chat de Telegram')}</label>
             <div className="field-input-wrap">
               <span className="field-input-icon" aria-hidden="true">#</span>
               <input
@@ -623,7 +606,7 @@ function ScheduleFields({
   return (
     <>
       <div className="field-group">
-        <label htmlFor="dailyTime">Hora del informe diario</label>
+        <label htmlFor="dailyTime">{copy('Daily report time', 'Hora del informe diario')}</label>
         <div className="field-input-wrap">
           <span className="field-input-icon" aria-hidden="true">🕗</span>
           <input
@@ -640,7 +623,7 @@ function ScheduleFields({
       </div>
 
       <div className="field-group">
-        <label htmlFor="timezone">Zona horaria</label>
+        <label htmlFor="timezone">{copy('Timezone', 'Zona horaria')}</label>
         <div className="field-input-wrap">
           <span className="field-input-icon" aria-hidden="true">🌍</span>
           <input
@@ -669,15 +652,15 @@ function PrivacyFields({
   setDraftField: (field: keyof OnboardingDraft, value: unknown) => void;
 }) {
   const privacyOptions: { value: PrivacyLevel; name: string; desc: string; dot: string }[] = [
-    { value: 'minimal', name: 'Mínima', desc: 'Solo conteos y tipos de entidades. Sin nombres ni valores.', dot: 'privacy-dot--minimal' },
-    { value: 'balanced', name: 'Equilibrada', desc: 'Tipos de entidades y patrones de fallo, sin datos personales.', dot: 'privacy-dot--balanced' },
-    { value: 'detailed', name: 'Detallada', desc: 'Contexto completo incluyendo nombres de entidades y valores.', dot: 'privacy-dot--detailed' },
+    { value: 'minimal', name: copy('Minimal', 'Mínima'), desc: copy('Only counts and entity types. No names or values.', 'Solo conteos y tipos de entidades. Sin nombres ni valores.'), dot: 'privacy-dot--minimal' },
+    { value: 'balanced', name: copy('Balanced', 'Equilibrada'), desc: copy('Entity types and failure patterns, without personal data.', 'Tipos de entidades y patrones de fallo, sin datos personales.'), dot: 'privacy-dot--balanced' },
+    { value: 'detailed', name: copy('Detailed', 'Detallada'), desc: copy('Full context including entity names and values.', 'Contexto completo incluyendo nombres de entidades y valores.'), dot: 'privacy-dot--detailed' },
   ];
 
   return (
     <>
       <div className="field-group">
-        <label>Nivel de privacidad</label>
+        <label>{copy('Privacy level', 'Nivel de privacidad')}</label>
         <div className="privacy-options">
           {privacyOptions.map((opt) => (
             <button
@@ -696,7 +679,7 @@ function PrivacyFields({
       </div>
 
       <div className="field-group">
-        <label htmlFor="retentionDays">Días de retención de informes</label>
+        <label htmlFor="retentionDays">{copy('Report retention days', 'Días de retención de informes')}</label>
         <div className="field-input-wrap">
           <span className="field-input-icon" aria-hidden="true">📅</span>
           <input
@@ -738,16 +721,16 @@ function CompleteScreen({ job, onContinue }: { job?: RunDigestResponse; onContin
   return (
     <div className="onboarding-complete onboarding-step-content">
       <div className="onboarding-complete-icon" aria-hidden="true">✓</div>
-      <p className="onboarding-eyebrow">Todo listo</p>
-      <h1 className="onboarding-step-title" id="step-title">Configuración guardada</h1>
+      <p className="onboarding-eyebrow">{copy('Ready', 'Todo listo')}</p>
+      <h1 className="onboarding-step-title" id="step-title">{copy('Settings saved', 'Configuración guardada')}</h1>
       <p className="onboarding-step-desc">
         {job
-          ? 'Tu primer informe está en cola y se procesará en breve. Accede al panel para ver el progreso.'
-          : 'La configuración se ha guardado correctamente. Ya puedes acceder al panel de control.'}
+          ? copy('Your first report is queued. Open the dashboard to follow its progress.', 'Tu primer informe está en cola. Abre el panel para seguir su progreso.')
+          : copy('Your settings are saved. You can open the dashboard now.', 'La configuración está guardada. Ya puedes abrir el panel.')}
       </p>
       <div className="onboarding-actions">
         <button type="button" className="btn-primary" onClick={onContinue}>
-          Ir al panel →
+          {copy('Open dashboard →', 'Ir al panel →')}
         </button>
       </div>
     </div>
@@ -826,16 +809,6 @@ function hasSettingsPersistenceApi(api: OnboardingApi): api is OnboardingApi {
   return typeof api.getSettings === 'function' && typeof api.updateSettings === 'function';
 }
 
-function toSetupRequest(draft: OnboardingDraft): SetupValidationRequest {
-  return {
-    haUrl: draft.haUrl,
-    haToken: draft.haToken,
-    aiProvider: draft.aiProvider,
-    aiKey: draft.aiKey,
-    ...(draft.notifier === 'telegram' ? { telegram: { botToken: draft.telegramBotToken, chatId: draft.telegramChatId } } : {}),
-  };
-}
-
 function stepForField(field: string): OnboardingStep {
   if (field.startsWith('ha')) return 'homeAssistant';
   if (field.startsWith('ai')) return 'aiProvider';
@@ -843,6 +816,10 @@ function stepForField(field: string): OnboardingStep {
   if (field === 'dailyTime' || field === 'timezone') return 'schedule';
   if (field === 'privacyLevel' || field === 'retentionDays' || field === 'privacyAccepted') return 'privacy';
   return 'firstDigest';
+}
+
+function toSetupRequest(draft: OnboardingDraft): SetupValidationRequest {
+  return { haUrl: draft.haUrl, haToken: draft.haToken, aiProvider: draft.aiProvider, aiKey: draft.aiKey, ...(draft.notifier === 'telegram' ? { telegram: { botToken: draft.telegramBotToken, chatId: draft.telegramChatId } } : {}) };
 }
 
 function toSettingsUpdate(currentSettings: EditableSettingsDto, draft: OnboardingDraft): SettingsUpdateCommand {

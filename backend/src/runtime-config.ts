@@ -9,8 +9,6 @@ export type RuntimeConfig = {
   port: number;
   trustProxy: boolean;
   secureCookies: boolean;
-  adminToken: string;
-  setupToken: string;
   frontendDistDir: string;
   dataDir: string;
   logDir: string;
@@ -42,8 +40,6 @@ export function loadRuntimeConfig(environment: NodeJS.ProcessEnv): RuntimeConfig
     port: parsePort(environment.PORT),
     trustProxy,
     secureCookies,
-    adminToken: requireEnvironmentValue(environment, 'ADMIN_TOKEN'),
-    setupToken: requireEnvironmentValue(environment, 'SETUP_TOKEN'),
     frontendDistDir: resolve(environment.FRONTEND_DIST_DIR ?? './frontend-dist'),
     dataDir,
     logDir: resolve(environment.LOG_DIR ?? `${dataDir}/logs`),
@@ -82,10 +78,4 @@ function parsePositiveInteger(name: string, value: string | undefined, fallback:
   const parsed = Number(value ?? fallback);
   if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`${name} must be a positive integer.`);
   return parsed;
-}
-
-function requireEnvironmentValue(environment: NodeJS.ProcessEnv, name: string): string {
-  const value = environment[name];
-  if (!value) throw new Error(`${name} is required for the runtime preview.`);
-  return value;
 }

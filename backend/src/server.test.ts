@@ -12,10 +12,7 @@ describe('runtime server startup', () => {
 
     await startRuntimeServer(
       {
-        DATA_DIR: await mkdtemp(join(tmpdir(), 'ha-digest-startup-logs-')),
-        ADMIN_TOKEN: 'admin-sentinel-secret',
-        SETUP_TOKEN: 'setup-sentinel-secret',
-        TRUST_PROXY: 'not-a-boolean'
+        DATA_DIR: await mkdtemp(join(tmpdir(), 'ha-digest-startup-logs-')), TRUST_PROXY: 'not-a-boolean'
       },
       {
         createApp,
@@ -32,8 +29,6 @@ describe('runtime server startup', () => {
     expect(startupEvents).toEqual([
       expect.objectContaining({ event: 'runtime_startup_failure', reason: 'runtime_startup_failed', errorName: 'Error' })
     ]);
-    expect(JSON.stringify(startupEvents)).not.toContain('admin-sentinel-secret');
-    expect(JSON.stringify(startupEvents)).not.toContain('setup-sentinel-secret');
   });
 
   it('awaits idempotent application cleanup for SIGTERM and SIGINT', async () => {
@@ -42,9 +37,7 @@ describe('runtime server startup', () => {
 
     await startRuntimeServer(
       {
-        DATA_DIR: await mkdtemp(join(tmpdir(), 'ha-digest-shutdown-')),
-        ADMIN_TOKEN: 'admin-sentinel-secret',
-        SETUP_TOKEN: 'setup-sentinel-secret'
+        DATA_DIR: await mkdtemp(join(tmpdir(), 'ha-digest-shutdown-'))
       },
       {
         createApp: async () => ({ listen: vi.fn(async () => undefined), close }) as never,
@@ -60,4 +53,5 @@ describe('runtime server startup', () => {
     expect(handlers.has('SIGINT')).toBe(true);
     expect(close).toHaveBeenCalledTimes(1);
   });
+
 });

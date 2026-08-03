@@ -2,7 +2,8 @@
 
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setLocale } from './i18n/index.js';
 import { SettingsPanel, type SettingsApi } from './settings.js';
 
 const roots: Root[] = [];
@@ -10,7 +11,10 @@ Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: tr
 
 afterEach(() => {
   for (const root of roots.splice(0)) root.unmount();
+  setLocale('en');
 });
+
+beforeEach(() => setLocale('en'));
 
 describe('SettingsPanel', () => {
   it('loads masked configuration, keeps secrets explicitly, and saves the complete editable configuration', async () => {
@@ -24,7 +28,7 @@ describe('SettingsPanel', () => {
       updateSettings
     });
 
-    expect(container.textContent).toContain('Configuración');
+    expect(container.textContent).toContain('Settings');
     expect(container.textContent).toContain('••••HA');
     expect(container.querySelector<HTMLInputElement>('input[name="haToken"]')).toBeNull();
     expect(container.querySelector<HTMLInputElement>('input[name="aiKey"]')).toBeNull();
@@ -40,7 +44,7 @@ describe('SettingsPanel', () => {
     }));
   });
 
-  it('shows a neutral Spanish actionable error and never reflects a rejected replacement key', async () => {
+  it('shows a neutral English actionable error and never reflects a rejected replacement key', async () => {
     const replacement = 'sentinel-rejected-ai-key';
     const { container } = await mount({
       getSettings: async () => settings(),
@@ -61,11 +65,11 @@ describe('SettingsPanel', () => {
       form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }));
     });
 
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('No se pudieron guardar los ajustes');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('Settings could not be saved');
     expect(container.textContent).not.toContain(replacement);
   });
 
-  it('uses URL-backed sections and keeps notes, ignores, and notifier actions in Configuration', async () => {
+  it('uses URL-backed sections and keeps notes, ignores, and notifier actions in Settings', async () => {
     const removeIgnore = vi.fn(async () => undefined);
     const testCurrentNotifier = vi.fn(async () => ({ status: 'success' as const, message: 'Prueba enviada', checkedAt: '2026-08-01T10:00:00.000Z' }));
     const { container } = await mount({
@@ -79,16 +83,16 @@ describe('SettingsPanel', () => {
       testCurrentNotifier
     });
 
-    expect(container.querySelector('a[href="/settings?section=context"]')?.textContent).toBe('Contexto');
-    expect(container.textContent).toContain('Notas del operador');
+    expect(container.querySelector('a[href="/settings?section=context"]')?.textContent).toBe('Context');
+    expect(container.textContent).toContain('Operator notes');
     expect(container.textContent).toContain('sensor.ruidoso');
-    expect(container.textContent).toContain('Enviar prueba de Telegram');
+    expect(container.textContent).toContain('Send Telegram test');
 
     const remove = container.querySelector<HTMLButtonElement>('[data-testid="remove-ignore-ignore-1"]');
     if (!remove) throw new Error('Expected ignore removal action.');
     await act(async () => remove.click());
     expect(removeIgnore).not.toHaveBeenCalled();
-    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('Quitar aviso ignorado');
+    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('Remove ignored warning');
 
     await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
     expect(container.querySelector('[role="dialog"]')).toBeNull();
@@ -106,14 +110,14 @@ describe('SettingsPanel', () => {
     const warning = new Event('beforeunload', { cancelable: true });
     window.dispatchEvent(warning);
     expect(warning.defaultPrevented).toBe(true);
-    expect(container.querySelector<HTMLButtonElement>('button[type="button"]')?.textContent).toBe('Cancelar cambios');
+    expect(container.querySelector<HTMLButtonElement>('button[type="button"]')?.textContent).toBe('Discard changes');
 
     const form = container.querySelector('form');
     if (!form) throw new Error('Expected settings form.');
     await act(async () => form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true })));
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('Indica una URL válida');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('Enter a valid Home Assistant URL');
 
-    const cancel = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent === 'Cancelar cambios');
+    const cancel = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent === 'Discard changes');
     if (!cancel) throw new Error('Expected cancel action.');
     await act(async () => cancel.click());
     expect(url.value).toBe('http://homeassistant.local:8123');
@@ -133,10 +137,23 @@ describe('SettingsPanel', () => {
     if (!confirm) throw new Error('Expected confirmation action.');
     await act(async () => confirm.click());
 
-    expect(container.textContent).toContain('No se pudo quitar el aviso ignorado');
+    expect(container.textContent).toContain('The ignored warning could not be removed');
     expect(container.textContent).toContain('sensor.ruidoso');
     expect(container.querySelector('[role="dialog"]')).toBeNull();
-    expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Reintentar eliminación')).toBe(true);
+    expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Retry removal')).toBe(true);
+  });
+
+  it('uses the selected Spanish locale for settings labels, actions, and date formatting', async () => {
+    setLocale('es');
+    const { container } = await mount({
+      getSettings: async () => settings(), updateSettings: async () => settings(),
+      listNotes: async () => [{ id: 'note-1', text: 'Reinicio', occurredAt: '2026-08-01T10:00:00.000Z', createdAt: '2026-08-01T10:00:00.000Z', tags: [] }]
+    });
+
+    expect(container.textContent).toContain('Configuración');
+    expect(container.textContent).toContain('Guardar ajustes');
+    expect(container.textContent).toContain('Notas del operador');
+    expect(container.textContent).toContain('1 ago');
   });
 });
 

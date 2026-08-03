@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { DigestDetail, ReportPresentationItem } from '@ha-digest/shared';
-import { t } from './i18n/index.js';
+import { currentLocale, t } from './i18n/index.js';
 
 export function ReportDetail({ report, embedded = false }: { report: DigestDetail; embedded?: boolean }) {
   const presentation = report.presentation;
@@ -22,7 +22,7 @@ export function ReportDetail({ report, embedded = false }: { report: DigestDetai
         <span>{t('report.severity.info')} {report.summary.severityCounts.info}</span>
       </div>
     </section>
-    {presentation?.mode === 'structured' ? <>
+    {presentation?.mode === 'batch' ? <BatchPresentation heading={SectionHeading} presentation={presentation} /> : presentation?.mode === 'structured' ? <>
       <section className="report-section" aria-labelledby="report-overview-title">
         <SectionHeading id="report-overview-title">{t('report.presentation.overview.title')}</SectionHeading>
         <p className="report-item-title">{presentation.overview.title}</p>
@@ -65,6 +65,15 @@ function PresentationSection({ heading: Heading, id, title, items }: { heading: 
   </section>;
 }
 
+function BatchPresentation({ heading: Heading, presentation }: { heading: 'h2' | 'h3'; presentation: Extract<NonNullable<DigestDetail['presentation']>, { mode: 'batch' }> }) {
+  if (presentation.status === 'failed') return <section className="report-section" role="alert"><Heading>{t('report.batch.failure')}</Heading><p>{presentation.failure}</p></section>;
+  return <>
+    {presentation.warnings.length > 0 ? <section className="report-section" role="alert"><Heading>{t('report.batch.warnings')}</Heading><p>{presentation.warnings.join(', ')}</p></section> : null}
+    <section className="report-section"><Heading>{t('report.batch.integrations')}</Heading><p>{presentation.integrationStatus?.available ? presentation.integrationStatus.integrations.map((item) => `${item.title} (${item.state})`).join(', ') || t('report.batch.none') : t('report.batch.unavailable')}</p></section>
+    <section className="report-section"><Heading>{t('report.batch.signatures')}</Heading><ul className="report-presentation-list">{presentation.signatures.map((item) => <li key={item.signature} className="report-presentation-item"><p className="report-item-title">{item.component} · {t(`report.batch.classification.${item.classification}`)}</p><p>{t('report.batch.trend').replace('{trend}', item.trend).replace('{count}', String(item.occurrences))}</p>{item.analysis ? <><p>{item.analysis.summary}</p><p><strong>{t('report.batch.recommendation')}</strong> {item.analysis.recommendation}</p></> : <p>{t('report.batch.analysisUnavailable')}</p>}</li>)}</ul></section>
+  </>;
+}
+
 function severityLabel(severity: NonNullable<ReportPresentationItem['severity']>): string {
   if (severity === 'critical') return t('report.presentation.severity.critical');
   if (severity === 'warning') return t('report.presentation.severity.warning');
@@ -72,7 +81,7 @@ function severityLabel(severity: NonNullable<ReportPresentationItem['severity']>
 }
 
 function formatDateTime(value: string): string {
-  return new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }).format(new Date(value));
+  return new Intl.DateTimeFormat(currentLocale() === 'es' ? 'es-ES' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }).format(new Date(value));
 }
 
 function deliveryLabel(status: DigestDetail['summary']['deliveryStatus']): string {

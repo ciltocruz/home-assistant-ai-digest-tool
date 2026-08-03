@@ -2,12 +2,15 @@
 
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { App } from './App.js';
+import { setLocale } from './i18n/index.js';
 
 Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: true, value: true });
 
 const mountedRoots: Root[] = [];
+
+beforeEach(() => setLocale('es'));
 
 afterEach(() => {
   for (const root of mountedRoots.splice(0)) root.unmount();

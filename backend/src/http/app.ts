@@ -1,8 +1,7 @@
-import crypto from 'node:crypto';
 import fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import {
   DigestWindowSchema, EditableSettingsDtoSchema, IgnoreRuleCreateSchema, NoteCreateSchema, NotifierTestRequestSchema, OnboardingProgressSchema, OnboardingStepCommandSchema, SettingsUpdateCommandSchema,
-  RunDigestRequestSchema, SendDigestRequestSchema, SetupValidationRequestSchema,
+  RunDigestRequestSchema, SendDigestRequestSchema,
   type DeliveryResult, type DigestDetail, type DigestHistoryResponse, type IgnoreRuleCreate, type IgnoreRuleDto, type MaskedSettings,
   type DigestJobStatus, type EditableSettingsDto, type NoteDto, type NotifierTestRequest, type OnboardingProgress, type OnboardingStepCommand, type RunDigestRequest, type RunDigestResponse, type SettingsUpdateCommand,
   type SendDigestRequest, type SetupValidationRequest, type TestResult
@@ -14,12 +13,14 @@ import { projectReportPresentation } from '../application/report-presentation.js
 export type BackendApiServices = {
   health?: { check(): Promise<{ ok: true } | { ok: false; reason: string }> };
   close?: () => void | Promise<void>;
+  /** Retained only as an internal compatibility seam; legacy setup routes do not exist. */
   setup: { complete(input: SetupValidationRequest): Promise<MaskedSettings> };
+  auth?: AuthStore;
   onboarding?: { get(): Promise<OnboardingProgress>; save(input: OnboardingStepCommand): Promise<OnboardingProgress>; complete?(): Promise<MaskedSettings> };
   settings: { get(): Promise<EditableSettingsDto>; update(input: SettingsUpdateCommand): Promise<EditableSettingsDto>; notificationTarget?(channel: 'telegram'): Promise<string> };
   digestJobs: Pick<DigestJobStore, 'enqueue' | 'get' | 'retryFailed'>;
   digestWorker?: { wake(): void };
-  reports: Pick<ReportStore, 'list' | 'get'>;
+  reports: { save?: ReportStore['save']; list(): Promise<DigestHistoryResponse>; get(id: string): Promise<DigestDetail | null> };
   notes: Pick<NoteStore, 'add' | 'listWindow'>;
   ignores: Pick<IgnoreRuleStore, 'add' | 'remove' | 'listActive'>;
   notifiers: {
@@ -29,12 +30,24 @@ export type BackendApiServices = {
 };
 
 export type BackendAuthOptions = {
-  adminToken: string;
-  /** Bootstrap bearer token for first-run setup. Production runtime config must rotate or disable it after setup is complete. */
-  setupToken: string;
   sessionTtlMs: number;
   /** Set true when serving over HTTPS or behind a TLS-terminating proxy that preserves Secure cookies. */
   secureCookies?: boolean;
+};
+
+export type AuthStore = {
+  hasAdmin(): Promise<boolean>;
+  createAdmin(password: string, language: 'en' | 'es'): Promise<boolean>;
+  verifyPassword(password: string): Promise<boolean>;
+  changePassword(currentPassword: string, nextPassword: string): Promise<boolean>;
+  createSession(ttlMs: number): Promise<Session>;
+  readSession(id: string, csrfToken?: string): Promise<Session | null>;
+  removeSession(id: string): Promise<void>;
+  issueCsrf(id: string): Promise<string | null>;
+  loginAllowed(subject: string): Promise<boolean>;
+  recordFailedLogin(subject: string): Promise<void>;
+  clearFailedLogins(subject: string): Promise<void>;
+  language(): Promise<'en' | 'es'>;
 };
 
 export type OperationalFailureEvent = {
@@ -54,7 +67,7 @@ export type CreateAppOptions = {
   now?: () => string;
   /** Receives secret-safe operational failure events for production logging/metrics. Do not include raw error messages here. */
   failureReporter?: (event: OperationalFailureEvent) => void;
-  /** Allows preview/static routes to stay public without weakening API protection. */
+  /** Allows static frontend routes to stay public without weakening API protection. */
   publicRequest?: (request: FastifyRequest) => boolean;
 };
 
@@ -65,9 +78,9 @@ const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 export function createApp(options: CreateAppOptions): FastifyInstance {
   const app = fastify({ logger: false, trustProxy: options.trustProxy ?? false });
-  const sessions = new Map<string, Session>();
   const now = options.now ?? (() => new Date().toISOString());
   const currentTimeMs = () => Date.parse(now());
+  const auth = options.services.auth;
 
   app.setErrorHandler((error, request, reply) => {
     request.log.debug({ err: error }, 'request failed');
@@ -82,69 +95,85 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     return sendError(reply, 500, 'INTERNAL_ERROR', 'Request failed. Check server logs with redaction enabled.', request.id);
   });
 
+  // Register before routes: Fastify applies encapsulated hooks to routes declared after them.
+  app.addHook('preHandler', async (request, reply) => {
+    if (isPublicRoute(request) || options.publicRequest?.(request)) return;
+    const session = await authenticate(request, auth);
+    if (!session) return sendError(reply, 401, 'UNAUTHENTICATED', 'Authenticated session required.', request.id);
+    const csrfToken = typeof request.headers['x-csrf-token'] === 'string' ? request.headers['x-csrf-token'] : undefined;
+    if (MUTATING_METHODS.has(request.method) && (!csrfToken || !await auth?.readSession(session.id, csrfToken))) {
+      return sendError(reply, 403, 'CSRF_REQUIRED', 'CSRF token required for this request.', request.id);
+    }
+  });
+
+  app.get('/api/auth/status', async () => ({ hasAdmin: await requireAuthStore(auth).hasAdmin() }));
+
+  app.post('/api/auth/register', async (request, reply) => {
+    const body = asRecord(request.body);
+    const password = String(body.password ?? '');
+    const language = body.language === 'es' ? 'es' : 'en';
+    if (password.length < 12) return sendError(reply, 400, 'VALIDATION_FAILED', 'Choose a password with at least 12 characters.', request.id);
+    const store = requireAuthStore(auth);
+    if (!await store.createAdmin(password, language)) return sendError(reply, 409, 'ADMIN_EXISTS', 'An administrator account already exists. Sign in instead.', request.id);
+    return startSession(reply, options.auth, store, request.id);
+  });
+
   app.post('/api/session', async (request, reply) => {
     const body = asRecord(request.body);
-    if (!safeEqual(String(body.adminToken ?? ''), options.auth.adminToken)) return sendError(reply, 401, 'UNAUTHENTICATED', 'Invalid admin token.', request.id);
-    return startSession(reply, options.auth, sessions, currentTimeMs(), request.id);
+    const store = requireAuthStore(auth);
+    const subject = request.ip || 'unknown';
+    if (!await store.loginAllowed(subject)) return sendError(reply, 429, 'LOGIN_THROTTLED', 'Too many sign-in attempts. Try again later.', request.id);
+    if (!await store.verifyPassword(String(body.password ?? ''))) {
+      await store.recordFailedLogin(subject);
+      return sendError(reply, 401, 'UNAUTHENTICATED', 'Invalid credentials.', request.id);
+    }
+    await store.clearFailedLogins(subject);
+    return startSession(reply, options.auth, store, request.id);
   });
 
   app.get('/api/session', async (request, reply) => {
-    const session = authenticate(request, options.auth, sessions, currentTimeMs());
+    const session = await authenticate(request, auth);
     if (!session) return sendError(reply, 401, 'UNAUTHENTICATED', 'Authenticated session required.', request.id);
-    return { csrfToken: session.csrfToken };
+    return { csrfToken: session.csrfToken, language: await requireAuthStore(auth).language() };
   });
 
   app.delete('/api/session', async (request, reply) => {
     const sessionId = readCookie(request, SESSION_COOKIE);
-    if (sessionId) sessions.delete(sessionId);
+    if (sessionId) await requireAuthStore(auth).removeSession(sessionId);
     reply.header('set-cookie', expiredSessionCookie(options.auth));
     return reply.code(204).send();
   });
 
-  app.post('/api/setup', async (request, reply) => {
-    if (!hasSetupBearer(request, options.auth.setupToken)) return sendError(reply, 401, 'UNAUTHENTICATED', 'Setup token is required.', request.id);
-    const input = parseRequest(SetupValidationRequestSchema, request.body, reply, request.id);
-    if (!input.ok) return input.response;
-
-    const settings = await options.services.setup.complete(input.value);
-    const session = createSession(options.auth, sessions, currentTimeMs());
-    reply.header('set-cookie', sessionCookie(session, options.auth));
-    return reply.send({ settings, csrfToken: session.csrfToken });
-  });
-
   app.get('/api/onboarding', async (request, reply): Promise<OnboardingProgress | FastifyReply> => {
-    if (!hasSetupBearer(request, options.auth.setupToken)) return sendError(reply, 401, 'UNAUTHENTICATED', 'Setup token is required.', request.id);
     if (!options.services.onboarding) return sendError(reply, 503, 'ONBOARDING_UNAVAILABLE', 'Persisted onboarding is unavailable.', request.id);
     return OnboardingProgressSchema.parse(await options.services.onboarding.get());
   });
   app.patch('/api/onboarding', async (request, reply): Promise<OnboardingProgress | FastifyReply> => {
-    if (!hasSetupBearer(request, options.auth.setupToken)) return sendError(reply, 401, 'UNAUTHENTICATED', 'Setup token is required.', request.id);
     if (!options.services.onboarding) return sendError(reply, 503, 'ONBOARDING_UNAVAILABLE', 'Persisted onboarding is unavailable.', request.id);
     const input = parseRequest(OnboardingStepCommandSchema, request.body, reply, request.id);
     return input.ok ? OnboardingProgressSchema.parse(await options.services.onboarding.save(input.value)) : input.response;
   });
   app.post('/api/onboarding/complete', async (request, reply) => {
-    if (!hasSetupBearer(request, options.auth.setupToken)) return sendError(reply, 401, 'UNAUTHENTICATED', 'Setup token is required.', request.id);
     if (!options.services.onboarding?.complete) return sendError(reply, 503, 'ONBOARDING_UNAVAILABLE', 'Persisted onboarding is unavailable.', request.id);
     try {
       const settings = await options.services.onboarding.complete();
-      const session = createSession(options.auth, sessions, currentTimeMs());
-      reply.header('set-cookie', sessionCookie(session, options.auth));
-      return reply.send({ settings, csrfToken: session.csrfToken });
+       return reply.send({ settings });
     } catch (error) {
       if (error instanceof Error && error.message === 'ONBOARDING_INCOMPLETE') return sendError(reply, 400, 'ONBOARDING_INCOMPLETE', 'Complete todos los pasos requeridos antes de lanzar el informe.', request.id);
       throw error;
     }
   });
 
-  app.addHook('preHandler', async (request, reply) => {
-    if (isPublicRoute(request) || options.publicRequest?.(request)) return;
-
-    const session = authenticate(request, options.auth, sessions, currentTimeMs());
-    if (!session) return sendError(reply, 401, 'UNAUTHENTICATED', 'Authenticated session required.', request.id);
-    if (MUTATING_METHODS.has(request.method) && request.headers['x-csrf-token'] !== session.csrfToken) {
-      return sendError(reply, 403, 'CSRF_REQUIRED', 'CSRF token required for this request.', request.id);
-    }
+  app.post('/api/account/password', async (request, reply) => {
+    const body = asRecord(request.body);
+    const currentPassword = String(body.currentPassword ?? '');
+    const nextPassword = String(body.nextPassword ?? '');
+    if (nextPassword.length < 12) return sendError(reply, 400, 'VALIDATION_FAILED', 'Choose a password with at least 12 characters.', request.id);
+    if (!await requireAuthStore(auth).changePassword(currentPassword, nextPassword)) return sendError(reply, 401, 'UNAUTHENTICATED', 'Invalid credentials.', request.id);
+    const sessionId = readCookie(request, SESSION_COOKIE);
+    if (sessionId) await requireAuthStore(auth).removeSession(sessionId);
+    reply.header('set-cookie', expiredSessionCookie(options.auth));
+    return reply.code(204).send();
   });
 
   app.get('/api/settings', async () => EditableSettingsDtoSchema.parse(await options.services.settings.get()));
@@ -186,7 +215,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
   app.get('/api/digests/:id', async (request, reply): Promise<DigestDetail | FastifyReply> => {
     const detail = await options.services.reports.get(String((request.params as { id: string }).id));
     return detail
-      ? { ...detail, presentation: projectReportPresentation(detail) }
+      ? { ...detail, presentation: detail.presentation ?? projectReportPresentation(detail) }
       : sendError(reply, 404, 'NOT_FOUND', 'Digest not found.', request.id);
   });
 
@@ -248,27 +277,15 @@ function parseRequest<T>(schema: { safeParse(value: unknown): { success: true; d
   };
 }
 
-function startSession(reply: FastifyReply, auth: BackendAuthOptions, sessions: Map<string, Session>, currentTimeMs: number, requestId: string) {
-  const session = createSession(auth, sessions, currentTimeMs);
+async function startSession(reply: FastifyReply, auth: BackendAuthOptions, store: AuthStore, requestId: string) {
+  const session = await store.createSession(auth.sessionTtlMs);
   reply.header('set-cookie', sessionCookie(session, auth));
-  return reply.send({ csrfToken: session.csrfToken });
+  return reply.send({ csrfToken: session.csrfToken, language: await store.language() });
 }
 
-function createSession(auth: BackendAuthOptions, sessions: Map<string, Session>, currentTimeMs: number): Session {
-  const session = { id: token(), csrfToken: token(), expiresAtMs: currentTimeMs + auth.sessionTtlMs };
-  sessions.set(session.id, session);
-  return session;
-}
-
-function authenticate(request: FastifyRequest, auth: BackendAuthOptions, sessions: Map<string, Session>, currentTimeMs: number): Session | null {
+async function authenticate(request: FastifyRequest, auth: AuthStore | undefined): Promise<Session | null> {
   const sessionId = readCookie(request, SESSION_COOKIE);
-  const session = sessionId ? sessions.get(sessionId) : undefined;
-  if (!session) return null;
-  if (session.expiresAtMs <= currentTimeMs) {
-    sessions.delete(session.id);
-    return null;
-  }
-  return session;
+  return sessionId ? requireAuthStore(auth).readSession(sessionId) : null;
 }
 
 function sendError(reply: FastifyReply, status: number, code: string, message: string, requestId: string, fieldErrors?: Record<string, string[]>) {
@@ -286,7 +303,7 @@ function presentJob(job: Awaited<ReturnType<DigestJobStore['get']>> extends infe
 }
 
 function isPublicRoute(request: FastifyRequest): boolean {
-  return (request.method === 'POST' && request.url === '/api/session') || (request.method === 'POST' && request.url === '/api/setup') || request.url.startsWith('/api/onboarding');
+  return request.url === '/api/auth/status' || (request.method === 'POST' && (request.url === '/api/auth/register' || request.url === '/api/session'));
 }
 
 function reportFailure(reporter: CreateAppOptions['failureReporter'], event: OperationalFailureEvent): void {
@@ -309,11 +326,6 @@ function getErrorName(error: unknown): string {
   return error instanceof Error && error.name ? error.name : 'Error';
 }
 
-function hasSetupBearer(request: FastifyRequest, setupToken: string): boolean {
-  const header = request.headers.authorization ?? '';
-  return header.startsWith('Bearer ') && safeEqual(header.slice('Bearer '.length), setupToken);
-}
-
 function readCookie(request: FastifyRequest, name: string): string | null {
   const header = request.headers.cookie;
   if (!header) return null;
@@ -332,14 +344,9 @@ function expiredSessionCookie(auth: BackendAuthOptions): string {
   return `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${auth.secureCookies ? '; Secure' : ''}`;
 }
 
-function safeEqual(actual: string, expected: string): boolean {
-  const actualBuffer = Buffer.from(actual);
-  const expectedBuffer = Buffer.from(expected);
-  return actualBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(actualBuffer, expectedBuffer);
-}
-
-function token(): string {
-  return crypto.randomBytes(32).toString('base64url');
+function requireAuthStore(auth: AuthStore | undefined): AuthStore {
+  if (!auth) throw new Error('AUTH_STORE_UNAVAILABLE');
+  return auth;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

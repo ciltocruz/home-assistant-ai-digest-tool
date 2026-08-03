@@ -8,6 +8,7 @@ import {
   NoteCreateSchema,
   NoteDtoSchema,
   NotifierTestRequestSchema,
+  MaskedSettingsSchema,
   OnboardingProgressSchema,
   OnboardingStepCommandSchema,
   SettingsUpdateCommandSchema,
@@ -15,8 +16,6 @@ import {
   RunDigestRequestSchema,
   RunDigestResponseSchema,
   SendDigestRequestSchema,
-  SetupValidationRequestSchema,
-  SetupValidationResponseSchema,
   TestResultSchema,
   type DeliveryResult,
   type DigestDetail,
@@ -44,7 +43,6 @@ type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 type ApiClientOptions = {
   baseUrl?: string;
   csrfToken?: string;
-  setupToken?: string;
   fetch?: FetchLike;
 };
 
@@ -95,27 +93,25 @@ export function createApiClient(options: ApiClientOptions = {}) {
 
   return {
     getCsrfToken: () => csrfToken,
-    getSession: async (): Promise<void> => {
-      const response = await request('/api/session', z.object({ csrfToken: z.string().min(1) }), { method: 'GET' });
+    getSession: async (): Promise<{ language: 'en' | 'es' }> => {
+      const response = await request('/api/session', z.object({ csrfToken: z.string().min(1), language: z.enum(['en', 'es']) }), { method: 'GET' });
       csrfToken = response.csrfToken;
+      return { language: response.language };
     },
-    validateSetup: async (input: SetupValidationRequest): Promise<SetupValidationResponse> => {
-      const payload = SetupValidationRequestSchema.parse(input);
-      const response = await request('/api/setup', SetupValidationResponseSchema, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${options.setupToken ?? ''}` },
-        body: JSON.stringify(payload)
-      });
+    getAuthStatus: () => request('/api/auth/status', z.object({ hasAdmin: z.boolean() })),
+    register: async (password: string, language: 'en' | 'es'): Promise<{ language: 'en' | 'es' }> => {
+      const response = await request('/api/auth/register', z.object({ csrfToken: z.string().min(1), language: z.enum(['en', 'es']) }), { method: 'POST', body: JSON.stringify({ password, language }) });
       csrfToken = response.csrfToken;
-      return response;
+      return { language: response.language };
     },
-    getOnboarding: (): Promise<OnboardingProgress> => request('/api/onboarding', OnboardingProgressSchema, { method: 'GET', headers: { authorization: `Bearer ${options.setupToken ?? ''}` } }),
-    saveOnboarding: (input: OnboardingStepCommand): Promise<OnboardingProgress> => request('/api/onboarding', OnboardingProgressSchema, { method: 'PATCH', headers: { authorization: `Bearer ${options.setupToken ?? ''}` }, body: JSON.stringify(OnboardingStepCommandSchema.parse(input)) }),
-    completeOnboarding: async (): Promise<SetupValidationResponse> => {
-      const response = await request('/api/onboarding/complete', SetupValidationResponseSchema, { method: 'POST', headers: { authorization: `Bearer ${options.setupToken ?? ''}` }, body: JSON.stringify({}) });
+    login: async (password: string): Promise<{ language: 'en' | 'es' }> => {
+      const response = await request('/api/session', z.object({ csrfToken: z.string().min(1), language: z.enum(['en', 'es']) }), { method: 'POST', body: JSON.stringify({ password }) });
       csrfToken = response.csrfToken;
-      return response;
+      return { language: response.language };
     },
+    getOnboarding: (): Promise<OnboardingProgress> => request('/api/onboarding', OnboardingProgressSchema, { method: 'GET' }),
+    saveOnboarding: (input: OnboardingStepCommand): Promise<OnboardingProgress> => request('/api/onboarding', OnboardingProgressSchema, { method: 'PATCH', body: JSON.stringify(OnboardingStepCommandSchema.parse(input)) }),
+    completeOnboarding: () => request('/api/onboarding/complete', z.object({ settings: MaskedSettingsSchema }), { method: 'POST', body: JSON.stringify({}) }),
     getSettings: () => request('/api/settings', EditableSettingsDtoSchema),
     updateSettings: (input: SettingsUpdateCommand) => request('/api/settings', EditableSettingsDtoSchema, { method: 'PUT', body: JSON.stringify(SettingsUpdateCommandSchema.parse(input)) }),
     runDigest: (input: RunDigestRequest): Promise<RunDigestResponse> => request('/api/digests/run', RunDigestResponseSchema, { method: 'POST', body: JSON.stringify(RunDigestRequestSchema.parse(input)) }),

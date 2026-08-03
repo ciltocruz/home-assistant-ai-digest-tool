@@ -2,17 +2,20 @@
 
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OnboardingProgress } from '@ha-digest/shared';
 import { App } from './App.js';
+import { setLocale } from './i18n/index.js';
 
 let container: HTMLDivElement | undefined;
 
 Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: true, value: true });
+beforeEach(() => setLocale('es'));
 
 afterEach(() => {
   container?.remove();
   container = undefined;
+  history.replaceState({}, '', '/');
 });
 
 describe('App persisted onboarding', () => {
@@ -32,7 +35,7 @@ describe('App persisted onboarding', () => {
     });
 
     expect(api.getOnboarding).toHaveBeenCalledTimes(1);
-    expect(container.querySelector('.setup-rail .is-active')?.textContent).toBe('Horario');
+    expect(container.querySelector('h1')?.textContent).toBe('Horario de informes');
     expect(container.textContent).not.toContain('sentinel-onboarding-secret');
     root.unmount();
   });
@@ -51,10 +54,10 @@ describe('App persisted onboarding', () => {
       await Promise.resolve();
     });
 
-    expect(container.querySelector('[data-app-state]')?.getAttribute('data-app-state')).toBe('setup');
+    expect(container.querySelector('form[aria-label="Configuración guiada"]')).not.toBeNull();
     expect(container.querySelector('nav')).toBeNull();
     expect(container.querySelector('a.skip-link')?.getAttribute('href')).toBe('#onboarding-flow');
-    expect(container.textContent).toContain('Configuración guiada');
+    expect(container.textContent).toContain('Elige tu proveedor de IA');
     expect(container.textContent).not.toContain('Informe manual');
     root.unmount();
   });

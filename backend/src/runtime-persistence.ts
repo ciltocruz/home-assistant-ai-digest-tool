@@ -8,7 +8,6 @@ import { runMigrations } from './adapters/persistence/migrations.js';
 import { SQLiteDigestJobStore } from './adapters/persistence/sqlite-digest-job-store.js';
 import { SQLiteSecretStore } from './adapters/persistence/sqlite-secret-store.js';
 import { SQLiteOnboardingStore } from './adapters/persistence/sqlite-onboarding-store.js';
-import { SQLiteV2Stores } from './adapters/persistence/sqlite-v2-stores.js';
 import type { BackendApiServices } from './http/app.js';
 import type { ReportStore } from './domain/stores.js';
 import type { ExecutionContext } from './domain/execution.js';
@@ -16,6 +15,8 @@ import { HomeAssistantLogDeltaReader } from './adapters/ha/log-reader.js';
 import { HomeAssistantWebSocketClient, type HomeAssistantSocket } from './adapters/ha/websocket-client.js';
 import { createSignatureProvider, type ProviderHttpClient } from './adapters/ai/providers.js';
 import { TelegramNotifier, type NotifierHttpClient } from './adapters/notifiers/notifiers.js';
+import { SQLiteV2Stores } from './adapters/persistence/sqlite-v2-stores.js';
+import { SQLiteAuthStore } from './adapters/persistence/sqlite-auth-store.js';
 import { BatchReportRun, type RunRequest } from './application/batch-report-run.js';
 import { DigestWorker } from './application/digest-worker.js';
 import { SettingsService, type SecretReplacement } from './application/settings.js';
@@ -49,6 +50,7 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
   const clock = { now: () => new Date(now()) };
   const secretStore = await SQLiteSecretStore.create({ db, dataDir });
   const onboarding = new SQLiteOnboardingStore(db, secretStore);
+  const auth = new SQLiteAuthStore(db, () => Date.parse(now()));
   const settingsStore = new SQLiteRuntimeSettingsStore(db, secretStore);
   const settings = new SettingsService(settingsStore, secretStore);
   const reports = new SQLiteReportStore(db, () => settingsStore.get(), now, options.maxStoredReports ?? DEFAULT_MAX_STORED_REPORTS);
@@ -69,6 +71,7 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
       }
     },
     setup: { complete: (input) => settingsStore.completeSetup(input) },
+    auth,
     onboarding: { get: () => onboarding.get(), save: (input) => onboarding.save(input), complete: () => onboarding.complete() },
     settings: {
       get: () => settings.get(),
@@ -77,6 +80,7 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
     },
     digestJobs,
     reports: {
+      save: reports.save.bind(reports),
       list: async () => [...await v2Stores.listReports(), ...await reports.list()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
       get: async (id) => await v2Stores.getReport(id) ?? await reports.get(id)
     },
@@ -146,6 +150,7 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
         }
       },
       reportUrl: options.reportUrl,
+      language: () => auth.language(),
       now
     });
     worker = new DigestWorker({

@@ -8,6 +8,8 @@ services:
     depends_on:
       fake-ha:
         condition: service_started
+      ollama:
+        condition: service_started
     networks:
       - verification
       - host-access
@@ -23,6 +25,21 @@ services:
       - /tmp:rw,noexec,nosuid,size=16m
     volumes:
       - ./docker/verify/fake-ha.mjs:/verify/fake-ha.mjs:ro
+    networks:
+      - verification
+
+  ollama:
+    image: node:22-slim
+    command: ["node", "/verify/fake-ollama.mjs"]
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    volumes:
+      - ./docker/verify/fake-ollama.mjs:/verify/fake-ollama.mjs:ro
     networks:
       - verification
 

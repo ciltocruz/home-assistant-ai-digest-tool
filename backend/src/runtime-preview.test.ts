@@ -16,7 +16,7 @@ describe('runtime preview app', () => {
 
   it('serves built frontend assets while keeping API routes available', async () => {
     const frontendDistDir = await createFrontendDist();
-    app = createRuntimePreviewApp({ frontendDistDir, adminToken: 'admin-token', setupToken: 'setup-token' });
+    app = createRuntimePreviewApp({ frontendDistDir });
 
     const index = await app.inject({ method: 'GET', url: '/' });
     const asset = await app.inject({ method: 'GET', url: '/assets/app.js' });
@@ -34,7 +34,7 @@ describe('runtime preview app', () => {
 
   it('keeps liveness available while rejecting unconfigured Home Assistant logs from readiness', async () => {
     const frontendDistDir = await createFrontendDist();
-    app = createRuntimePreviewApp({ frontendDistDir, adminToken: 'admin-token', setupToken: 'setup-token' });
+    app = createRuntimePreviewApp({ frontendDistDir });
 
     const health = await app.inject({ method: 'GET', url: '/health' });
     const ready = await app.inject({ method: 'GET', url: '/ready' });
@@ -47,7 +47,7 @@ describe('runtime preview app', () => {
 
   it('reports not ready when the frontend index is missing', async () => {
     const frontendDistDir = await mkdtemp(join(tmpdir(), 'ha-digest-preview-empty-'));
-    app = createRuntimePreviewApp({ frontendDistDir, adminToken: 'admin-token', setupToken: 'setup-token' });
+    app = createRuntimePreviewApp({ frontendDistDir });
 
     const ready = await app.inject({ method: 'GET', url: '/ready' });
 
@@ -57,7 +57,7 @@ describe('runtime preview app', () => {
 
   it('adds conservative security headers to runtime preview responses', async () => {
     const frontendDistDir = await createFrontendDist();
-    app = createRuntimePreviewApp({ frontendDistDir, adminToken: 'admin-token', setupToken: 'setup-token' });
+    app = createRuntimePreviewApp({ frontendDistDir });
 
     const response = await app.inject({ method: 'GET', url: '/' });
 
@@ -66,24 +66,22 @@ describe('runtime preview app', () => {
     expect(response.headers['content-security-policy']).toContain("script-src 'self' 'unsafe-inline'");
   });
 
-  it('injects the setup token into served HTML without modifying static assets', async () => {
+  it('serves static HTML without injecting account credentials or modifying assets', async () => {
     const frontendDistDir = await createFrontendDist();
-    app = createRuntimePreviewApp({ frontendDistDir, adminToken: 'admin-token', setupToken: 'setup-token-with-</script>-chars' });
+    app = createRuntimePreviewApp({ frontendDistDir });
 
     const index = await app.inject({ method: 'GET', url: '/' });
     const asset = await app.inject({ method: 'GET', url: '/assets/app.js' });
 
     expect(index.statusCode).toBe(200);
-    expect(index.body).toContain('window.__HA_DIGEST_BOOTSTRAP__');
-    expect(index.body).toContain('setup-token-with-');
-    expect(index.body).not.toContain('</script>-chars');
+    expect(index.body).not.toContain('credential');
     expect(asset.body).toBe('window.__preview = true;');
   });
 
   it('blocks path traversal outside the built frontend directory', async () => {
     const frontendDistDir = await createFrontendDist();
     await writeFile(join(frontendDistDir, '..', 'secret.txt'), 'do-not-serve');
-    app = createRuntimePreviewApp({ frontendDistDir, adminToken: 'admin-token', setupToken: 'setup-token' });
+    app = createRuntimePreviewApp({ frontendDistDir });
 
     const response = await app.inject({ method: 'GET', url: '/assets/%2e%2e/secret.txt' });
 
@@ -91,66 +89,41 @@ describe('runtime preview app', () => {
     expect(response.body).not.toContain('do-not-serve');
   });
 
-  it('can run preview APIs against persistent /data services', async () => {
+  it('persists an account-backed session flow against persistent /data services', async () => {
     const frontendDistDir = await createFrontendDist();
     const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-preview-data-'));
     app = await createPersistentRuntimePreviewApp({
       frontendDistDir,
-      dataDir,
-      adminToken: 'admin-token',
-      setupToken: 'setup-token',
-      now: () => '2026-07-12T10:00:00.000Z'
+      dataDir, now: () => '2026-07-12T10:00:00.000Z'
     });
 
-    const setup = await app.inject({
-      method: 'POST',
-      url: '/api/setup',
-      headers: { authorization: 'Bearer setup-token' },
-      payload: {
-        haUrl: 'http://homeassistant.local:8123',
-        haToken: 'sentinel-ha-credential-value',
-        aiProvider: 'gemini',
-        aiKey: 'sentinel-ai-credential-value'
-      }
-    });
-    const { csrfToken } = setup.json() as { csrfToken: string };
-    const cookie = setup.headers['set-cookie'] as string;
-    const firstRun = await app.inject({ method: 'POST', url: '/api/digests/run', headers: { cookie, 'x-csrf-token': csrfToken }, payload: { kind: 'manual' } });
+    const registered = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: 'persistent-runtime-password', language: 'en' } });
+    const settings = await app.inject({ method: 'GET', url: '/api/settings', headers: { cookie: registered.headers['set-cookie'] } });
     await app.close();
 
     app = await createPersistentRuntimePreviewApp({
       frontendDistDir,
-      dataDir,
-      adminToken: 'admin-token',
-      setupToken: 'setup-token',
-      now: () => '2026-07-12T10:00:00.000Z'
+      dataDir, now: () => '2026-07-12T10:00:00.000Z'
     });
-    const login = await app.inject({ method: 'POST', url: '/api/session', payload: { adminToken: 'admin-token' } });
+    const login = await app.inject({ method: 'POST', url: '/api/session', payload: { password: 'persistent-runtime-password' } });
     const reopenedCookie = login.headers['set-cookie'] as string;
-    const settings = await app.inject({ method: 'GET', url: '/api/settings', headers: { cookie: reopenedCookie } });
-    const duplicateRun = await app.inject({ method: 'POST', url: '/api/digests/run', headers: { cookie: reopenedCookie, 'x-csrf-token': (login.json() as { csrfToken: string }).csrfToken }, payload: { kind: 'manual' } });
+    const reopenedSettings = await app.inject({ method: 'GET', url: '/api/settings', headers: { cookie: reopenedCookie } });
 
-    expect(setup.statusCode).toBe(200);
-    expect(settings.json()).toMatchObject({ ai: { provider: 'gemini' }, privacyLevel: 'balanced' });
-    expect(firstRun.json()).toMatchObject({ code: 'ANALYSIS_UNAVAILABLE' });
-    expect(duplicateRun.json()).toMatchObject({ code: 'ANALYSIS_UNAVAILABLE' });
+    expect(registered.statusCode).toBe(200);
+    expect(settings.statusCode).toBe(200);
+    expect(reopenedSettings.json()).toMatchObject({ ai: { provider: 'gemini' }, privacyLevel: 'balanced' });
   });
 
-  it('injects the setup token into persistent runtime HTML without changing API authorization', async () => {
+  it('keeps persistent runtime APIs unavailable until an account session exists', async () => {
     const frontendDistDir = await createFrontendDist();
-    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-preview-no-token-'));
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-runtime-account-'));
     app = await createPersistentRuntimePreviewApp({
-      frontendDistDir,
-      dataDir,
-      adminToken: 'admin-token',
-      setupToken: 'setup-token-must-stay-server-side'
+      frontendDistDir, dataDir
     });
 
     const index = await app.inject({ method: 'GET', url: '/' });
 
     expect(index.statusCode).toBe(200);
-    expect(index.body).toContain('window.__HA_DIGEST_BOOTSTRAP__');
-    expect(index.body).toContain('setup-token-must-stay-server-side');
     expect(index.body).toContain('<div id="root"></div>');
 
     const protectedApi = await app.inject({ method: 'GET', url: '/api/digests/history' });
@@ -165,7 +138,7 @@ describe('runtime preview app', () => {
       ...createRuntimePreviewServices(),
       health: { check: async () => ({ ok: false, reason: 'persistence_unavailable' }) }
     };
-    app = createRuntimePreviewApp({ frontendDistDir, haLogsDir, adminToken: 'admin-token', setupToken: 'setup-token', services });
+    app = createRuntimePreviewApp({ frontendDistDir, haLogsDir, services });
 
     const ready = await app.inject({ method: 'GET', url: '/ready' });
 
@@ -177,7 +150,7 @@ describe('runtime preview app', () => {
     const frontendDistDir = await createFrontendDist();
     const haLogsDir = await mkdtemp(join(tmpdir(), 'ha-digest-ha-logs-'));
     await writeFile(join(haLogsDir, 'home-assistant.log'), '2026-07-15 safe log line');
-    app = createRuntimePreviewApp({ frontendDistDir, haLogsDir, adminToken: 'admin-token', setupToken: 'setup-token' });
+    app = createRuntimePreviewApp({ frontendDistDir, haLogsDir });
 
     const ready = await app.inject({ method: 'GET', url: '/ready' });
 
@@ -190,7 +163,7 @@ describe('runtime preview app', () => {
     const haLogsDir = await mkdtemp(join(tmpdir(), 'ha-digest-ha-log-file-'));
     const haLogFile = join(haLogsDir, 'home-assistant.log');
     await writeFile(haLogFile, '2026-07-15 safe log line');
-    app = createRuntimePreviewApp({ frontendDistDir, haLogsDir: haLogFile, adminToken: 'admin-token', setupToken: 'setup-token' });
+    app = createRuntimePreviewApp({ frontendDistDir, haLogsDir: haLogFile });
 
     const ready = await app.inject({ method: 'GET', url: '/ready' });
 
@@ -201,7 +174,7 @@ describe('runtime preview app', () => {
   it('rejects a missing configured Home Assistant logs mount from readiness', async () => {
     const frontendDistDir = await createFrontendDist();
     const missingHaLogsDir = join(await mkdtemp(join(tmpdir(), 'ha-digest-missing-parent-')), 'not-created');
-    app = createRuntimePreviewApp({ frontendDistDir, haLogsDir: missingHaLogsDir, adminToken: 'admin-token', setupToken: 'setup-token' });
+    app = createRuntimePreviewApp({ frontendDistDir, haLogsDir: missingHaLogsDir });
 
     const ready = await app.inject({ method: 'GET', url: '/ready' });
 
@@ -212,7 +185,7 @@ describe('runtime preview app', () => {
   it('rejects an empty configured Home Assistant logs mount from readiness', async () => {
     const frontendDistDir = await createFrontendDist();
     const haLogsDir = await mkdtemp(join(tmpdir(), 'ha-digest-empty-ha-logs-'));
-    app = createRuntimePreviewApp({ frontendDistDir, haLogsDir, adminToken: 'admin-token', setupToken: 'setup-token' });
+    app = createRuntimePreviewApp({ frontendDistDir, haLogsDir });
 
     const ready = await app.inject({ method: 'GET', url: '/ready' });
 
@@ -225,7 +198,7 @@ describe('runtime preview app', () => {
     const haLogsDir = await mkdtemp(join(tmpdir(), 'ha-digest-unreadable-ha-logs-'));
     try {
       await chmod(haLogsDir, 0o000);
-      app = createRuntimePreviewApp({ frontendDistDir, haLogsDir, adminToken: 'admin-token', setupToken: 'setup-token' });
+      app = createRuntimePreviewApp({ frontendDistDir, haLogsDir });
 
       const ready = await app.inject({ method: 'GET', url: '/ready' });
 
@@ -240,7 +213,7 @@ describe('runtime preview app', () => {
     const frontendDistDir = await createFrontendDist();
     const haLogsDir = await mkdtemp(join(tmpdir(), 'ha-digest-metadata-only-ha-logs-'));
     await mkdir(join(haLogsDir, 'metadata'));
-    app = createRuntimePreviewApp({ frontendDistDir, haLogsDir, adminToken: 'admin-token', setupToken: 'setup-token' });
+    app = createRuntimePreviewApp({ frontendDistDir, haLogsDir });
 
     const ready = await app.inject({ method: 'GET', url: '/ready' });
 
@@ -255,7 +228,7 @@ describe('runtime preview app', () => {
     await writeFile(logFile, '2026-07-15 safe log line');
     try {
       await chmod(logFile, 0o000);
-      app = createRuntimePreviewApp({ frontendDistDir, haLogsDir, adminToken: 'admin-token', setupToken: 'setup-token' });
+      app = createRuntimePreviewApp({ frontendDistDir, haLogsDir });
 
       const ready = await app.inject({ method: 'GET', url: '/ready' });
 
@@ -270,7 +243,7 @@ describe('runtime preview app', () => {
     const frontendDistDir = await createFrontendDist();
     const close = vi.fn();
     const services = { ...createRuntimePreviewServices(), close };
-    app = createRuntimePreviewApp({ frontendDistDir, adminToken: 'admin-token', setupToken: 'setup-token', services });
+    app = createRuntimePreviewApp({ frontendDistDir, services });
 
     await app.close();
     app = undefined;
@@ -284,15 +257,11 @@ describe('runtime preview app', () => {
     const services = createRuntimePreviewServices();
     services.settings.get = async () => { throw new Error('settings store unavailable'); };
     app = createRuntimePreviewApp({
-      frontendDistDir,
-      adminToken: 'admin-token',
-      setupToken: 'setup-token',
-      services,
+      frontendDistDir, services,
       failureReporter: (event) => events.push(event)
     });
-    const login = await app.inject({ method: 'POST', url: '/api/session', payload: { adminToken: 'admin-token' } });
-
-    const response = await app.inject({ method: 'GET', url: '/api/settings', headers: { cookie: login.headers['set-cookie'] } });
+    const registered = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: 'runtime-test-password', language: 'en' } });
+    const response = await app.inject({ method: 'GET', url: '/api/settings', headers: { cookie: registered.headers['set-cookie'] } });
 
     expect(response.statusCode).toBe(500);
     expect(events).toEqual([expect.objectContaining({ method: 'GET', url: '/api/settings', code: 'INTERNAL_ERROR' })]);
@@ -300,7 +269,14 @@ describe('runtime preview app', () => {
 });
 
 function createRuntimePreviewServices(): BackendApiServices {
+  let password = ''; const sessions = new Map<string, { csrfToken: string; expiresAtMs: number }>();
   return {
+    auth: {
+      hasAdmin: async () => Boolean(password), createAdmin: async (value) => { if (password) return false; password = value; return true; }, verifyPassword: async (value) => value === password,
+      changePassword: async (current, next) => { if (current !== password) return false; password = next; sessions.clear(); return true; }, createSession: async (ttl) => { const id = `runtime-session-${sessions.size}`; const csrfToken = `runtime-csrf-${sessions.size}`; const expiresAtMs = Date.now() + ttl; sessions.set(id, { csrfToken, expiresAtMs }); return { id, csrfToken, expiresAtMs }; },
+      readSession: async (id, csrf) => { const session = sessions.get(id); return session && session.expiresAtMs > Date.now() && (!csrf || csrf === session.csrfToken) ? { id, ...session } : null; }, removeSession: async (id) => { sessions.delete(id); }, issueCsrf: async () => null,
+      loginAllowed: async () => true, recordFailedLogin: async () => undefined, clearFailedLogins: async () => undefined, language: async () => 'en'
+    },
     setup: { async complete(input) { return { haUrl: input.haUrl, ai: { provider: input.aiProvider, keyMask: 'configured', ref: 'preview:ai' }, notifiers: [] }; } },
     settings: { async get() { return { homeAssistant: { url: 'http://homeassistant.local:8123', token: { configured: true, mask: 'configured' } }, ai: { provider: 'gemini' as const, key: { configured: true, mask: 'configured' } }, notifications: { channel: 'none' as const }, schedules: [], privacyLevel: 'balanced' as const, retentionDays: 30 }; }, async update() { return this.get(); } },
     digestJobs: { async enqueue(input) { return { status: 'queued', jobId: `preview:${input.triggerWindowId}` }; }, async get() { return null; }, async retryFailed() { return null; } },

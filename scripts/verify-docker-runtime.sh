@@ -26,8 +26,7 @@ print_timeout_contract() {
 
 app_port=''
 project_name=''
-readonly admin_token="docker-runtime-verification-admin-token"
-readonly setup_token="docker-runtime-verification-setup-token"
+readonly account_password="docker-runtime-verification-password"
 readonly ha_token="docker-runtime-verification-ha-token"
 
 temp_dir=''
@@ -205,8 +204,7 @@ fi
 redact_file() {
   local path="$1"
   sed \
-    -e "s/${admin_token}/[REDACTED]/g" \
-    -e "s/${setup_token}/[REDACTED]/g" \
+    -e "s/${account_password}/[REDACTED]/g" \
     -e "s/${ha_token}/[REDACTED]/g" \
     -e 's/\([Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]: [Bb][Ee][Aa][Rr][Ee][Rr] \)[^[:space:]]*/\1[REDACTED]/g' \
     -e 's/\([Cc][Ss][Rr][Ff][Tt][Oo][Kk][Ee][Nn]\)[=:][^[:space:]]*/\1=[REDACTED]/g' \
@@ -243,8 +241,6 @@ trap 'exit 143' TERM
 
 compose_environment() {
   env \
-    ADMIN_TOKEN="$admin_token" \
-    SETUP_TOKEN="$setup_token" \
     APP_BIND_ADDRESS=127.0.0.1 \
     APP_PORT="$app_port" \
     HA_LOG_FILE="$ha_log_file" \
@@ -255,8 +251,6 @@ compose_environment_with_deadline() {
   local remaining="$1"
   shift
   env \
-    ADMIN_TOKEN="$admin_token" \
-    SETUP_TOKEN="$setup_token" \
     APP_BIND_ADDRESS=127.0.0.1 \
     APP_PORT="$app_port" \
     HA_LOG_FILE="$ha_log_file" \
@@ -265,8 +259,6 @@ compose_environment_with_deadline() {
 
 compose_proxy() {
   env \
-    ADMIN_TOKEN="$admin_token" \
-    SETUP_TOKEN="$setup_token" \
     APP_BIND_ADDRESS=127.0.0.1 \
     APP_PORT="$app_port" \
     HA_LOG_FILE="$ha_log_file" \
@@ -277,8 +269,6 @@ compose_proxy_with_deadline() {
   local remaining="$1"
   shift
   env \
-    ADMIN_TOKEN="$admin_token" \
-    SETUP_TOKEN="$setup_token" \
     APP_BIND_ADDRESS=127.0.0.1 \
     APP_PORT="$app_port" \
     HA_LOG_FILE="$ha_log_file" \
@@ -289,8 +279,6 @@ remove_project_resources() {
   local project="$1"
   local project_port="${2:-$app_port}"
   env \
-    ADMIN_TOKEN="$admin_token" \
-    SETUP_TOKEN="$setup_token" \
     APP_BIND_ADDRESS=127.0.0.1 \
     APP_PORT="$project_port" \
     HA_LOG_FILE="$ha_log_file" \
@@ -413,8 +401,8 @@ assert_local_cookie_contract() {
   curl --silent --show-error --output /dev/null --dump-header "$headers_file" \
     --header 'Content-Type: application/json' \
     --header 'X-Forwarded-Proto: https' \
-    --data "{\"adminToken\":\"${admin_token}\"}" \
-    "http://127.0.0.1:${app_port}/api/session"
+    --data "{\"password\":\"${account_password}\",\"language\":\"en\"}" \
+    "http://127.0.0.1:${app_port}/api/auth/register"
 
   if grep -qi '^set-cookie:.*; Secure' "$headers_file"; then
     printf 'Local mode unexpectedly emitted a Secure cookie.\n' >&2
@@ -428,8 +416,8 @@ assert_reverse_proxy_cookie_contract() {
   curl --silent --show-error --output /dev/null --dump-header "$headers_file" \
     --header 'Content-Type: application/json' \
     --header 'X-Forwarded-Proto: https' \
-    --data "{\"adminToken\":\"${admin_token}\"}" \
-    "http://127.0.0.1:${app_port}/api/session"
+    --data "{\"password\":\"${account_password}\",\"language\":\"en\"}" \
+    "http://127.0.0.1:${app_port}/api/auth/register"
 
   if ! grep -qi '^set-cookie:.*; Secure' "$headers_file"; then
     printf 'Reverse-proxy mode did not emit a Secure cookie for a forwarded HTTPS request.\n' >&2
@@ -481,41 +469,41 @@ json_field() {
 complete_persisted_onboarding() {
   local setup_file="$temp_dir/onboarding-complete.json"
   local cookie_file="$temp_dir/session.cookie"
+  authenticate_session
   curl --fail --silent --show-error \
     --request PATCH \
-    --header "Authorization: Bearer ${setup_token}" \
+    --cookie "$cookie_file" --header "X-CSRF-Token: ${csrf_token}" \
     --header 'Content-Type: application/json' \
     --data "{\"step\":\"home_assistant\",\"draft\":{\"haUrl\":\"http://fake-ha:8123\"},\"secrets\":{\"haToken\":\"${ha_token}\"}}" \
     "http://127.0.0.1:${app_port}/api/onboarding" >/dev/null
   curl --fail --silent --show-error \
     --request PATCH \
-    --header "Authorization: Bearer ${setup_token}" \
+    --cookie "$cookie_file" --header "X-CSRF-Token: ${csrf_token}" \
     --header 'Content-Type: application/json' \
     --data '{"step":"ai_provider","draft":{"aiProvider":"gemini"},"secrets":{"aiKey":"fixture-ai-key"}}' \
     "http://127.0.0.1:${app_port}/api/onboarding" >/dev/null
   curl --fail --silent --show-error \
     --request PATCH \
-    --header "Authorization: Bearer ${setup_token}" \
+    --cookie "$cookie_file" --header "X-CSRF-Token: ${csrf_token}" \
     --header 'Content-Type: application/json' \
     --data '{"step":"notifications","draft":{"notifier":"markdown"},"secrets":{}}' \
     "http://127.0.0.1:${app_port}/api/onboarding" >/dev/null
   curl --fail --silent --show-error \
     --request PATCH \
-    --header "Authorization: Bearer ${setup_token}" \
+    --cookie "$cookie_file" --header "X-CSRF-Token: ${csrf_token}" \
     --header 'Content-Type: application/json' \
     --data '{"step":"schedule","draft":{"dailyTime":"08:00","timezone":"Europe/Madrid"},"secrets":{}}' \
     "http://127.0.0.1:${app_port}/api/onboarding" >/dev/null
   curl --fail --silent --show-error \
     --request PATCH \
-    --header "Authorization: Bearer ${setup_token}" \
+    --cookie "$cookie_file" --header "X-CSRF-Token: ${csrf_token}" \
     --header 'Content-Type: application/json' \
     --data '{"step":"privacy","draft":{"privacyLevel":"balanced","retentionDays":90,"privacyAccepted":true},"secrets":{}}' \
     "http://127.0.0.1:${app_port}/api/onboarding" >/dev/null
-  curl --fail --silent --show-error --cookie-jar "$cookie_file" --output "$setup_file" \
-    --header "Authorization: Bearer ${setup_token}" \
+  curl --fail --silent --show-error --cookie "$cookie_file" --output "$setup_file" \
+    --header "X-CSRF-Token: ${csrf_token}" \
     --header 'Content-Type: application/json' \
     --data '{}' "http://127.0.0.1:${app_port}/api/onboarding/complete"
-  csrf_token="$(json_field "$setup_file" csrfToken)"
 }
 
 configure_fake_provider_for_verification() {
@@ -526,7 +514,7 @@ configure_fake_provider_for_verification() {
     const row = db.prepare("select value_json from settings where key = ?").get("runtime");
     if (!row) throw new Error("Verification settings were not persisted.");
     const settings = JSON.parse(row.value_json);
-    settings.secretRefs.aiKeyRef = "unconfigured:docker-runtime-verification";
+    settings.aiProvider = "ollama";
     db.prepare("update settings set value_json = ?, updated_at = ? where key = ?")
       .run(JSON.stringify(settings), new Date().toISOString(), "runtime");
     db.close();
@@ -537,7 +525,7 @@ authenticate_session() {
   local session_file="$temp_dir/session.json"
   curl --fail --silent --show-error --cookie-jar "$temp_dir/session.cookie" --output "$session_file" \
     --header 'Content-Type: application/json' \
-    --data "{\"adminToken\":\"${admin_token}\"}" \
+    --data "{\"password\":\"${account_password}\"}" \
     "http://127.0.0.1:${app_port}/api/session"
   csrf_token="$(json_field "$session_file" csrfToken)"
 }
@@ -591,7 +579,7 @@ assert_fake_ha_analysis() {
   run_quietly compose_environment restart app
   wait_for_http_status 200
   authenticate_session
-  curl --silent --show-error --fail --header "Authorization: Bearer ${setup_token}" \
+  curl --silent --show-error --fail --cookie "$temp_dir/session.cookie" \
     "http://127.0.0.1:${app_port}/api/onboarding" >"$temp_dir/restarted-onboarding.json"
   grep -F '"completed":true' "$temp_dir/restarted-onboarding.json" >/dev/null
   curl --silent --show-error --fail --cookie "$temp_dir/session.cookie" \
@@ -608,10 +596,11 @@ assert_fake_ha_analysis() {
 
   local before_count after_count failed_job_id
   before_count="$(history_count)"
-  run_quietly compose_environment exec -T fake-ha node -e 'fetch("http://127.0.0.1:8123/control/fail", { method: "POST" }).then((response) => process.exit(response.status === 204 ? 0 : 1))'
+  chmod 000 "$ha_log_file"
   run_authenticated_analysis "$temp_dir/failed-analysis.json"
   failed_job_id="$(json_field "$temp_dir/failed-analysis.json" jobId)"
   wait_for_job_state "$failed_job_id" failed
+  chmod 0644 "$ha_log_file"
   after_count="$(history_count)"
   [[ "$before_count" == "$after_count" ]]
   printf 'Verified fake-HA source failure without a new report.\n'
@@ -629,8 +618,8 @@ assert_startup_failure_is_logged() {
     test -s /data/logs/runtime.log
     grep -F runtime_startup_failure /data/logs/runtime.log >/dev/null
     grep -F runtime_startup_failed /data/logs/runtime.log >/dev/null
-    if grep -Fq docker-runtime-verification-admin-token /data/logs/runtime.log || grep -Fq docker-runtime-verification-setup-token /data/logs/runtime.log; then
-      printf "Startup log leaked a verification token.\n" >&2
+    if grep -Fq docker-runtime-verification-password /data/logs/runtime.log; then
+      printf "Startup log leaked a verification password.\n" >&2
       exit 1
     fi
   '
@@ -693,6 +682,8 @@ main() {
   release_port_reservation
 
   printf 'Validating local Docker runtime mode.\n'
+  # Once this workspace has a Compose project name, signal cleanup must always
+  # attempt to remove any owned resources, including during config validation.
   compose_started=true
   run_quietly compose_environment config --quiet
   start_local_compose

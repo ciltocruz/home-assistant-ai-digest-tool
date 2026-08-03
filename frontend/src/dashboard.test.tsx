@@ -3,11 +3,13 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { ApiClientError } from './api-client.js';
 import { Dashboard, DashboardHistory, loadDigestHistory, type DashboardApi } from './dashboard.js';
+import { setLocale } from './i18n/index.js';
 
 Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: true, value: true });
+beforeEach(() => setLocale('es'));
 
 const historyItem = {
   id: 'digest-1',

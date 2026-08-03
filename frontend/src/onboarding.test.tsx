@@ -4,8 +4,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { readFileSync } from 'node:fs';
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { ApiClientError } from './api-client.js';
+import { setLocale } from './i18n/index.js';
 import {
   OnboardingFlow,
   advanceOnboardingStep,
@@ -33,6 +34,7 @@ const validDraft = {
 Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: true, value: true });
 
 const mountedRoots: Root[] = [];
+beforeEach(() => setLocale('es'));
 
 afterEach(() => {
   for (const root of mountedRoots.splice(0)) {
@@ -62,7 +64,7 @@ describe('onboarding flow', () => {
     expect(JSON.stringify(restored)).not.toContain(validDraft.haToken);
     expect(JSON.stringify(restored)).not.toContain(validDraft.aiKey);
   });
-  test('renders only the active Spanish onboarding step without echoing secrets', () => {
+  test('renders the current onboarding step without echoing future secret fields', () => {
     const html = renderToStaticMarkup(<OnboardingFlow state={createInitialOnboardingState()} />);
 
     expect(html).toContain('Conecta Home Assistant');
@@ -70,9 +72,8 @@ describe('onboarding flow', () => {
     expect(html).toContain('Canal de aviso');
     expect(html).toContain('Horario');
     expect(html).toContain('Privacidad');
-    expect(html).toContain('Primer informe');
     expect(html).toContain('Token de Home Assistant');
-    expect(html).toContain('Necesitamos acceder a Home Assistant');
+    expect(html).toContain('Añade la URL y un token de acceso de larga duración');
     expect(html).not.toContain('Clave del proveedor');
     expect(html).not.toContain('Token del bot de Telegram');
     expect(html).not.toContain('Hora del informe');
@@ -94,13 +95,13 @@ describe('onboarding flow', () => {
 
   test('shows an actionable error instead of silently returning when setup API is missing', async () => {
     const { container } = await mountOnboardingFlow(undefined);
-    const form = container.querySelector<HTMLFormElement>('form.onboarding-flow');
+    const form = container.querySelector<HTMLFormElement>('form[aria-label="Configuración guiada"]');
     if (!form) throw new Error('Expected onboarding form to render.');
 
     await act(async () => form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true })));
 
-    expect(container.textContent).toContain('falta SETUP_TOKEN');
-    expect(container.textContent?.match(/falta SETUP_TOKEN/g)).toHaveLength(1);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('Authenticated onboarding is unavailable');
+    expect(container.textContent).not.toContain(validDraft.haToken);
     expect(container.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(false);
   });
 
@@ -165,7 +166,7 @@ describe('onboarding flow', () => {
     expect(result.errors.retentionDays).toContain('Usa entre 1 y 3650 días de retención.');
   });
 
-  test('keeps schedule/privacy controls in the draft and hard-coded setup rail counts out of the slice', () => {
+  test('keeps schedule/privacy controls in the draft and supports a narrow onboarding viewport', () => {
     const css = readFileSync('frontend/src/styles.css', 'utf8');
 
     expect(createInitialOnboardingState().draft).toMatchObject({
@@ -174,8 +175,8 @@ describe('onboarding flow', () => {
       privacyLevel: 'balanced',
       retentionDays: '90'
     });
-    expect(css).not.toContain('repeat(4, minmax(0, 1fr))');
-    expect(css).toContain('auto-fit');
+    expect(css).toContain('@media (max-width: 768px)');
+    expect(css).toContain('.onboarding-root');
   });
 
   test('blocks step progression with field-level errors until required input exists', () => {
@@ -245,7 +246,7 @@ describe('onboarding flow', () => {
       runDigest: vi.fn(async () => ({ jobId: 'job-first-digest', status: 'queued' as const }))
     };
     const { container } = await mountOnboardingFlow(api);
-    const form = container.querySelector<HTMLFormElement>('form.onboarding-flow');
+    const form = container.querySelector<HTMLFormElement>('form[aria-label="Configuración guiada"]');
     const button = container.querySelector<HTMLButtonElement>('button[type="submit"]');
     if (!form || !button) throw new Error('Expected onboarding form and submit button to render.');
 
@@ -287,15 +288,15 @@ describe('onboarding flow', () => {
       runDigest: vi.fn(async () => ({ jobId: 'job-first-digest', status: 'queued' as const }))
     };
     const { container } = await mountOnboardingFlow(api);
-    const form = container.querySelector<HTMLFormElement>('form.onboarding-flow');
+    const form = container.querySelector<HTMLFormElement>('form[aria-label="Configuración guiada"]');
     if (!form) throw new Error('Expected onboarding form to render.');
 
     await act(async () => {
       form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }));
     });
 
-    const button = container.querySelector<HTMLButtonElement>('button[type="submit"]');
-    expect(button?.disabled).toBe(true);
+    expect(container.textContent).toContain('Configuración guardada');
+    expect(container.querySelector('button[type="submit"]')).toBeNull();
 
     await act(async () => {
       form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }));

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { type DigestHistoryResponse, type DigestSummary } from '@ha-digest/shared';
 import { ApiClientError, redactSensitiveText } from './api-client.js';
-import { t } from './i18n/index.js';
+import { currentLocale, t } from './i18n/index.js';
 
 export type DashboardApi = {
   listHistory(): Promise<DigestHistoryResponse>;
@@ -173,9 +173,10 @@ function analysisWindowLabel(item: DigestSummary): string {
 
 function formatDateTime(value: string): string {
   const date = new Date(value);
-  const day = new Intl.DateTimeFormat('es-ES', { day: 'numeric', timeZone: 'UTC' }).format(date);
-  const month = new Intl.DateTimeFormat('es-ES', { month: 'short', timeZone: 'UTC' }).format(date).replace('.', '');
-  const year = new Intl.DateTimeFormat('es-ES', { year: 'numeric', timeZone: 'UTC' }).format(date);
-  const time = new Intl.DateTimeFormat('es-ES', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' }).format(date);
+  const locale = currentLocale() === 'es' ? 'es-ES' : 'en-GB';
+  const day = new Intl.DateTimeFormat(locale, { day: 'numeric', timeZone: 'UTC' }).format(date);
+  const month = new Intl.DateTimeFormat(locale, { month: 'short', timeZone: 'UTC' }).format(date).replace('.', '');
+  const year = new Intl.DateTimeFormat(locale, { year: 'numeric', timeZone: 'UTC' }).format(date);
+  const time = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' }).format(date);
   return `${day} ${month} ${year}, ${time}`;
 }

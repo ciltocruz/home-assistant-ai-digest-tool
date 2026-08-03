@@ -4,18 +4,16 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { BackendApiServices, BackendAuthOptions, CreateAppOptions } from './http/app.js';
 import { createApp } from './http/app.js';
 import { createPersistentRuntimeServices } from './runtime-persistence.js';
+import type { SetupValidationRequest } from '@ha-digest/shared';
 
 export type RuntimePreviewOptions = {
   frontendDistDir: string;
   haLogsDir?: string;
-  adminToken: string;
-  setupToken: string;
   sessionTtlMs?: number;
   secureCookies?: boolean;
   trustProxy?: boolean;
   now?: () => string;
   failureReporter?: CreateAppOptions['failureReporter'];
-  injectSetupToken?: boolean;
 };
 
 type RuntimeCheck = { status: 'ready' } | { status: 'degraded'; reason: string };
@@ -50,7 +48,6 @@ export function createRuntimePreviewApp(options: RuntimePreviewAppOptions): Fast
     publicRequest: (request) => isRuntimePublicRequest(request.url)
   });
   const frontendRoot = resolve(options.frontendDistDir);
-  const htmlSetupToken = options.injectSetupToken === false ? undefined : options.setupToken;
 
   app.addHook('onSend', async (_request, reply) => {
     reply.header('x-content-type-options', 'nosniff');
@@ -75,7 +72,7 @@ export function createRuntimePreviewApp(options: RuntimePreviewAppOptions): Fast
       return reply.code(404).send({ code: 'NOT_FOUND', message: 'Route not found.', requestId: request.id });
     }
 
-    return serveFrontend(request, reply, frontendRoot, htmlSetupToken);
+    return serveFrontend(request, reply, frontendRoot);
   });
 
   if (services.close) app.addHook('onClose', async () => services.close?.());
@@ -89,8 +86,6 @@ function isRuntimePublicRequest(url: string): boolean {
 
 function createPreviewAuth(options: RuntimePreviewOptions): BackendAuthOptions {
   return {
-    adminToken: options.adminToken,
-    setupToken: options.setupToken,
     sessionTtlMs: options.sessionTtlMs ?? 8 * 60 * 60 * 1000,
     secureCookies: options.secureCookies
   };
@@ -100,10 +95,11 @@ function createPreviewServices(now = () => new Date().toISOString()): BackendApi
   return {
     setup: {
       async complete(input) {
+        const setup = input as SetupValidationRequest;
         return {
-          haUrl: input.haUrl,
-          ai: { provider: input.aiProvider, keyMask: 'configured', ref: 'preview:ai' },
-          notifiers: input.telegram
+          haUrl: setup.haUrl,
+          ai: { provider: setup.aiProvider, keyMask: 'configured', ref: 'preview:ai' },
+          notifiers: setup.telegram
             ? [{ id: 'preview-telegram', channel: 'telegram', targetRef: 'preview:telegram', label: 'Telegram preview', secretMask: 'configured' }]
             : []
         };
@@ -148,19 +144,19 @@ function createPreviewServices(now = () => new Date().toISOString()): BackendApi
   };
 }
 
-async function serveFrontend(request: FastifyRequest, reply: FastifyReply, frontendRoot: string, setupToken: string | undefined): Promise<FastifyReply> {
+async function serveFrontend(request: FastifyRequest, reply: FastifyReply, frontendRoot: string): Promise<FastifyReply> {
   const pathname = new URL(request.url, 'http://preview.local').pathname;
   const requested = pathname === '/' ? 'index.html' : decodeURIComponent(pathname.slice(1));
   const filePath = safeJoin(frontendRoot, requested);
   if (!filePath) return reply.code(404).send('Not found');
 
   const file = await readExistingFile(filePath);
-  if (file) return sendFile(reply, filePath, file, setupToken);
+  if (file) return sendFile(reply, filePath, file);
   if (extname(pathname)) return reply.code(404).send('Not found');
 
   const index = await readExistingFile(join(frontendRoot, 'index.html'));
   if (!index) return reply.code(404).send('Frontend build not found. Run `pnpm -C frontend build` first.');
-  return sendFile(reply, join(frontendRoot, 'index.html'), index, setupToken);
+  return sendFile(reply, join(frontendRoot, 'index.html'), index);
 }
 
 function safeJoin(root: string, requested: string): string | null {
@@ -213,21 +209,9 @@ async function canOpenForRead(path: string): Promise<boolean> {
   }
 }
 
-function sendFile(reply: FastifyReply, filePath: string, file: Buffer, setupToken: string | undefined): FastifyReply {
+function sendFile(reply: FastifyReply, filePath: string, file: Buffer): FastifyReply {
   const type = contentType(filePath);
-  if (type.startsWith('text/html') && setupToken) return reply.type(type).send(injectBootstrap(file.toString('utf8'), setupToken));
   return reply.type(type).send(file);
-}
-
-function injectBootstrap(html: string, setupToken: string): string {
-  const script = `<script>window.__HA_DIGEST_BOOTSTRAP__=${safeJson({ setupToken })};</script>`;
-  if (html.includes('</head>')) return html.replace('</head>', `${script}</head>`);
-  if (html.includes('<body')) return html.replace(/<body([^>]*)>/i, `<body$1>${script}`);
-  return `${script}${html}`;
-}
-
-function safeJson(value: unknown): string {
-  return JSON.stringify(value).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
 }
 
 function contentType(filePath: string): string {

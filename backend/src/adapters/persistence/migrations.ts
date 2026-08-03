@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-const MIGRATION_VERSION = 4;
+const MIGRATION_VERSION = 5;
 
 export function runMigrations(db: DatabaseSync): void {
   db.exec('pragma foreign_keys = on');
@@ -122,6 +122,7 @@ function applyMigrations(db: DatabaseSync): void {
   `);
   addDigestJobColumns(db);
   addV2BatchTables(db);
+  addAuthenticationTables(db);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(1);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(2);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(3);
@@ -136,6 +137,32 @@ function applyMigrations(db: DatabaseSync): void {
        case when exists(select 1 from settings where key = 'runtime' and value_json not like '%unconfigured%') then 1 else 0 end,
        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`
   ).run();
+}
+
+function addAuthenticationTables(db: DatabaseSync): void {
+  db.exec(`
+    create table if not exists admin_accounts (
+      id text primary key,
+      password_hash text not null,
+      language text not null default 'en',
+      created_at text not null,
+      updated_at text not null
+    );
+    create table if not exists auth_sessions (
+      id_hash text primary key,
+      csrf_hash text not null,
+      account_id text not null references admin_accounts(id) on delete cascade,
+      expires_at text not null,
+      created_at text not null
+    );
+    create index if not exists idx_auth_sessions_expiry on auth_sessions(expires_at);
+    create table if not exists login_attempts (
+      id integer primary key,
+      subject text not null,
+      attempted_at text not null
+    );
+    create index if not exists idx_login_attempts_subject on login_attempts(subject, attempted_at);
+  `);
 }
 
 function addDigestJobColumns(db: DatabaseSync): void {

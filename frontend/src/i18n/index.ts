@@ -1,7 +1,7 @@
 import enResource from './locales/en.json' with { type: 'json' };
 import esResource from './locales/es.json' with { type: 'json' };
 
-export const defaultLocale = 'es';
+export const defaultLocale = 'en';
 
 type LocaleShape<T> = {
   readonly [K in keyof T]: T[K] extends string ? string : LocaleShape<T[K]>;
@@ -19,6 +19,14 @@ export type Locale = keyof typeof messages;
 export type MessageCatalog = typeof es;
 export type TranslationKey = LeafPath<MessageCatalog>;
 
+let activeLocale: Locale = defaultLocale;
+export function setLocale(locale: Locale): void {
+  activeLocale = locale;
+  if (typeof document !== 'undefined') document.documentElement.lang = locale === 'es' ? 'es-ES' : 'en';
+  if (typeof localStorage !== 'undefined') localStorage.setItem('ha-digest-locale', locale);
+}
+export function currentLocale(): Locale { return activeLocale; }
+
 type LeafPath<T> = T extends string
   ? never
   : {
@@ -26,7 +34,7 @@ type LeafPath<T> = T extends string
     }[keyof T & string];
 
 export function t(key: TranslationKey): string {
-  return tForLocale(defaultLocale, key);
+  return tForLocale(activeLocale, key);
 }
 
 export function tForLocale(locale: Locale, key: TranslationKey): string {

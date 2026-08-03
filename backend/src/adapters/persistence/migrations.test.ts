@@ -17,10 +17,10 @@ describe('SQLite migrations', () => {
       .map((row) => (row as { name: string }).name);
 
     expect(tables).toEqual(
-      expect.arrayContaining(['deliveries', 'digest_jobs', 'ignore_rules', 'notes', 'onboarding_state', 'reports', 'schedule_state', 'secrets', 'settings', 'v2_log_cursor', 'v2_reports', 'v2_runs', 'v2_signatures'])
+      expect.arrayContaining(['admin_accounts', 'auth_sessions', 'deliveries', 'digest_jobs', 'ignore_rules', 'login_attempts', 'notes', 'onboarding_state', 'reports', 'schedule_state', 'secrets', 'settings', 'v2_log_cursor', 'v2_reports', 'v2_runs', 'v2_signatures'])
     );
     expect(db.prepare('select version from schema_migrations').all().map((row) => ({ ...(row as { version: number }) }))).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }
     ]);
   });
 
@@ -44,7 +44,7 @@ describe('SQLite migrations', () => {
     runMigrations(db);
 
     expect(db.prepare('select version from schema_migrations').all().map((row) => ({ ...(row as { version: number }) }))).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }
     ]);
   });
 

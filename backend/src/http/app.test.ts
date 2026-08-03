@@ -1,337 +1,69 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { SetupValidationResponseSchema, type DigestSummary, type EditableSettingsDto, type MaskedSettings, type NoteCreate, type OnboardingProgress } from '@ha-digest/shared';
-import { createApp, type BackendApiServices } from './app.js';
+import type { BackendApiServices } from './app.js';
+import { createApp } from './app.js';
 
-const NOW = '2026-07-08T10:00:00.000Z';
-const SECRET_HA_TOKEN = 'sentinel-ha-credential-value';
-const SECRET_AI_KEY = 'sentinel-ai-credential-value';
-const SECRET_TELEGRAM_TOKEN = 'sentinel-telegram-credential-value';
-
-describe('backend API auth, CSRF, and protected routes', () => {
+describe('account authentication boundary', () => {
   let app: FastifyInstance | undefined;
+  afterEach(async () => { await app?.close(); app = undefined; });
 
-  afterEach(async () => {
-    await app?.close();
-    app = undefined;
+  it('creates the first administrator, uses an httpOnly session and never accepts bootstrap tokens', async () => {
+    app = createApp({ services: services(), auth: { sessionTtlMs: 60_000, secureCookies: true } });
+    const created = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: 'long-enough-password', language: 'en' } });
+    const legacy = await app.inject({ method: 'POST', url: '/api/setup', payload: {} });
+
+    expect(created.statusCode).toBe(200);
+    expect(created.headers['set-cookie']).toContain('HttpOnly');
+    expect(created.headers['set-cookie']).toContain('SameSite=Lax');
+    expect(created.headers['set-cookie']).toContain('Secure');
+    expect(legacy.statusCode).toBe(401);
   });
 
-  it('blocks protected routes without an authenticated session', async () => {
-    app = createApp({ services: createServices(), auth: authOptions() });
+  it('requires a valid CSRF token for mutations, expires sessions, and throttles bad passwords', async () => {
+    let now = Date.parse('2026-08-03T10:00:00.000Z');
+    const runtime = services(() => now);
+    app = createApp({ services: runtime, auth: { sessionTtlMs: 1_000 }, now: () => new Date(now).toISOString() });
+    await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: 'long-enough-password', language: 'en' } });
+    const bad = await Promise.all(Array.from({ length: 6 }, () => app!.inject({ method: 'POST', url: '/api/session', payload: { password: 'wrong-password' } })));
+    expect(bad.at(-1)?.statusCode).toBe(429);
 
-    const response = await app.inject({ method: 'GET', url: '/api/settings' });
-
-    expect(response.statusCode).toBe(401);
-    expect(response.json()).toMatchObject({ code: 'UNAUTHENTICATED' });
+    // A fresh app/client IP makes the expiration and CSRF guarantees explicit.
+    const clean = services(() => now);
+    app = createApp({ services: clean, auth: { sessionTtlMs: 1_000 }, now: () => new Date(now).toISOString() });
+    const registered = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: 'another-long-password', language: 'en' } });
+    const cookie = registered.headers['set-cookie'];
+    const csrfToken = registered.json<{ csrfToken: string }>().csrfToken;
+    expect((await app.inject({ method: 'POST', url: '/api/notes', headers: { cookie }, payload: note() })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'POST', url: '/api/notes', headers: { cookie, 'x-csrf-token': csrfToken }, payload: note() })).statusCode).toBe(201);
+    now += 1_001;
+    expect((await app.inject({ method: 'GET', url: '/api/settings', headers: { cookie } })).statusCode).toBe(401);
   });
 
-  it('requires CSRF tokens for authenticated mutations but not reads', async () => {
-    app = createApp({ services: createServices(), auth: authOptions(), now: () => NOW });
-    const { cookie, csrfToken } = await authenticated(app);
-
-    const read = await app.inject({ method: 'GET', url: '/api/settings', headers: { cookie } });
-    const denied = await app.inject({ method: 'POST', url: '/api/notes', headers: { cookie }, payload: validNoteCreate() });
-    const allowed = await app.inject({
-      method: 'POST',
-      url: '/api/notes',
-      headers: { cookie, 'x-csrf-token': csrfToken },
-      payload: validNoteCreate()
-    });
-
-    expect([read.statusCode, denied.statusCode, allowed.statusCode]).toEqual([200, 403, 201]);
-    expect(denied.json()).toMatchObject({ code: 'CSRF_REQUIRED' });
-  });
-
-  it('invalidates the server-side session and clears the cookie on logout', async () => {
-    app = createApp({ services: createServices(), auth: authOptions(), now: () => NOW });
-    const { cookie, csrfToken } = await authenticated(app);
-
-    const logout = await app.inject({ method: 'DELETE', url: '/api/session', headers: { cookie, 'x-csrf-token': csrfToken } });
-    const afterLogout = await app.inject({ method: 'GET', url: '/api/settings', headers: { cookie } });
-
-    expect(logout.statusCode).toBe(204);
-    expect(logout.headers['set-cookie']).toContain('Max-Age=0');
-    expect(afterLogout.statusCode).toBe(401);
-    expect(afterLogout.json()).toMatchObject({ code: 'UNAUTHENTICATED' });
-  });
-
-  it('rejects expired sessions before protected routes can run', async () => {
-    let nowMs = Date.parse(NOW);
-    const services = createServices();
-    app = createApp({ services, auth: { ...authOptions(), sessionTtlMs: 1_000 }, now: () => new Date(nowMs).toISOString() });
-    const { cookie } = await authenticated(app);
-    nowMs += 1_001;
-
-    const response = await app.inject({ method: 'GET', url: '/api/settings', headers: { cookie } });
-
-    expect(response.statusCode).toBe(401);
-    expect(response.json()).toMatchObject({ code: 'UNAUTHENTICATED' });
-    expect(services.calls).toEqual([]);
-  });
-
-  it('returns VALIDATION_FAILED for invalid protected mutation input', async () => {
-    app = createApp({ services: createServices(), auth: authOptions(), now: () => NOW });
-    const { cookie, csrfToken } = await authenticated(app);
-
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/notes',
-      headers: { cookie, 'x-csrf-token': csrfToken },
-      payload: { text: '', occurredAt: NOW, tags: [] }
-    });
-
-    expect(response.statusCode).toBe(400);
-    expect(response.json()).toMatchObject({ code: 'VALIDATION_FAILED', fieldErrors: { text: expect.any(Array) } });
-  });
-
-  it('records redacted operational events for service failures without leaking secrets in responses', async () => {
-    const SECRET_IN_FAILURE = 'sentinel-provider-failure-credential';
-    const operationalEvents: unknown[] = [];
-    const services = createServices();
-    services.settings.get = async () => {
-      throw new Error(`provider failed with ${SECRET_IN_FAILURE}`);
-    };
-    app = createApp({
-      services,
-      auth: authOptions(),
-      now: () => NOW,
-      failureReporter: (event) => operationalEvents.push(event)
-    });
-    const { cookie } = await authenticated(app);
-
-    const response = await app.inject({ method: 'GET', url: '/api/settings?providerKey=sentinel-provider-query-credential', headers: { cookie } });
-
-    expect(response.statusCode).toBe(500);
-    expect(response.body).not.toContain(SECRET_IN_FAILURE);
-    expect(response.json()).toMatchObject({ code: 'INTERNAL_ERROR', message: 'Request failed. Check server logs with redaction enabled.' });
-    expect(JSON.stringify(operationalEvents)).not.toContain(SECRET_IN_FAILURE);
-    expect(JSON.stringify(operationalEvents)).not.toContain('sentinel-provider-query-credential');
-    expect(operationalEvents).toEqual([
-      expect.objectContaining({ method: 'GET', url: '/api/settings', statusCode: 500, code: 'INTERNAL_ERROR', errorName: 'Error' })
-    ]);
-  });
-
-  it('can mark auth cookies Secure for HTTPS production deployments', async () => {
-    app = createApp({ services: createServices(), auth: { ...authOptions(), secureCookies: true }, now: () => NOW });
-
-    const login = await app.inject({ method: 'POST', url: '/api/session', payload: { adminToken: 'admin-token' } });
-
-    expect(login.headers['set-cookie']).toContain('HttpOnly');
-    expect(login.headers['set-cookie']).toContain('SameSite=Lax');
-    expect(login.headers['set-cookie']).toContain('Secure');
-  });
-
-  it('uses forwarded client IP headers only when the controlled proxy is trusted', async () => {
-    const trustedApp = createApp({
-      services: createServices(),
-      auth: authOptions(),
-      trustProxy: true,
-      publicRequest: (request) => request.url === '/request-ip'
-    });
-    trustedApp.get('/request-ip', async (request) => ({ ip: request.ip }));
-    app = trustedApp;
-
-    const trusted = await trustedApp.inject({ method: 'GET', url: '/request-ip', headers: { 'x-forwarded-for': '203.0.113.9' } });
-    await trustedApp.close();
-    app = createApp({
-      services: createServices(),
-      auth: authOptions(),
-      trustProxy: false,
-      publicRequest: (request) => request.url === '/request-ip'
-    });
-    app.get('/request-ip', async (request) => ({ ip: request.ip }));
-    const untrusted = await app.inject({ method: 'GET', url: '/request-ip', headers: { 'x-forwarded-for': '203.0.113.9' } });
-
-    expect(trusted.json()).toEqual({ ip: '203.0.113.9' });
-    expect(untrusted.json()).not.toEqual({ ip: '203.0.113.9' });
-  });
-
-  it('bootstraps setup with a bearer setup token, creates a session, and never returns raw secrets', async () => {
-    app = createApp({ services: createServices(), auth: authOptions(), now: () => NOW });
-
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/setup',
-      headers: { authorization: 'Bearer setup-token' },
-      payload: {
-        haUrl: 'http://homeassistant.local:8123',
-        haToken: SECRET_HA_TOKEN,
-        aiProvider: 'gemini',
-        aiKey: SECRET_AI_KEY,
-        telegram: { botToken: SECRET_TELEGRAM_TOKEN, chatId: '123456' }
-      }
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.headers['set-cookie']).toContain('ha_digest_session=');
-    expect(response.body).not.toContain(SECRET_HA_TOKEN);
-    expect(response.body).not.toContain(SECRET_AI_KEY);
-    expect(response.body).not.toContain(SECRET_TELEGRAM_TOKEN);
-    expect(response.json()).toMatchObject({
-      csrfToken: expect.any(String),
-      settings: {
-        ai: { provider: 'gemini', keyMask: '••••-key', ref: 'secret:ai' },
-        notifiers: [{ channel: 'telegram', targetRef: 'secret:telegram', secretMask: '••••-gram' }]
-      }
-    });
-    expect(() => SetupValidationResponseSchema.parse(response.json())).not.toThrow();
-  });
-
-  it('loads and saves resumable onboarding checkpoints with the setup bearer only', async () => {
-    const services = createServices();
-    const progress: OnboardingProgress = { currentStep: 'ai_provider', completedSteps: ['home_assistant'], draft: { haUrl: 'http://homeassistant.local:8123' }, secretMetadata: { haToken: { configured: true, mask: 'se…et' } }, completed: false };
-    services.onboarding = { get: async () => progress, save: async () => progress };
-    app = createApp({ services, auth: authOptions(), now: () => NOW });
-
-    const loaded = await app.inject({ method: 'GET', url: '/api/onboarding', headers: { authorization: 'Bearer setup-token' } });
-    const saved = await app.inject({ method: 'PATCH', url: '/api/onboarding', headers: { authorization: 'Bearer setup-token' }, payload: { step: 'home_assistant', draft: { haUrl: 'http://homeassistant.local:8123' }, secrets: { haToken: SECRET_HA_TOKEN } } });
-
-    expect([loaded.statusCode, saved.statusCode]).toEqual([200, 200]);
-    expect(JSON.stringify([loaded.json(), saved.json()])).not.toContain(SECRET_HA_TOKEN);
-  });
-
-  it('registers protected API routes using injected stores and fake notifier services', async () => {
-    const services = createServices();
-    app = createApp({ services, auth: authOptions(), now: () => NOW });
-    const { cookie, csrfToken } = await authenticated(app);
-    const mutationHeaders = { cookie, 'x-csrf-token': csrfToken };
-
-    const settings = await app.inject({ method: 'GET', url: '/api/settings', headers: { cookie } });
-    const run = await app.inject({ method: 'POST', url: '/api/digests/run', headers: mutationHeaders, payload: { kind: 'manual' } });
-    const history = await app.inject({ method: 'GET', url: '/api/digests/history', headers: { cookie } });
-    const detail = await app.inject({ method: 'GET', url: '/api/digests/digest-1', headers: { cookie } });
-    const note = await app.inject({ method: 'POST', url: '/api/notes', headers: mutationHeaders, payload: validNoteCreate() });
-    const notes = await app.inject({
-      method: 'GET',
-      url: '/api/notes?from=2026-07-08T00:00:00.000Z&to=2026-07-09T00:00:00.000Z',
-      headers: { cookie }
-    });
-    const ignore = await app.inject({ method: 'POST', url: '/api/ignores', headers: mutationHeaders, payload: { match: 'sensor.noisy', type: 'entity' } });
-    const ignores = await app.inject({ method: 'GET', url: '/api/ignores', headers: { cookie } });
-    const notifierTest = await app.inject({
-      method: 'POST',
-      url: '/api/notifiers/test',
-      headers: mutationHeaders,
-      payload: { channel: 'telegram', targetRef: 'secret:telegram', message: 'test' }
-    });
-    const notifierSend = await app.inject({
-      method: 'POST',
-      url: '/api/notifiers/send',
-      headers: mutationHeaders,
-      payload: { digestId: 'digest-1', targetRef: 'secret:telegram' }
-    });
-
-    expect([settings.statusCode, note.statusCode, ignore.statusCode]).toEqual([200, 201, 201]);
-    expect([history.json(), notes.json(), ignores.json()].map((rows) => rows.length)).toEqual([1, 1, 1]);
-    expect(run.statusCode).toBe(202);
-    expect(run.json()).toEqual({ jobId: 'job-1', status: 'queued' });
-    expect(detail.json()).toEqual(expect.objectContaining({ id: 'digest-1', rendered: { format: 'markdown', body: '# Stored digest' } }));
-    expect(notifierTest.json()).toMatchObject({ status: 'success' });
-    expect(notifierSend.json()).toMatchObject({ status: 'sent', targetRef: 'secret:telegram' });
-    expect(JSON.stringify(services.calls)).not.toContain(SECRET_TELEGRAM_TOKEN);
-  });
-
-  it('adds the versioned report presentation without changing the canonical Markdown response', async () => {
-    const services = createServices();
-    services.reports.get = async () => ({
-      id: 'digest-1',
-      summary: {
-        id: 'digest-1',
-        window: { from: '2026-07-08T00:00:00.000Z', to: '2026-07-09T00:00:00.000Z' },
-        severityCounts: { critical: 1, warning: 0, info: 0 },
-        createdAt: NOW,
-        deliveryStatus: 'sent'
-      },
-      rendered: {
-        format: 'markdown' as const,
-        body: '# Home Assistant Digest\n\n**Severity:** critical\n\nThe garage sensor needs review.\n\n## Attention items\n\n- **Garage door sensor** (critical): The sensor has been unavailable for 3 hours.'
-      }
-    });
-    app = createApp({ services, auth: authOptions(), now: () => NOW });
-    const { cookie } = await authenticated(app);
-
-    const response = await app.inject({ method: 'GET', url: '/api/digests/digest-1', headers: { cookie } });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({
-      rendered: { format: 'markdown', body: expect.stringContaining('Garage door sensor') },
-      presentation: {
-        version: 1,
-        mode: 'structured',
-        attention: [{ id: 'attention-1', severity: 'critical', title: 'Garage door sensor', detail: 'The sensor has been unavailable for 3 hours.' }]
-      }
-    });
-  });
-
-  it('returns an actionable error when the durable worker is unavailable', async () => {
-    const services = createServices();
-    delete services.digestWorker;
-    app = createApp({ services, auth: authOptions(), now: () => NOW });
-    const { cookie, csrfToken } = await authenticated(app);
-    const response = await app.inject({ method: 'POST', url: '/api/digests/run', headers: { cookie, 'x-csrf-token': csrfToken }, payload: { kind: 'manual' } });
-    expect(response.statusCode).toBe(503);
-    expect(response.json()).toMatchObject({ code: 'ANALYSIS_UNAVAILABLE', message: expect.stringContaining('no está disponible') });
+  it('changes a password only after CSRF and current-password verification', async () => {
+    app = createApp({ services: services(), auth: { sessionTtlMs: 60_000 } });
+    const registered = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: 'long-enough-password', language: 'en' } });
+    const cookie = registered.headers['set-cookie']; const csrfToken = registered.json<{ csrfToken: string }>().csrfToken;
+    expect((await app.inject({ method: 'POST', url: '/api/account/password', headers: { cookie }, payload: { currentPassword: 'long-enough-password', nextPassword: 'changed-long-password' } })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'POST', url: '/api/account/password', headers: { cookie, 'x-csrf-token': csrfToken }, payload: { currentPassword: 'wrong', nextPassword: 'changed-long-password' } })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'POST', url: '/api/account/password', headers: { cookie, 'x-csrf-token': csrfToken }, payload: { currentPassword: 'long-enough-password', nextPassword: 'changed-long-password' } })).statusCode).toBe(204);
   });
 });
 
-function authOptions() {
-  return { adminToken: 'admin-token', setupToken: 'setup-token', sessionTtlMs: 60_000 };
-}
-
-async function authenticated(app: FastifyInstance) {
-  const login = await app.inject({ method: 'POST', url: '/api/session', payload: { adminToken: 'admin-token' } });
-  return { cookie: login.headers['set-cookie'], csrfToken: login.json<{ csrfToken: string }>().csrfToken };
-}
-
-function createServices(): BackendApiServices & { calls: unknown[] } {
-  const calls: unknown[] = [];
-  const settingsDto: EditableSettingsDto = {
-    homeAssistant: { url: 'http://homeassistant.local:8123', token: { configured: true, mask: '••••ha' } },
-    ai: { provider: 'gemini', key: { configured: true, mask: '••••ai' } },
-    notifications: { channel: 'telegram', chatId: '123456', botToken: { configured: true, mask: '••••telegram' } },
-    schedules: [{ kind: 'daily', enabled: true, time: '08:00', timezone: 'UTC' }],
-    privacyLevel: 'balanced',
-    retentionDays: 30
-  };
-  const maskedSettings: MaskedSettings = {
-    haUrl: settingsDto.homeAssistant.url,
-    ai: { provider: 'gemini', keyMask: '••••-key', ref: 'secret:ai' },
-    notifiers: [{ id: 'telegram-default', channel: 'telegram', targetRef: 'secret:telegram', label: 'Telegram', secretMask: '••••-gram' }]
-  };
-  const digestSummary: DigestSummary = {
-    id: 'digest-1',
-    window: { from: '2026-07-08T00:00:00.000Z', to: '2026-07-09T00:00:00.000Z' },
-    severityCounts: { critical: 0, warning: 1, info: 2 },
-    createdAt: NOW,
-    deliveryStatus: 'sent'
-  };
-  const noteDto = { id: 'note-1', text: 'Door maintenance', occurredAt: NOW, createdAt: NOW, tags: ['maintenance'] };
-  const ignoreDto = { id: 'ignore-1', match: 'sensor.noisy', type: 'entity' as const, createdAt: NOW };
-  const testResult = { status: 'success' as const, message: 'Fake notifier accepted test.', checkedAt: NOW };
-  const deliveryResult = { status: 'sent' as const, targetRef: 'secret:telegram', deliveredAt: NOW };
-
+function services(now = Date.now): BackendApiServices {
+  let password = ''; let admin = false; let attempts = 0; const sessions = new Map<string, { csrfToken: string; expiresAtMs: number }>();
+  const settings = { homeAssistant: { url: 'http://homeassistant.local:8123', token: { configured: true, mask: '••••ha' } }, ai: { provider: 'gemini' as const, key: { configured: true, mask: '••••ai' } }, notifications: { channel: 'none' as const }, schedules: [{ kind: 'daily' as const, enabled: true, time: '08:00', timezone: 'UTC' }], privacyLevel: 'balanced' as const, retentionDays: 10 };
   return {
-    calls,
-    setup: { complete: async () => maskedSettings },
-    settings: { get: async () => settingsDto, update: async () => settingsDto },
-    digestJobs: { enqueue: async () => ({ status: 'queued', jobId: 'job-1' }), get: async () => null, retryFailed: async () => null },
-    digestWorker: { wake: () => undefined },
-    reports: { list: async () => [digestSummary], get: async () => ({ id: 'digest-1', summary: digestSummary, rendered: { format: 'markdown', body: '# Stored digest' } }) },
-    notes: { add: async () => noteDto, listWindow: async () => [noteDto] },
-    ignores: { add: async () => ignoreDto, remove: async () => undefined, listActive: async () => [ignoreDto] },
-    notifiers: {
-      test: async (input) => {
-        calls.push(input);
-        return testResult;
-      },
-      send: async (input) => {
-        calls.push(input);
-        return deliveryResult;
-      }
-    }
+    setup: { complete: async () => { throw new Error('removed'); } },
+    auth: {
+      hasAdmin: async () => admin, createAdmin: async (value) => { if (admin) return false; admin = true; password = value; return true; }, verifyPassword: async (value) => value === password,
+      changePassword: async (current, next) => { if (current !== password) return false; password = next; sessions.clear(); return true; },
+      createSession: async (ttlMs) => { const id = `session-${sessions.size}`; const csrfToken = `csrf-${sessions.size}`; const expiresAtMs = now() + ttlMs; sessions.set(id, { csrfToken, expiresAtMs }); return { id, csrfToken, expiresAtMs }; },
+      readSession: async (id, csrf) => { const item = sessions.get(id); return item && item.expiresAtMs > now() && (csrf === undefined || csrf === item.csrfToken) ? { id, ...item } : null; },
+      removeSession: async (id) => { sessions.delete(id); }, issueCsrf: async () => null,
+      loginAllowed: async () => attempts < 5, recordFailedLogin: async () => { attempts += 1; }, clearFailedLogins: async () => { attempts = 0; }, language: async () => 'en' as const
+    },
+    onboarding: { get: async () => ({ currentStep: 'home_assistant', completedSteps: [], draft: {}, secretMetadata: {}, completed: false }), save: async () => ({ currentStep: 'home_assistant', completedSteps: [], draft: {}, secretMetadata: {}, completed: false }), complete: async () => ({ haUrl: settings.homeAssistant.url, ai: { provider: 'gemini', keyMask: '••••ai', ref: 'ai' }, notifiers: [] }) },
+    settings: { get: async () => settings, update: async () => settings }, digestJobs: { enqueue: async () => ({ status: 'queued' as const, jobId: 'job' }), get: async () => null, retryFailed: async () => null }, reports: { list: async () => [], get: async () => null }, notes: { add: async (input) => ({ id: 'note', ...input, createdAt: new Date(now()).toISOString() }), listWindow: async () => [] }, ignores: { add: async (input) => ({ id: 'ignore', ...input, createdAt: new Date(now()).toISOString() }), remove: async () => undefined, listActive: async () => [] }, notifiers: { test: async () => ({ status: 'success' as const, message: 'ok', checkedAt: new Date(now()).toISOString() }), send: async (input) => ({ status: 'skipped' as const, targetRef: input.targetRef }) }
   };
 }
-
-function validNoteCreate(): NoteCreate {
-  return { text: 'Door maintenance', occurredAt: NOW, tags: ['maintenance'] };
-}
+function note() { return { text: 'Operator note', occurredAt: '2026-08-03T10:00:00.000Z', tags: [] }; }

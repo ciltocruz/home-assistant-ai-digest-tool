@@ -74,3 +74,7 @@ _Avoid_: default interval, run often
 **Integration status**:
 The report section fed by the Home Assistant WebSocket API (`config_entries/get`), showing config entry state. Unavailable when the API call fails; the report still generates.
 _Avoid_: integration health from logs, status by guessing
+
+**Admin account**:
+The username/password account created in onboarding that protects the web UI. Session via httpOnly cookie; no bootstrap tokens.
+_Avoid_: admin token, API key login

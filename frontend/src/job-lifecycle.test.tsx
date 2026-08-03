@@ -2,12 +2,15 @@
 
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { JobLifecycle, restoreActiveJobIds, type JobLifecycleApi } from './job-lifecycle.js';
+import { setLocale } from './i18n/index.js';
 
 Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: true, value: true });
 
 const mountedRoots: Root[] = [];
+
+beforeEach(() => setLocale('es'));
 
 afterEach(() => {
   vi.useRealTimers();

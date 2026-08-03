@@ -4,11 +4,11 @@ import esResource from './locales/es.json' with { type: 'json' };
 import { defaultLocale, messages, t, tForLocale } from './index.js';
 
 describe('i18n resources', () => {
-  test('uses JSON resources with Spanish as the default locale', () => {
-    expect(defaultLocale).toBe('es');
+  test('uses JSON resources with English as the default locale', () => {
+    expect(defaultLocale).toBe('en');
     expect(messages.es).toBe(esResource);
     expect(messages.en).toBe(enResource);
-    expect(t('dashboard.manualDigest.copy')).toBe(esResource.dashboard.manualDigest.copy);
+    expect(t('dashboard.manualDigest.copy')).toBe(enResource.dashboard.manualDigest.copy);
   });
 
   test('looks up the matching English catalog key', () => {

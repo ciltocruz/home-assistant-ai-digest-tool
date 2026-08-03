@@ -19,9 +19,9 @@ const settingsResponse = {
 };
 
 describe('createApiClient', () => {
-  test('loads and saves onboarding progress with the bootstrap bearer without persisting raw secrets in responses', async () => {
+  test('loads and saves authenticated onboarding progress through the session boundary', async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
-    const client = createApiClient({ setupToken: 'setup bootstrap value', fetch: async (url, init = {}) => {
+    const client = createApiClient({ fetch: async (url, init = {}) => {
       calls.push({ url: String(url), init });
       return jsonResponse(200, { currentStep: 'ai_provider', completedSteps: ['home_assistant'], draft: { haUrl: setupRequest.haUrl }, secretMetadata: { haToken: { configured: true, mask: 'se…et' } }, completed: false });
     } });
@@ -31,34 +31,24 @@ describe('createApiClient', () => {
     const saved = await onboarding.saveOnboarding({ step: 'home_assistant', draft: { haUrl: setupRequest.haUrl }, secrets: { haToken: setupRequest.haToken } });
 
     expect(calls.map(({ url, init }) => [url, init.method])).toEqual([['/api/onboarding', 'GET'], ['/api/onboarding', 'PATCH']]);
-    expect(calls.every(({ init }) => new Headers(init.headers).get('authorization') === 'Bearer setup bootstrap value')).toBe(true);
+    expect(calls.every(({ init }) => new Headers(init.headers).get('authorization') === null)).toBe(true);
     expect(JSON.stringify([loaded, saved])).not.toContain(setupRequest.haToken);
   });
-  test('validates setup through the shared DTO contract and stores the CSRF token', async () => {
+  test('creates an administrator account through the session boundary and stores the CSRF token', async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const client = createApiClient({
-      setupToken: 'setup bootstrap value',
       fetch: async (url, init = {}) => {
         calls.push({ url: String(url), init });
-        return jsonResponse(200, {
-          settings: {
-            haUrl: setupRequest.haUrl,
-            ai: { provider: 'gemini', keyMask: '••••-sentinel', ref: 'ref-ai' },
-            notifiers: [{ id: 'telegram-main', channel: 'telegram', targetRef: 'ref-telegram', label: 'Telegram', secretMask: '••••-bot' }]
-          },
-          csrfToken: 'csrf sample value'
-        });
+        return jsonResponse(200, { csrfToken: 'csrf sample value', language: 'en' });
       }
     });
 
-    const response = await client.validateSetup(setupRequest);
+    await client.register('a-long-enough-password', 'en');
 
-    expect(response.settings.ai.ref).toBe('ref-ai');
     expect(client.getCsrfToken()).toBe('csrf sample value');
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.url).toBe('/api/setup');
-    expect(calls[0]?.init.headers).toMatchObject({ authorization: 'Bearer setup bootstrap value' });
-    expect(JSON.parse(String(calls[0]?.init.body))).toEqual(setupRequest);
+    expect(calls[0]?.url).toBe('/api/auth/register');
+    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({ password: 'a-long-enough-password', language: 'en' });
   });
 
   test('uses endpoint contracts for settings, digest history, notes, ignores, and notifier actions', async () => {
@@ -185,7 +175,7 @@ describe('createApiClient', () => {
       csrfToken: 'csrf sample value',
       fetch: async () => jsonResponse(500, {
         code: 'INTERNAL_ERROR',
-        message: `Provider failed with ${bearerScheme} ${jwtLikeValue}, setup token ${bearerScheme} ${opaqueBearerValue}, and Home Assistant access ${longLivedAccessValue}`,
+        message: `Provider failed with ${bearerScheme} ${jwtLikeValue}, legacy credential ${bearerScheme} ${opaqueBearerValue}, and Home Assistant access ${longLivedAccessValue}`,
         requestId: 'req-1'
       })
     });
@@ -217,7 +207,7 @@ describe('createApiClient', () => {
         requestId: 'req-field-errors',
         fieldErrors: {
           haToken: [`Invalid Home Assistant token ${fieldSecret}`],
-          setupToken: [`Invalid setup token ${opaqueFieldSecret}`],
+          legacyCredential: [`Invalid legacy credential ${opaqueFieldSecret}`],
           nested: [`Provider key ${['sk', '_field_secret_value'].join('')} is not allowed`]
         }
       })
@@ -230,7 +220,7 @@ describe('createApiClient', () => {
       expect(error).toBeInstanceOf(ApiClientError);
       const apiError = error as ApiClientError;
       expect(apiError.fieldErrors?.haToken?.[0]).toBe('Invalid Home Assistant token Bearer [redacted]');
-      expect(apiError.fieldErrors?.setupToken?.[0]).toBe('Invalid setup token Bearer [redacted]');
+      expect(apiError.fieldErrors?.legacyCredential?.[0]).toBe('Invalid legacy credential Bearer [redacted]');
       expect(apiError.fieldErrors?.nested?.[0]).toBe('Provider key [redacted] is not allowed');
       expect(JSON.stringify(apiError.fieldErrors)).not.toContain(fieldSecret);
       expect(JSON.stringify(apiError.fieldErrors)).not.toContain(opaqueFieldSecret);

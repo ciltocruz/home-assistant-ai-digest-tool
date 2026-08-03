@@ -7,8 +7,6 @@ services:
     ports:
       - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-3000}:3000"
     environment:
-      ADMIN_TOKEN: "${ADMIN_TOKEN:?Set ADMIN_TOKEN in .env to a long random local preview token}"
-      SETUP_TOKEN: "${SETUP_TOKEN:?Set SETUP_TOKEN in .env to a long random local preview token}"
       APP_BIND_ADDRESS: "${APP_BIND_ADDRESS:-127.0.0.1}"
       RUNTIME_MODE: "${RUNTIME_MODE:-local}"
       TRUST_PROXY: "${TRUST_PROXY:-false}"

@@ -1,6 +1,9 @@
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, test } from 'vitest';
+import { beforeEach, describe, expect, test } from 'vitest';
 import { ReportDetail } from './report-detail.js';
+import { setLocale } from './i18n/index.js';
+
+beforeEach(() => setLocale('es'));
 
 describe('ReportDetail', () => {
   test('renders a completed report from its durable report identifier', () => {
@@ -91,5 +94,18 @@ describe('ReportDetail', () => {
     expect(html).toContain('Todo correcto');
     expect(html).toContain('Sin incidencias que requieran atención.');
     expect(html).not.toContain('No critical or warning incidents were recorded for this report.');
+  });
+
+  test('renders v2 signature classes, integration degradation, warnings, and full recommendations', () => {
+    setLocale('en');
+    const html = renderToStaticMarkup(<ReportDetail report={{
+      id: 'v2-report-1', summary: { id: 'v2-report-1', window: { from: '2026-08-01T09:00:00.000Z', to: '2026-08-01T10:00:00.000Z' }, severityCounts: { critical: 1, warning: 0, info: 0 }, createdAt: '2026-08-01T10:00:00.000Z', deliveryStatus: 'skipped', runStatus: 'partial', warningCodes: ['AI_ANALYSIS_PARTIAL'], signatureCounts: { new: 1, recurring: 0, reactivated: 0, latent: 0 } }, rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'partial', warnings: ['AI_ANALYSIS_PARTIAL'], integrationStatus: { available: false, integrations: [] }, signatures: [{ signature: 'sig-1', component: 'automation.garage', level: 'CRITICAL', classification: 'reactivated', trend: 'increasing', occurrences: 3, analysis: { summary: 'Garage automation has failed repeatedly.', recommendation: 'Inspect its recent traces before retrying it.' } }] }
+    }} />);
+    expect(html).toContain('Analysis warnings');
+    expect(html).toContain('Integration status is unavailable.');
+    expect(html).toContain('Reactivated');
+    expect(html).toContain('Garage automation has failed repeatedly.');
+    expect(html).toContain('Inspect its recent traces before retrying it.');
   });
 });
