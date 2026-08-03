@@ -35,4 +35,29 @@ describe('runtime server startup', () => {
     expect(JSON.stringify(startupEvents)).not.toContain('admin-sentinel-secret');
     expect(JSON.stringify(startupEvents)).not.toContain('setup-sentinel-secret');
   });
+
+  it('awaits idempotent application cleanup for SIGTERM and SIGINT', async () => {
+    const handlers = new Map<NodeJS.Signals, () => Promise<void>>();
+    const close = vi.fn(async () => undefined);
+
+    await startRuntimeServer(
+      {
+        DATA_DIR: await mkdtemp(join(tmpdir(), 'ha-digest-shutdown-')),
+        ADMIN_TOKEN: 'admin-sentinel-secret',
+        SETUP_TOKEN: 'setup-sentinel-secret'
+      },
+      {
+        createApp: async () => ({ listen: vi.fn(async () => undefined), close }) as never,
+        createLogger: () => ({ reportApiFailure: vi.fn(), reportStartupFailure: vi.fn() }),
+        registerSignalHandler: (signal, handler) => handlers.set(signal, handler)
+      }
+    );
+
+    await handlers.get('SIGTERM')?.();
+    await handlers.get('SIGINT')?.();
+
+    expect(handlers.has('SIGTERM')).toBe(true);
+    expect(handlers.has('SIGINT')).toBe(true);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
 });

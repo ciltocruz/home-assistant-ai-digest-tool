@@ -6,6 +6,7 @@ import { createPersistentRuntimePreviewApp } from './runtime-preview.js';
 type RuntimeServerDependencies = {
   createApp?: typeof createPersistentRuntimePreviewApp;
   createLogger?: (options: { dataDir: string; logDir: string }) => RuntimeLogger;
+  registerSignalHandler?: (signal: NodeJS.Signals, handler: () => Promise<void>) => void;
   setExitCode?: (value: number) => void;
 };
 
@@ -34,6 +35,21 @@ export async function startRuntimeServer(
       failureReporter: logger.reportApiFailure
     });
     await app.listen({ host: config.host, port: config.port });
+
+    let shutdownStarted = false;
+    const closeServer = async (): Promise<void> => {
+      if (shutdownStarted) return;
+      shutdownStarted = true;
+      try {
+        await app.close();
+      } catch (error) {
+        logger.reportStartupFailure(startupFailureEvent(error));
+        (dependencies.setExitCode ?? setProcessExitCode)(1);
+      }
+    };
+    const registerSignalHandler = dependencies.registerSignalHandler ?? registerProcessSignalHandler;
+    registerSignalHandler('SIGTERM', closeServer);
+    registerSignalHandler('SIGINT', closeServer);
   } catch (error) {
     logger.reportStartupFailure(startupFailureEvent(error));
     (dependencies.setExitCode ?? setProcessExitCode)(1);
@@ -46,6 +62,12 @@ function startupFailureEvent(error: unknown): RuntimeStartupFailureEvent {
     reason: 'runtime_startup_failed',
     errorName: error instanceof TypeError ? 'TypeError' : 'Error'
   };
+}
+
+function registerProcessSignalHandler(signal: NodeJS.Signals, handler: () => Promise<void>): void {
+  process.once(signal, () => {
+    void handler();
+  });
 }
 
 function setProcessExitCode(value: number): void {

@@ -347,11 +347,11 @@ exit 1
     expect(stdout).toContain('Docker runtime verification passed.');
   }, 215_000);
 
-  it('proves fake-HA REST, mounted logs, restart retrieval, and failed-source no-persistence without leaking verification credentials', async () => {
+  it('proves fake-provider/fake-HA analysis, mounted logs, restart retrieval, and failed-source no-persistence without leaking verification credentials', async () => {
     const { stdout, stderr } = await runDockerVerification();
 
     expect(stderr).toBe('');
-    expect(stdout).toContain('Verified fake-HA REST and mounted-log analysis.');
+    expect(stdout).toContain('Verified fake-provider, fake-HA REST, and mounted-log analysis.');
     expect(stdout).toContain('Verified report retrieval after restart.');
     expect(stdout).toContain('Verified fake-HA source failure without a new report.');
     expect(`${stdout}${stderr}`).not.toContain('docker-runtime-verification-ha-token');

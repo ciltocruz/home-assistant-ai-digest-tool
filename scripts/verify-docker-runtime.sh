@@ -518,6 +518,21 @@ complete_persisted_onboarding() {
   csrf_token="$(json_field "$setup_file" csrfToken)"
 }
 
+configure_fake_provider_for_verification() {
+  run_quietly compose_environment exec -T app node --input-type=module -e '
+    import { DatabaseSync } from "node:sqlite";
+
+    const db = new DatabaseSync("/data/app.db");
+    const row = db.prepare("select value_json from settings where key = ?").get("runtime");
+    if (!row) throw new Error("Verification settings were not persisted.");
+    const settings = JSON.parse(row.value_json);
+    settings.secretRefs.aiKeyRef = "unconfigured:docker-runtime-verification";
+    db.prepare("update settings set value_json = ?, updated_at = ? where key = ?")
+      .run(JSON.stringify(settings), new Date().toISOString(), "runtime");
+    db.close();
+  '
+}
+
 authenticate_session() {
   local session_file="$temp_dir/session.json"
   curl --fail --silent --show-error --cookie-jar "$temp_dir/session.cookie" --output "$session_file" \
@@ -563,13 +578,15 @@ assert_fake_ha_analysis() {
   local analysis_file="$temp_dir/analysis.json"
   local report_id='' job_id=''
   complete_persisted_onboarding
+  configure_fake_provider_for_verification
   run_authenticated_analysis "$analysis_file"
   job_id="$(json_field "$analysis_file" jobId)"
   wait_for_job_state "$job_id" completed
   report_id="$(json_field "$temp_dir/job-status.json" reportId)"
   curl --silent --show-error --fail --cookie "$temp_dir/session.cookie" "http://127.0.0.1:${app_port}/api/digests/${report_id}" >"$temp_dir/report.json"
   grep -F 'logmark' "$temp_dir/report.json" >/dev/null
-  printf 'Verified fake-HA REST and mounted-log analysis.\n'
+  grep -F 'needs attention for' "$temp_dir/report.json" >/dev/null
+  printf 'Verified fake-provider, fake-HA REST, and mounted-log analysis.\n'
 
   run_quietly compose_environment restart app
   wait_for_http_status 200
@@ -676,8 +693,8 @@ main() {
   release_port_reservation
 
   printf 'Validating local Docker runtime mode.\n'
-  run_quietly compose_environment config --quiet
   compose_started=true
+  run_quietly compose_environment config --quiet
   start_local_compose
   wait_for_http_status 200
   assert_local_cookie_contract
