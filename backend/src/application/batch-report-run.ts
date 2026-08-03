@@ -1,5 +1,6 @@
 import type { BatchSignature, LogDelta, ParsedLogEntry, SignaturePlan } from '../domain/batch.js';
 import { parseHomeAssistantLog } from '../domain/batch.js';
+import type { IgnoreRuleDto, NoteDto } from '@ha-digest/shared';
 import type { IntegrationStatusSnapshot } from './integration-status.js';
 
 export type RunRequest = { runId: string; slotId: string; includeWarnings?: boolean };
@@ -26,6 +27,8 @@ export type CommitPlan = {
   request: RunRequest;
   cursor: LogDelta['cursor'];
   signatures: SignaturePlan;
+  reportedSignatures?: SignaturePlan['signatures'];
+  notesBySignature?: Record<string, NoteDto[]>;
   report: { status: 'quiet' | 'reported' | 'partial'; findings: Array<{ signature: string; analysis: SignatureAnalysis }>; warnings: string[]; integrationStatus?: IntegrationStatusSnapshot };
 };
 export type FailedRun = { request: RunRequest; code: 'AI_ANALYSIS_UNAVAILABLE' };
@@ -44,6 +47,8 @@ export type BatchReportRunDependencies = {
   providerAuth?: DeferredProviderAuth;
   haStatus?: HAStatusPort;
   notifier?: BatchNotifier;
+  ignores?: { listActive(at: string): Promise<IgnoreRuleDto[]> };
+  notes?: { listWindow(window: { from: string; to: string }): Promise<NoteDto[]> };
   reportUrl?: (request: RunRequest) => string | undefined;
   language?: () => Promise<'en' | 'es'>;
 };
@@ -53,17 +58,24 @@ export class BatchReportRun {
 
   async run(request: RunRequest): Promise<RunOutcome> {
     const delta = await this.dependencies.log.read();
+    const now = this.dependencies.now?.() ?? new Date().toISOString();
     const plan = await this.dependencies.signatures.classifyAndStage(
       parseHomeAssistantLog(delta.lines, { includeWarnings: request.includeWarnings }),
-      this.dependencies.now?.() ?? new Date().toISOString()
+      now
     );
+    const [rules, notes] = await Promise.all([
+      this.dependencies.ignores?.listActive(now) ?? [],
+      this.dependencies.notes?.listWindow({ from: '1970-01-01T00:00:00.000Z', to: now }) ?? []
+    ]);
+    const reportedSignatures = plan.signatures.filter((signature) => !isIgnored(signature, rules));
+    const notesBySignature = notesForSignatures(reportedSignatures, notes);
     const integrationStatus = await this.readIntegrationStatus();
-    if (plan.signatures.length === 0) {
-      await this.dependencies.persistence.commit({ request, cursor: delta.cursor, signatures: plan, report: { status: 'quiet', findings: [], warnings: [], integrationStatus } });
+    if (reportedSignatures.length === 0) {
+      await this.dependencies.persistence.commit({ request, cursor: delta.cursor, signatures: plan, reportedSignatures, notesBySignature, report: { status: 'quiet', findings: [], warnings: [], integrationStatus } });
       return { status: 'quiet', warnings: [] };
     }
 
-    const analyses = await Promise.all(plan.signatures.map(async (signature) => {
+    const analyses = await Promise.all(reportedSignatures.map(async (signature) => {
       try {
         return { signature, analysis: await this.dependencies.provider.analyze(this.contextFor(signature), new AbortController().signal) };
       } catch {
@@ -77,7 +89,7 @@ export class BatchReportRun {
     }
     const warnings = findings.length === analyses.length ? [] : ['AI_ANALYSIS_PARTIAL'];
     const status = warnings.length ? 'partial' : 'reported';
-    await this.dependencies.persistence.commit({ request, cursor: delta.cursor, signatures: plan, report: { status, findings, warnings, integrationStatus } });
+    await this.dependencies.persistence.commit({ request, cursor: delta.cursor, signatures: plan, reportedSignatures, notesBySignature, report: { status, findings, warnings, integrationStatus } });
     try {
       await this.dependencies.notifier?.notify({ findings, reportUrl: this.dependencies.reportUrl?.(request), language: await this.dependencies.language?.() ?? 'en' });
     } catch { /* A notifier failure must not turn a committed report into a failed run. */ }
@@ -104,6 +116,18 @@ export class BatchReportRun {
     }
     return { signature: signature.signature, component: signature.component, classification: signature.classification, occurrences };
   }
+}
+
+function isIgnored(signature: BatchSignature, rules: IgnoreRuleDto[]): boolean {
+  const haystack = `${signature.signature} ${signature.component} ${signature.normalizedMessage}`.toLowerCase();
+  return rules.some((rule) => haystack.includes(rule.match.toLowerCase()));
+}
+
+function notesForSignatures(signatures: BatchSignature[], notes: NoteDto[]): Record<string, NoteDto[]> {
+  return Object.fromEntries(signatures.map((signature) => [
+    signature.signature,
+    notes.filter((note) => note.tags.includes(signature.signature)).slice(0, 10)
+  ]).filter(([, attached]) => attached.length > 0));
 }
 
 function redact(value: string): string {

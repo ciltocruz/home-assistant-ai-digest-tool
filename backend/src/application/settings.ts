@@ -63,7 +63,8 @@ export class SettingsService {
       secretRefs: { ...current.secretRefs, notifierRefs },
       schedules: command.schedules,
       privacyLevel: command.privacyLevel,
-      retentionDays: command.retentionDays
+      retentionDays: command.retentionDays,
+      includeWarnings: command.includeWarnings ?? current.includeWarnings ?? false
     }, replacements);
     return this.toEditable(saved);
   }
@@ -91,7 +92,8 @@ export class SettingsService {
       notifications,
       schedules: settings.schedules,
       privacyLevel: settings.privacyLevel,
-      retentionDays: settings.retentionDays
+      retentionDays: settings.retentionDays,
+      includeWarnings: settings.includeWarnings ?? false
     };
   }
 

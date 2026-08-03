@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { runMigrations } from './adapters/persistence/migrations.js';
 import { SQLiteSecretStore } from './adapters/persistence/sqlite-secret-store.js';
+import { parseHomeAssistantLog } from './domain/batch.js';
 import type { ReportStore } from './domain/stores.js';
 import { createApp } from './http/app.js';
 import { createPersistentRuntimeServices } from './runtime-persistence.js';
@@ -309,6 +310,78 @@ describe('persistent runtime services', () => {
     expect(queued.status).toBe('queued');
     expect(events).toEqual({ configEntries: 1, ai: 1, telegram: 1 });
     await expect(services.digestJobs.get(queued.jobId)).resolves.toMatchObject({ status: 'completed', reportId: expect.stringMatching(/^v2-report:/) });
+  });
+
+  it('applies the configured warning toggle to real queued batch runs while preserving the default exclusion', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-v2-warning-toggle-'));
+    const logPath = join(dataDir, 'home-assistant.log');
+    await writeFile(logPath, '2026-07-12 10:00:00 WARNING [mqtt] transient warning one\n');
+    const events = { configEntries: 0, ai: 0 };
+    const services = await createPersistentRuntimeServices({
+      dataDir, now: () => NOW, haLogPath: logPath, haWebSocketFactory: () => fakeHaSocket(events),
+      providerHttpClient: async () => {
+        events.ai += 1;
+        return { status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'MQTT warning', recommendation: 'Monitor MQTT' }) }] } }] }) };
+      }
+    });
+    await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET });
+
+    const excluded = await services.digestJobs.enqueue({ kind: 'manual', triggerWindowId: 'v2:warnings-excluded' });
+    await (services.digestWorker as unknown as { runOnce(): Promise<void> }).runOnce();
+    await expect(services.digestJobs.get(excluded.jobId)).resolves.toMatchObject({ status: 'completed', reportId: expect.stringMatching(/^v2-report:/) });
+    expect(events.ai).toBe(0);
+    const excludedJob = await services.digestJobs.get(excluded.jobId);
+    await expect(services.reports.get(excludedJob?.reportId ?? 'missing')).resolves.toMatchObject({ presentation: { mode: 'batch', signatures: [] } });
+
+    const current = await services.settings.get();
+    await services.settings.update({ ...settingsUpdate(current, current.retentionDays), includeWarnings: true });
+    await writeFile(logPath, '2026-07-12 10:01:00 WARNING [mqtt] transient warning two\n', { flag: 'a' });
+    const included = await services.digestJobs.enqueue({ kind: 'manual', triggerWindowId: 'v2:warnings-included' });
+    await (services.digestWorker as unknown as { runOnce(): Promise<void> }).runOnce();
+
+    expect(events.ai).toBe(1);
+    const job = await services.digestJobs.get(included.jobId);
+    const report = await services.reports.get(job?.reportId ?? 'missing');
+    expect(report?.presentation).toMatchObject({ mode: 'batch', signatures: [expect.objectContaining({ level: 'WARNING' })] });
+  });
+
+  it('persists ignored signatures and tagged notes across a restart for the next v2 report', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-v2-context-rules-'));
+    const logPath = join(dataDir, 'home-assistant.log');
+    const lines = [
+      '2026-07-12 10:00:00 ERROR [mqtt] ignored connection failure',
+      '2026-07-12 10:01:00 ERROR [zwave] reviewed connection failure'
+    ];
+    const [ignored, noted] = parseHomeAssistantLog(lines);
+    if (!ignored || !noted) throw new Error('Expected test signatures.');
+    const first = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
+    await first.ignores.add({ match: ignored.signature });
+    await first.notes.add({ text: 'Operator already checked this device.', occurredAt: NOW, tags: [noted.signature] });
+    await first.close?.();
+
+    await writeFile(logPath, `${lines.join('\n')}\n`);
+    const events = { configEntries: 0, ai: 0 };
+    const reopened = await createPersistentRuntimeServices({
+      dataDir, now: () => NOW, haLogPath: logPath, haWebSocketFactory: () => fakeHaSocket(events),
+      providerHttpClient: async () => {
+        events.ai += 1;
+        return { status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'Z-Wave failure', recommendation: 'Inspect Z-Wave' }) }] } }] }) };
+      }
+    });
+    await reopened.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET });
+    const queued = await reopened.digestJobs.enqueue({ kind: 'manual', triggerWindowId: 'v2:context-rules' });
+    await (reopened.digestWorker as unknown as { runOnce(): Promise<void> }).runOnce();
+
+    expect(events.ai).toBe(1);
+    const job = await reopened.digestJobs.get(queued.jobId);
+    const report = await reopened.reports.get(job?.reportId ?? 'missing');
+    expect(report?.presentation).toMatchObject({
+      mode: 'batch',
+      signatures: [expect.objectContaining({
+        signature: noted.signature,
+        notes: [expect.objectContaining({ text: 'Operator already checked this device.' })]
+      })]
+    });
   });
 
   it('records provider-wide v2 failure instead of silently substituting a fake analysis', async () => {

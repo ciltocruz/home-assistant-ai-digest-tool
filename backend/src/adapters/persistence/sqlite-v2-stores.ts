@@ -1,10 +1,12 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { DigestDetail, DigestHistoryResponse, DigestSummary } from '@ha-digest/shared';
+import { randomUUID } from 'node:crypto';
+import type { DigestDetail, DigestHistoryResponse, DigestSummary, IgnoreRuleCreate, IgnoreRuleDto, NoteCreate, NoteDto } from '@ha-digest/shared';
 import type { BatchPersistence, CommitPlan, FailedRun, SignatureMemory } from '../../application/batch-report-run.js';
 import { classifySignatures, type LogCursor, type ParsedLogEntry, type SignaturePlan } from '../../domain/batch.js';
+import type { NoteStore } from '../../domain/stores.js';
 
-export class SQLiteV2Stores implements BatchPersistence, SignatureMemory {
-  constructor(private readonly db: DatabaseSync, private readonly reportRetention = 10) {}
+export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteStore {
+  constructor(private readonly db: DatabaseSync, private readonly reportRetention = 10, private readonly now: () => string = () => new Date().toISOString()) {}
 
   async classifyAndStage(entries: ParsedLogEntry[], at: string): Promise<SignaturePlan> {
     const known = this.db.prepare(
@@ -25,7 +27,7 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory {
       const createdAt = new Date().toISOString();
       this.db.prepare(
         'insert into v2_reports(id, run_id, status, payload_json, created_at) values (?, ?, ?, ?, ?)'
-       ).run(reportId, plan.request.runId, plan.report.status, JSON.stringify({ report: plan.report, signatures: plan.signatures.signatures }), createdAt);
+       ).run(reportId, plan.request.runId, plan.report.status, JSON.stringify({ report: plan.report, signatures: plan.reportedSignatures ?? plan.signatures.signatures, notesBySignature: plan.notesBySignature ?? {} }), createdAt);
       for (const finding of plan.report.findings) {
         this.db.prepare(
           'insert into v2_report_signatures(report_id, signature, summary, recommendation) values (?, ?, ?, ?)'
@@ -61,6 +63,38 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory {
     }
     const row = this.db.prepare('select id, status, payload_json, created_at from v2_reports where id = ?').get(id) as V2ReportRow | undefined;
     return row ? detailFor(row) : null;
+  }
+
+  async add(input: NoteCreate): Promise<NoteDto> {
+    const note = { id: randomUUID(), ...input, createdAt: this.now() };
+    this.db.prepare('insert into notes(id, text, occurred_at, created_at, tags_json) values (?, ?, ?, ?, ?)')
+      .run(note.id, note.text, note.occurredAt, note.createdAt, JSON.stringify(note.tags));
+    return note;
+  }
+
+  async listWindow(window: { from: string; to: string }): Promise<NoteDto[]> {
+    const rows = this.db.prepare(
+      'select id, text, occurred_at, created_at, tags_json from notes where occurred_at >= ? and occurred_at <= ? order by occurred_at desc, id desc limit 100'
+    ).all(window.from, window.to) as Array<{ id: string; text: string; occurred_at: string; created_at: string; tags_json: string }>;
+    return rows.map((row) => ({ id: row.id, text: row.text, occurredAt: row.occurred_at, createdAt: row.created_at, tags: JSON.parse(row.tags_json) as string[] }));
+  }
+
+  async addIgnore(input: IgnoreRuleCreate): Promise<IgnoreRuleDto> {
+    const rule = { id: randomUUID(), match: input.match, type: input.type, reason: input.reason, expiresAt: input.expiresAt, createdAt: this.now() };
+    this.db.prepare('insert into ignore_rules(id, match, type, reason, expires_at, created_at) values (?, ?, ?, ?, ?, ?)')
+      .run(rule.id, rule.match, rule.type ?? null, rule.reason ?? null, rule.expiresAt ?? null, rule.createdAt);
+    return rule;
+  }
+
+  async remove(id: string): Promise<void> {
+    this.db.prepare('update ignore_rules set removed_at = ? where id = ? and removed_at is null').run(this.now(), id);
+  }
+
+  async listActive(at: string): Promise<IgnoreRuleDto[]> {
+    const rows = this.db.prepare(
+      'select id, match, type, reason, expires_at, created_at from ignore_rules where removed_at is null and (expires_at is null or expires_at > ?) order by created_at desc, id desc limit 100'
+    ).all(at) as Array<{ id: string; match: string; type: IgnoreRuleDto['type']; reason: string | null; expires_at: string | null; created_at: string }>;
+    return rows.map((row) => ({ id: row.id, match: row.match, ...(row.type ? { type: row.type } : {}), ...(row.reason ? { reason: row.reason } : {}), ...(row.expires_at ? { expiresAt: row.expires_at } : {}), createdAt: row.created_at }));
   }
 
   private runExists(id: string, slotId: string): boolean {
@@ -109,7 +143,7 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory {
 
 type V2ReportRow = { id: string; status: 'quiet' | 'reported' | 'partial'; payload_json: string; created_at: string };
 type FailedRunRow = { id: string; error_code: string | null; created_at: string };
-type V2Payload = { report: CommitPlan['report']; signatures: SignaturePlan['signatures'] };
+type V2Payload = { report: CommitPlan['report']; signatures: SignaturePlan['signatures']; notesBySignature?: Record<string, NoteDto[]> };
 function payload(row: V2ReportRow): V2Payload { return JSON.parse(row.payload_json) as V2Payload; }
 function counts(signatures: SignaturePlan['signatures']): NonNullable<DigestSummary['signatureCounts']> {
   return signatures.reduce((total, item) => ({ ...total, [item.classification]: total[item.classification] + 1 }), { new: 0, recurring: 0, reactivated: 0, latent: 0 });
@@ -126,7 +160,7 @@ function detailFor(row: V2ReportRow): DigestDetail {
   return {
     id: row.id, summary: summaryFor(row), rendered: { format: 'markdown', body: '' },
     presentation: { version: 2, mode: 'batch', status: row.status, warnings: value.report.warnings, integrationStatus: value.report.integrationStatus,
-      signatures: value.signatures.map((item) => ({ signature: item.signature, component: item.component, level: item.level, classification: item.classification, trend: item.trend, occurrences: item.occurrences.length, ...(analyses.has(item.signature) ? { analysis: analyses.get(item.signature) } : {}) })) }
+      signatures: value.signatures.map((item) => ({ signature: item.signature, component: item.component, level: item.level, classification: item.classification, trend: item.trend, occurrences: item.occurrences.length, ...(analyses.has(item.signature) ? { analysis: analyses.get(item.signature) } : {}), ...(value.notesBySignature?.[item.signature] ? { notes: value.notesBySignature[item.signature] } : {}) })) }
   };
 }
 function failedSummary(row: FailedRunRow): DigestSummary {

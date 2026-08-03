@@ -179,8 +179,9 @@ export const RedactedSettingsDtoSchema = z
       })
       .strict(),
     schedules: z.array(ScheduleSchema),
-    privacyLevel: PrivacyLevelSchema,
-    retentionDays: z.number().int().min(1).max(MAX_RETENTION_DAYS)
+  privacyLevel: PrivacyLevelSchema,
+  retentionDays: z.number().int().min(1).max(MAX_RETENTION_DAYS),
+  includeWarnings: z.boolean().optional()
   })
   .strict();
 export type RedactedSettingsDto = z.infer<typeof RedactedSettingsDtoSchema>;
@@ -211,7 +212,8 @@ export const EditableSettingsDtoSchema = z.object({
   ]),
   schedules: z.array(ScheduleSchema),
   privacyLevel: PrivacyLevelSchema,
-  retentionDays: z.number().int().min(1).max(MAX_RETENTION_DAYS)
+  retentionDays: z.number().int().min(1).max(MAX_RETENTION_DAYS),
+  includeWarnings: z.boolean().optional()
 }).strict();
 export type EditableSettingsDto = z.infer<typeof EditableSettingsDtoSchema>;
 
@@ -230,7 +232,8 @@ export const SettingsUpdateCommandSchema = z.object({
   ]),
   schedules: z.array(ScheduleSchema).min(1),
   privacyLevel: PrivacyLevelSchema,
-  retentionDays: z.number().int().min(1).max(MAX_RETENTION_DAYS)
+    retentionDays: z.number().int().min(1).max(MAX_RETENTION_DAYS),
+    includeWarnings: z.boolean().optional()
 }).strict();
 export type SettingsUpdateCommand = z.infer<typeof SettingsUpdateCommandSchema>;
 
@@ -354,7 +357,14 @@ const LegacyMarkdownReportPresentationV1Schema = z.object({
 export const V2SignaturePresentationSchema = z.object({
   signature: z.string().min(1), component: z.string().min(1), level: z.enum(['ERROR', 'CRITICAL', 'WARNING']),
   classification: z.enum(['new', 'recurring', 'reactivated', 'latent']), trend: z.enum(['new', 'increasing', 'flat', 'decreasing']),
-  occurrences: z.number().int().min(1), analysis: z.object({ summary: z.string().min(1), recommendation: z.string().min(1) }).strict().optional()
+  occurrences: z.number().int().min(1), analysis: z.object({ summary: z.string().min(1), recommendation: z.string().min(1) }).strict().optional(),
+  notes: z.array(z.object({
+    id: z.string().min(1),
+    text: z.string().min(1).max(MAX_NOTE_TEXT_LENGTH),
+    occurredAt: IsoDateTimeSchema,
+    createdAt: IsoDateTimeSchema,
+    tags: z.array(z.string().min(1))
+  }).strict()).max(10).optional()
 }).strict();
 export const V2ReportPresentationSchema = z.object({
   version: z.literal(2), mode: z.literal('batch'), status: z.enum(['quiet', 'reported', 'partial', 'failed']),

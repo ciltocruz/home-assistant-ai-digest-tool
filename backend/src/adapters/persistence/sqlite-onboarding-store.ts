@@ -48,7 +48,8 @@ export class SQLiteOnboardingStore {
       secretRefs: { haTokenRef: refs.haToken, aiKeyRef: refs.aiKey, notifierRefs: draft.notifier === 'telegram' && refs.telegramBotToken ? { telegram: refs.telegramBotToken } : {} },
       schedules: [{ kind: 'daily', enabled: true, time: draft.dailyTime, timezone: draft.timezone }],
       privacyLevel: draft.privacyLevel,
-      retentionDays: draft.retentionDays
+      retentionDays: draft.retentionDays,
+      includeWarnings: false
     };
     this.db.exec('begin immediate');
     try {

@@ -56,7 +56,7 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
   const reports = new SQLiteReportStore(db, () => settingsStore.get(), now, options.maxStoredReports ?? DEFAULT_MAX_STORED_REPORTS);
 
   const digestJobs = new SQLiteDigestJobStore(db, clock);
-  const v2Stores = new SQLiteV2Stores(db);
+  const v2Stores = new SQLiteV2Stores(db, 10, now);
   let worker: DigestWorker | undefined;
   const services: BackendApiServices = {
     close: async () => { await worker?.stop(); db.close(); },
@@ -84,14 +84,11 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
       list: async () => [...await v2Stores.listReports(), ...await reports.list()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
       get: async (id) => await v2Stores.getReport(id) ?? await reports.get(id)
     },
-    notes: {
-      async add(input) { return { id: randomUUID(), ...input, createdAt: now() }; },
-      async listWindow() { return []; }
-    },
+    notes: v2Stores,
     ignores: {
-      async add(input) { return { id: randomUUID(), match: input.match, type: input.type, reason: input.reason, expiresAt: input.expiresAt, createdAt: now() }; },
-      async remove() {},
-      async listActive() { return []; }
+      add: (input) => v2Stores.addIgnore(input),
+      remove: (id) => v2Stores.remove(id),
+      listActive: (at) => v2Stores.listActive(at)
     },
     notifiers: {
       async test(input) {
@@ -138,6 +135,8 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
           return new HomeAssistantWebSocketClient({ haUrl: current.haUrl, haTokenRef: current.secretRefs.haTokenRef, secrets: secretStore, webSocketFactory: options.haWebSocketFactory }).snapshot();
         }
       },
+      ignores: v2Stores,
+      notes: v2Stores,
       notifier: {
         notify: async (summary) => {
           const current = await settingsStore.get();
@@ -158,7 +157,8 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
       analysis: {
         runWithStages: async (onStage, job) => {
           await onStage('collecting');
-          const request = { runId: job?.id ?? randomUUID(), slotId: job?.triggerWindowId ?? `runtime:${randomUUID()}` };
+          const current = await settingsStore.get();
+          const request = { runId: job?.id ?? randomUUID(), slotId: job?.triggerWindowId ?? `runtime:${randomUUID()}`, includeWarnings: current.includeWarnings ?? false };
           const outcome = await batch.run(request);
           if (outcome.status === 'failed') throw new Error(outcome.code);
           await onStage('saving');
@@ -202,7 +202,8 @@ class SQLiteRuntimeSettingsStore {
       secretRefs: { haTokenRef: ha.ref, aiKeyRef: ai.ref, notifierRefs },
       schedules: [],
       privacyLevel: 'balanced',
-      retentionDays: 30
+      retentionDays: 30,
+      includeWarnings: false
     });
 
     return { haUrl: input.haUrl, ai: { provider: input.aiProvider, keyMask: ai.mask, ref: ai.ref }, notifiers };
@@ -211,7 +212,9 @@ class SQLiteRuntimeSettingsStore {
   async get(): Promise<RedactedSettingsDto> {
     const row = this.db.prepare('select value_json from settings where key = ?').get(SETTINGS_KEY) as { value_json: string } | undefined;
     if (!row) return defaultSettings();
-    return JSON.parse(row.value_json) as RedactedSettingsDto;
+    const saved = JSON.parse(row.value_json) as Partial<RedactedSettingsDto>;
+    const defaults = defaultSettings();
+    return { ...defaults, ...saved, secretRefs: { ...defaults.secretRefs, ...saved.secretRefs }, includeWarnings: saved.includeWarnings ?? false };
   }
 
   async update(input: RedactedSettingsDto): Promise<RedactedSettingsDto> {
@@ -342,6 +345,7 @@ function defaultSettings(): RedactedSettingsDto {
     secretRefs: { haTokenRef: 'unconfigured:ha', aiKeyRef: 'unconfigured:ai', notifierRefs: {} },
     schedules: [],
     privacyLevel: 'balanced',
-    retentionDays: 30
+    retentionDays: 30,
+    includeWarnings: false
   };
 }

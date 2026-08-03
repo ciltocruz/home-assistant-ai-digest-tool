@@ -44,6 +44,23 @@ describe('SettingsPanel', () => {
     }));
   });
 
+  it('saves the warning inclusion setting without changing its default', async () => {
+    const updateSettings = vi.fn(async (command) => ({
+      ...settings(), ...command,
+      homeAssistant: { ...command.homeAssistant, token: { configured: true, mask: '••••HA' } },
+      ai: { ...command.ai, key: { configured: true, mask: '••••AI' } }
+    }));
+    const { container } = await mount({ getSettings: async () => ({ ...settings(), includeWarnings: false }), updateSettings });
+    const includeWarnings = container.querySelector<HTMLInputElement>('input[name="includeWarnings"]');
+    const form = container.querySelector('form');
+    if (!includeWarnings || !form) throw new Error('Expected warning inclusion control.');
+
+    await act(async () => includeWarnings.click());
+    await act(async () => form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true })));
+
+    expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({ includeWarnings: true }));
+  });
+
   it('shows a neutral English actionable error and never reflects a rejected replacement key', async () => {
     const replacement = 'sentinel-rejected-ai-key';
     const { container } = await mount({
