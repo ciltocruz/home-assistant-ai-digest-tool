@@ -36,3 +36,33 @@ The experience shell shown only after onboarding is complete; it is the daily-us
 
 **Attention item**:
 A report finding that requires awareness or action, ordered before observations and positive status.
+
+## Refactor v2 terms
+
+**Error signature**:
+A stable identity for a log problem, derived from component, level, and normalized message (timestamps, IDs, line numbers, and volatile values stripped). Recurrences of the same problem share one signature.
+_Avoid_: raw log line, message hash without normalization
+
+**New error**:
+The first-ever occurrence of an error signature in the persistent signature store. Only new errors and reactivations are treated as noteworthy.
+_Avoid_: latest error, last entry
+
+**Recurring error**:
+A known signature that keeps appearing within the current period, grouped under one signature with counts and trend.
+_Avoid_: repeated alert, duplicate
+
+**Reactivated error**:
+A known signature that reappears after a configurable reactivation window (default 7 days) has passed. Reactivation is reported again.
+_Avoid_: old error again, re-spam
+
+**Latent error**:
+A signature that already existed before the lookback window and is still present — a carried problem, not a new one.
+_Avoid_: hidden error, legacy error
+
+**Baseline**:
+The silent first-run learning of signatures older than the lookback window, so the tool can distinguish new problems from carried ones.
+_Avoid_: cold start, history import
+
+**Lookback window**:
+Configurable period (default 10 days) reviewed on the first run, bounded by what the current log file contains. Rotation files are not read.
+_Avoid_: history depth, scan days

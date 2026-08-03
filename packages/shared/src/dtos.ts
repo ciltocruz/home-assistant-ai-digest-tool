@@ -315,7 +315,10 @@ export const DigestSummarySchema = z
     window: DigestWindowSchema,
     severityCounts: SeverityCountsSchema,
     createdAt: IsoDateTimeSchema,
-    deliveryStatus: DeliveryStatusSchema
+    deliveryStatus: DeliveryStatusSchema,
+    runStatus: z.enum(['quiet', 'reported', 'partial', 'failed']).optional(),
+    warningCodes: z.array(z.string().min(1)).optional(),
+    signatureCounts: z.object({ new: z.number().int().min(0), recurring: z.number().int().min(0), reactivated: z.number().int().min(0), latent: z.number().int().min(0) }).strict().optional()
   })
   .strict();
 export type DigestSummary = z.infer<typeof DigestSummarySchema>;
@@ -348,9 +351,21 @@ const LegacyMarkdownReportPresentationV1Schema = z.object({
   legacyMarkdown: z.string()
 }).strict();
 
+export const V2SignaturePresentationSchema = z.object({
+  signature: z.string().min(1), component: z.string().min(1), level: z.enum(['ERROR', 'CRITICAL', 'WARNING']),
+  classification: z.enum(['new', 'recurring', 'reactivated', 'latent']), trend: z.enum(['new', 'increasing', 'flat', 'decreasing']),
+  occurrences: z.number().int().min(1), analysis: z.object({ summary: z.string().min(1), recommendation: z.string().min(1) }).strict().optional()
+}).strict();
+export const V2ReportPresentationSchema = z.object({
+  version: z.literal(2), mode: z.literal('batch'), status: z.enum(['quiet', 'reported', 'partial', 'failed']),
+  warnings: z.array(z.string().min(1)), integrationStatus: z.object({ available: z.boolean(), integrations: z.array(z.object({ domain: z.string() }).passthrough()) }).passthrough().optional(),
+  signatures: z.array(V2SignaturePresentationSchema), failure: z.string().min(1).optional()
+}).strict();
+
 export const ReportPresentationV1Schema = z.discriminatedUnion('mode', [
   StructuredReportPresentationV1Schema,
-  LegacyMarkdownReportPresentationV1Schema
+  LegacyMarkdownReportPresentationV1Schema,
+  V2ReportPresentationSchema
 ]);
 export type ReportPresentationV1 = z.infer<typeof ReportPresentationV1Schema>;
 
