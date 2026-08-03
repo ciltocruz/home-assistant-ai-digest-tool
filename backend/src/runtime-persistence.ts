@@ -8,6 +8,7 @@ import { runMigrations } from './adapters/persistence/migrations.js';
 import { SQLiteDigestJobStore } from './adapters/persistence/sqlite-digest-job-store.js';
 import { SQLiteSecretStore } from './adapters/persistence/sqlite-secret-store.js';
 import { SQLiteOnboardingStore } from './adapters/persistence/sqlite-onboarding-store.js';
+import { SQLiteV2Stores } from './adapters/persistence/sqlite-v2-stores.js';
 import type { BackendApiServices } from './http/app.js';
 import type { ReportStore } from './domain/stores.js';
 import type { ExecutionContext } from './domain/execution.js';
@@ -51,6 +52,7 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
   const reports = new SQLiteReportStore(db, () => settingsStore.get(), now, options.maxStoredReports ?? DEFAULT_MAX_STORED_REPORTS);
 
   const digestJobs = new SQLiteDigestJobStore(db, clock);
+  const v2Stores = new SQLiteV2Stores(db);
   let worker: DigestWorker | undefined;
   const services: BackendApiServices = {
     close: async () => { await worker?.stop(); db.close(); },
@@ -72,7 +74,10 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
       notificationTarget: (channel) => settings.notificationTarget(channel)
     },
     digestJobs,
-    reports,
+    reports: {
+      list: async () => [...await v2Stores.listReports(), ...await reports.list()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+      get: async (id) => await v2Stores.getReport(id) ?? await reports.get(id)
+    },
     notes: {
       async add(input) { return { id: randomUUID(), ...input, createdAt: now() }; },
       async listWindow() { return []; }

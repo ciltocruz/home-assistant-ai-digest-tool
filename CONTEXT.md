@@ -66,3 +66,7 @@ _Avoid_: cold start, history import
 **Lookback window**:
 Configurable period (default 10 days) reviewed on the first run, bounded by what the current log file contains. Rotation files are not read.
 _Avoid_: history depth, scan days
+
+**Report schedule**:
+The user-chosen execution frequency with no default: presets (15m, 30m, 1h, 6h, 12h, daily with hour) or a custom weekday + time.
+_Avoid_: default interval, run often

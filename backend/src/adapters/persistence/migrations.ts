@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-const MIGRATION_VERSION = 3;
+const MIGRATION_VERSION = 4;
 
 export function runMigrations(db: DatabaseSync): void {
   db.exec('pragma foreign_keys = on');
@@ -121,8 +121,11 @@ function applyMigrations(db: DatabaseSync): void {
     );
   `);
   addDigestJobColumns(db);
+  addV2BatchTables(db);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(1);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(2);
+  db.prepare('insert or ignore into schema_migrations(version) values (?)').run(3);
+  db.prepare('insert or ignore into schema_migrations(version) values (?)').run(4);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(MIGRATION_VERSION);
   db.prepare(
     `insert or ignore into onboarding_state(singleton, current_step, completed_steps_json, draft_json, secret_refs_json, secret_metadata_json, completed, updated_at)
@@ -144,4 +147,60 @@ function addDigestJobColumns(db: DatabaseSync): void {
   for (const [name, definition] of additions) if (!columns.has(name)) db.exec(`alter table digest_jobs add column ${name} ${definition}`);
   db.exec("update digest_jobs set stage = case when status = 'completed' then 'completed' when status = 'failed' then 'failed' else 'queued' end where stage is null or stage = '' or (stage = 'queued' and status in ('completed', 'failed'))");
   db.exec('create index if not exists idx_digest_jobs_report on digest_jobs(report_id)');
+}
+
+function addV2BatchTables(db: DatabaseSync): void {
+  db.exec(`
+    create table if not exists v2_log_cursor (
+      singleton integer primary key check (singleton = 1),
+      dev integer not null,
+      ino integer not null,
+      size integer not null,
+      offset integer not null,
+      updated_at text not null
+    );
+
+    create table if not exists v2_signatures (
+      signature text primary key,
+      component text not null,
+      level text not null,
+      normalized_message text not null,
+      first_seen_at text not null,
+      last_seen_at text not null,
+      total_count integer not null,
+      previous_period_count integer not null default 0
+    );
+
+    create table if not exists v2_runs (
+      id text primary key,
+      slot_id text not null unique,
+      status text not null,
+      error_code text,
+      created_at text not null
+    );
+
+    create table if not exists v2_reports (
+      id text primary key,
+      run_id text not null unique references v2_runs(id) on delete cascade,
+      status text not null,
+      payload_json text not null,
+      created_at text not null
+    );
+
+    create table if not exists v2_report_signatures (
+      report_id text not null references v2_reports(id) on delete cascade,
+      signature text not null references v2_signatures(signature),
+      summary text not null,
+      recommendation text not null,
+      primary key(report_id, signature)
+    );
+
+    create table if not exists schedule_state (
+      schedule_id text primary key,
+      first_run_enqueued_at text,
+      last_scheduled_at text,
+      updated_at text not null
+    );
+
+  `);
 }
