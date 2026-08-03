@@ -42,4 +42,19 @@ describe('batch log domain', () => {
       { component: 'ha.reactivated', classification: 'reactivated', trend: 'decreasing' }
     ]);
   });
+
+  it('uses only the available current-file history when it cannot cover the full lookback window', () => {
+    const entries = parseHomeAssistantLog([
+      '2026-07-29 12:00:00 ERROR (MainThread) [ha.available] recent issue id=1',
+      '2026-07-30 11:00:00 ERROR (MainThread) [ha.available] recent issue id=2'
+    ]);
+
+    const plan = classifySignatures(entries, [], { now: '2026-07-30T12:00:00.000Z', lookbackDays: 10 });
+
+    expect(plan.baselineEntries).toEqual([]);
+    expect(plan.signatures).toMatchObject([
+      { component: 'ha.available', classification: 'new' }
+    ]);
+    expect(plan.signatures[0]?.occurrences).toHaveLength(2);
+  });
 });

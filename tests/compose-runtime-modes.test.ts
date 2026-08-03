@@ -26,7 +26,7 @@ describe('Docker Compose runtime modes', () => {
     expect(compose).toContain(':/ha-logs/home-assistant.log:ro');
     expect(compose).toContain('host.docker.internal:host-gateway');
     expect(compose).toContain('HA_MAX_STATES');
-    expect(compose).not.toMatch(/docker\.sock|network_mode:\s*host|privileged:\s*true|\/config:/);
+    expect(compose).not.toMatch(/docker\.sock|network_mode:\s*host|privileged:\s*true|\/config:|watcher/);
 
     expect(reverseProxy).toContain('RUNTIME_MODE: reverse-proxy');
     expect(reverseProxy).toContain('TRUST_PROXY: "true"');

@@ -6,8 +6,8 @@ This how-to is for operators running the Docker-first runtime with Home Assistan
 
 Local mode is the default. It publishes only on loopback and deliberately uses non-Secure cookies for direct localhost HTTP.
 
-1. Copy `.env.example` to `.env` and set long, unique `ADMIN_TOKEN` and `SETUP_TOKEN` values. Do not commit this file.
-2. Set `HA_LOG_FILE` to one existing Home Assistant log file. The container mounts that file read-only; do not mount the full Home Assistant configuration directory. Optional `HA_MAX_STATES`, `HA_MAX_LOG_LINES`, and `HA_MAX_RESPONSE_BYTES` constrain manual analysis.
+1. Copy `.env.example` to `.env`. Do not commit this file; it contains runtime binding and log-mount configuration only.
+2. Set `HA_LOG_FILE` to one existing `home-assistant.log` file. The container mounts that file read-only; do not mount the full Home Assistant configuration directory. Optional `HA_MAX_STATES`, `HA_MAX_LOG_LINES`, and `HA_MAX_RESPONSE_BYTES` constrain collection and analysis.
 3. Start the service:
 
    ```bash
@@ -22,9 +22,11 @@ Local mode is the default. It publishes only on loopback and deliberately uses n
 
 `/health` reports process liveness. `/ready` additionally requires the frontend, SQLite data, and a readable HA log. A missing, empty, metadata-only, or unreadable HA log returns HTTP 503 and makes the Docker health check unhealthy.
 
-## Run one protected local analysis
+## Complete protected onboarding and run a report
 
-Complete the protected six-screen onboarding with the Home Assistant URL and a dedicated long-lived token, then use the dashboard's **Lanzar informe** action. The server accepts only authenticated, CSRF-protected manual runs. It makes one bounded read-only `GET /api/states` request and reads a bounded tail of `/ha-logs/home-assistant.log`; it never mounts `/config`, uses Supervisor APIs, or mutates Home Assistant. The report is deterministic, stored in `/data`, and available after restart through history/detail routes.
+On first visit, choose a language, create the admin account, and complete the protected onboarding with the Home Assistant URL, dedicated long-lived token, provider, optional Telegram target, required schedule, timezone, and privacy settings. The first report is queued immediately; later reports can be launched from the dashboard. The server accepts only authenticated, CSRF-protected requests.
+
+Each report reads complete lines from `/ha-logs/home-assistant.log` and the configured read-only Home Assistant API. It never mounts `/config`, uses Supervisor APIs, or mutates Home Assistant. Reports and their signature history are stored in `/data` and remain available after restart. The log baseline is limited to the history currently present in the mounted file; the runtime never opens rotated logs.
 
 If a source is unauthorized, malformed, oversized, unavailable, or another analysis is already active, the request returns a safe code and stores no partial report. Roll back by deploying the previous image/Compose version while preserving `/data`.
 
@@ -46,7 +48,7 @@ Run the disposable verification harness from a checkout with Docker available:
 pnpm verify:docker
 ```
 
-The command builds and starts isolated local and reverse-proxy Compose projects. Its local overlay uses an internal fake Home Assistant service plus a mounted synthetic log to prove the six-screen persisted onboarding, authenticated REST collection, mounted-log analysis, report retrieval after restart, and a controlled source failure that adds no report. It verifies that onboarding, settings, completed jobs, and reports survive a restart. It also checks the forwarded-HTTPS/Secure-cookie contract, honest HA-log readiness, `/app` write denial, and `/tmp` and `/data` writes. It uses bounded waits; its exit trap removes the temporary containers, volumes, networks, and files. It does not print its supplied tokens, cookies, CSRF values, or authorization headers; failure diagnostics redact them.
+The command builds and starts isolated local and reverse-proxy Compose projects. Its local overlay uses an internal fake Home Assistant service plus a mounted synthetic log to prove account-backed onboarding, authenticated collection, mounted-log analysis, report retrieval after restart, and a controlled source failure that adds no report. It verifies that onboarding, settings, completed jobs, and reports survive a restart. It also checks the forwarded-HTTPS/Secure-cookie contract, honest HA-log readiness, `/app` write denial, and `/tmp` and `/data` writes. It uses bounded waits; its exit trap removes the temporary containers, volumes, networks, and files. It does not print its supplied passwords, cookies, CSRF values, or authorization headers; failure diagnostics redact them.
 
 ### Verifier timeout and cleanup contract
 
@@ -133,4 +135,6 @@ This creates an empty `/data` volume and a new key on first start. It cannot rec
 
 ## Current boundary
 
-The runtime persists local settings, encrypted secrets, and report history. Manual analysis uses HA REST states plus the narrow read-only HA-log mount; it does not include a Home Assistant database adapter. No Docker socket, host networking, privileged mode, full Home Assistant configuration mount, AI call, notifier delivery, scheduler, or queue execution is supported.
+The runtime persists local settings, encrypted secrets, report jobs, reports, and signature history. It reads a narrow read-only HA-log mount and Home Assistant API data; it does not include a Home Assistant database adapter or a realtime watcher. AI provider and Telegram delivery are configuration-driven runtime integrations, but quiet and tool-failure runs never send Telegram notifications.
+
+No Docker socket, host networking, privileged mode, full Home Assistant configuration mount, HA database mount, or Supervisor feature is supported. Roll back the application by restoring the prior image/Compose version and the matching `/data` backup; do not import preview-era report history into v2.

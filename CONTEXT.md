@@ -78,3 +78,11 @@ _Avoid_: integration health from logs, status by guessing
 **Admin account**:
 The username/password account created in onboarding that protects the web UI. Session via httpOnly cookie; no bootstrap tokens.
 _Avoid_: admin token, API key login
+
+**Report retention**:
+The maximum number of newest v2 reports retained locally (default 10). Retention removes report detail only; error signatures remain permanent.
+_Avoid_: signature expiry, log retention
+
+**Silence rule**:
+No Telegram message is sent when a run has no noteworthy findings or when a tool failure prevents a trustworthy delivery. The web UI still records the quiet or failed run.
+_Avoid_: failure alert, empty digest notification
