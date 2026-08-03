@@ -1,5 +1,6 @@
 import type { AIProvider, RedactedDigestInput, StructuredDigest } from '../../domain/providers.js';
 import { combineAbortSignals, type ExecutionContext } from '../../domain/execution.js';
+import type { BoundedSignatureContext, SignatureAnalysis, SignatureProvider } from '../../application/batch-report-run.js';
 
 export type ProviderHttpRequest = {
   method: 'POST';
@@ -23,11 +24,82 @@ type ProviderOptions = {
   timeoutMs?: number;
 };
 
+export type SignatureProviderOptions = ProviderOptions & { baseUrl?: string };
+
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
 const DEFAULT_GEMINI_MODEL = 'gemini-1.5-flash';
 const DEFAULT_PROVIDER_TIMEOUT_MS = 30_000;
+
+abstract class SignatureHttpProvider implements SignatureProvider {
+  protected readonly httpClient: ProviderHttpClient;
+  protected readonly timeoutMs: number;
+  abstract readonly name: string;
+
+  constructor(protected readonly options: SignatureProviderOptions) {
+    this.httpClient = options.httpClient ?? fetchJson;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS;
+  }
+
+  async analyze(context: BoundedSignatureContext, signal: AbortSignal): Promise<SignatureAnalysis> {
+    const response = await safeProviderRequest(this.name, withTimeout(this.timeoutMs, signal, (requestSignal) => this.request(context, requestSignal)));
+    if (response.status < 200 || response.status >= 300) throw new Error(`${this.name} provider request failed with status ${response.status}`);
+    return parseSignatureAnalysis(this.content(await response.json()), this.name);
+  }
+
+  protected abstract request(context: BoundedSignatureContext, signal: AbortSignal): Promise<ProviderHttpResponse>;
+  protected abstract content(payload: unknown): string;
+}
+
+export function createSignatureProvider(provider: 'openai' | 'gemini' | 'ollama', options: SignatureProviderOptions): SignatureProvider {
+  if (provider === 'openai') return new OpenAISignatureProvider(options);
+  if (provider === 'gemini') return new GeminiSignatureProvider(options);
+  return new OllamaSignatureProvider(options);
+}
+
+class OpenAISignatureProvider extends SignatureHttpProvider {
+  readonly name = 'OpenAI';
+
+  protected request(context: BoundedSignatureContext, signal: AbortSignal): Promise<ProviderHttpResponse> {
+    return this.httpClient({ method: 'POST', url: this.options.baseUrl ?? OPENAI_URL, signal, headers: { authorization: `Bearer ${this.options.apiKey}`, 'content-type': 'application/json' }, body: {
+      model: this.options.model ?? DEFAULT_OPENAI_MODEL, response_format: { type: 'json_object' },
+      messages: [{ role: 'system', content: signatureInstructions() }, { role: 'user', content: signaturePrompt(context) }]
+    } });
+  }
+
+  protected content(payload: unknown): string { return extractOpenAIContent(payload); }
+}
+
+class GeminiSignatureProvider extends SignatureHttpProvider {
+  readonly name = 'Gemini';
+
+  protected request(context: BoundedSignatureContext, signal: AbortSignal): Promise<ProviderHttpResponse> {
+    const root = this.options.baseUrl ?? GEMINI_URL;
+    return this.httpClient({ method: 'POST', url: `${root}/${encodeURIComponent(this.options.model ?? DEFAULT_GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(this.options.apiKey)}`, signal, headers: { 'content-type': 'application/json' }, body: {
+      contents: [{ role: 'user', parts: [{ text: `${signatureInstructions()}\n\n${signaturePrompt(context)}` }] }], generationConfig: { responseMimeType: 'application/json' }
+    } });
+  }
+
+  protected content(payload: unknown): string { return extractGeminiContent(payload); }
+}
+
+class OllamaSignatureProvider extends SignatureHttpProvider {
+  readonly name = 'Ollama';
+
+  protected request(context: BoundedSignatureContext, signal: AbortSignal): Promise<ProviderHttpResponse> {
+    return this.httpClient({ method: 'POST', url: `${(this.options.baseUrl ?? 'http://ollama:11434').replace(/\/$/, '')}/api/chat`, signal, headers: { 'content-type': 'application/json' }, body: {
+      model: this.options.model ?? 'llama3.2', stream: false,
+      messages: [{ role: 'system', content: signatureInstructions() }, { role: 'user', content: signaturePrompt(context) }]
+    } });
+  }
+
+  protected content(payload: unknown): string {
+    const content = asRecord(asRecord(payload).message).content;
+    if (typeof content !== 'string') throw new Error('Ollama provider response was missing message content');
+    return content;
+  }
+}
 
 export class FakeAIProvider implements AIProvider {
   readonly id = 'fake';
@@ -161,6 +233,18 @@ function redactedPrompt(input: RedactedDigestInput): string {
   return `Use this redacted incident context to generate a digest:\n${JSON.stringify(input)}`;
 }
 
+function signatureInstructions(): string {
+  return 'Analyze one redacted Home Assistant log signature. Return JSON only with summary and recommendation. Do not reveal or request secrets, tokens, credentials, or full logs.';
+}
+
+function signaturePrompt(context: BoundedSignatureContext): string {
+  return `Use this bounded redacted signature context:\n${JSON.stringify({ ...context, occurrences: context.occurrences.map(redactText) })}`;
+}
+
+function redactText(value: string): string {
+  return value.replace(/\bBearer\s+[-._~+/=A-Za-z0-9]+\b/gi, 'Bearer [REDACTED]').replace(/\b(token|api[_-]?key|password|secret)(\s*[:=]\s*)[^\s&]+/gi, '$1$2[REDACTED]');
+}
+
 function extractOpenAIContent(payload: unknown): string {
   const choice = asRecord(payload).choices;
   if (!Array.isArray(choice)) throw new Error('OpenAI provider response was missing choices');
@@ -186,6 +270,16 @@ function parseStructuredDigest(content: string, provider: string): StructuredDig
     return parsed;
   } catch {
     throw new Error(`${provider} provider returned an invalid digest`);
+  }
+}
+
+function parseSignatureAnalysis(content: string, provider: string): SignatureAnalysis {
+  try {
+    const value = asRecord(JSON.parse(content));
+    if (typeof value.summary !== 'string' || typeof value.recommendation !== 'string') throw new Error('invalid analysis');
+    return { summary: value.summary, recommendation: value.recommendation };
+  } catch {
+    throw new Error(`${provider} provider returned an invalid signature analysis`);
   }
 }
 

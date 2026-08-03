@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const AiProviderSchema = z.enum(['openai', 'gemini']);
+export const AiProviderSchema = z.enum(['openai', 'gemini', 'ollama']);
 export type AiProvider = z.infer<typeof AiProviderSchema>;
 
 export const NotifierChannelSchema = z.enum(['home_assistant', 'email', 'telegram', 'markdown']);

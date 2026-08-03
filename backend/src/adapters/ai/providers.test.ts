@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RedactedDigestInput } from '../../domain/providers.js';
-import { FakeAIProvider, GeminiProvider, OpenAIProvider } from './providers.js';
+import { createSignatureProvider, FakeAIProvider, GeminiProvider, OpenAIProvider } from './providers.js';
 
 const OPENAI_TEST_KEY = 'openai-placeholder-key-for-tests';
 
@@ -195,6 +195,41 @@ describe('AI provider adapters', () => {
 
     await expect(request).rejects.toThrow('ANALYSIS_CANCELLED');
     await expect(request).rejects.not.toThrow(OPENAI_TEST_KEY);
+  });
+
+  it.each([
+    ['openai', 'https://fake.openai/v1/chat/completions', { choices: [{ message: { content: JSON.stringify({ summary: 'OpenAI summary', recommendation: 'Restart it' }) } }] }],
+    ['gemini', 'https://fake.gemini/gemini-1.5-flash:generateContent?key=provider-secret', { candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'Gemini summary', recommendation: 'Check it' }) }] } }] }],
+    ['ollama', 'http://fake.ollama/api/chat', { message: { content: JSON.stringify({ summary: 'Ollama summary', recommendation: 'Inspect it' }) } }]
+  ] as const)('uses bounded redacted per-signature %s requests', async (kind, url, response) => {
+    const requests: HttpRequest[] = [];
+    const provider = createSignatureProvider(kind, { apiKey: 'provider-secret', baseUrl: kind === 'openai' ? url : kind === 'gemini' ? 'https://fake.gemini' : 'http://fake.ollama', httpClient: async (request) => { requests.push(request); return { status: 200, json: async () => response }; } });
+
+    const result = await provider.analyze({ signature: 'sig-1', component: 'mqtt', classification: 'new', occurrences: ['token=must-not-leak', 'short context'] }, new AbortController().signal);
+
+    expect(result.summary).toContain(kind[0]!.toUpperCase());
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe(url);
+    expect(JSON.stringify(requests[0]?.body)).toContain('[REDACTED]');
+    expect(JSON.stringify(requests[0]?.body)).not.toContain('must-not-leak');
+  });
+
+  it('returns safe Ollama HTTP and malformed-response failures', async () => {
+    const statusFailure = createSignatureProvider('ollama', { apiKey: 'unused', httpClient: async () => ({ status: 500, json: async () => ({ secret: 'ollama-secret' }) }) });
+    const malformed = createSignatureProvider('ollama', { apiKey: 'unused', httpClient: async () => ({ status: 200, json: async () => ({ message: { content: 'not-json ollama-secret' } }) }) });
+    const context = { signature: 'sig', component: 'mqtt', classification: 'new' as const, occurrences: [] };
+
+    await expect(statusFailure.analyze(context, new AbortController().signal)).rejects.toThrow('Ollama provider request failed with status 500');
+    await expect(malformed.analyze(context, new AbortController().signal)).rejects.toThrow('Ollama provider returned an invalid signature analysis');
+  });
+
+  it('returns a safe Ollama timeout failure', async () => {
+    vi.useFakeTimers();
+    const provider = createSignatureProvider('ollama', { apiKey: 'unused', timeoutMs: 25, httpClient: async (request) => new Promise((_, reject) => request.signal?.addEventListener('abort', () => reject(new Error('ollama-secret')), { once: true })) });
+    const result = provider.analyze({ signature: 'sig', component: 'mqtt', classification: 'new', occurrences: [] }, new AbortController().signal);
+    const assertion = expect(result).rejects.toThrow('Ollama provider request failed before receiving a response');
+    await vi.advanceTimersByTimeAsync(25);
+    await assertion;
   });
 });
 

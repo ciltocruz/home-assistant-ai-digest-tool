@@ -12,15 +12,13 @@ import { SQLiteV2Stores } from './adapters/persistence/sqlite-v2-stores.js';
 import type { BackendApiServices } from './http/app.js';
 import type { ReportStore } from './domain/stores.js';
 import type { ExecutionContext } from './domain/execution.js';
-import { HomeAssistantRestClient } from './adapters/ha/rest-client.js';
-import { HomeAssistantLogTailReader } from './adapters/ha/log-reader.js';
-import { HomeAssistantFactsCollector, HomeAssistantIncidentDetector } from './adapters/ha/home-assistant.js';
-import { FakeAIProvider, GeminiProvider, OpenAIProvider } from './adapters/ai/providers.js';
-import { TelegramNotifier } from './adapters/notifiers/notifiers.js';
-import { ManualAnalysis } from './application/manual-analysis.js';
+import { HomeAssistantLogDeltaReader } from './adapters/ha/log-reader.js';
+import { HomeAssistantWebSocketClient, type HomeAssistantSocket } from './adapters/ha/websocket-client.js';
+import { createSignatureProvider, type ProviderHttpClient } from './adapters/ai/providers.js';
+import { TelegramNotifier, type NotifierHttpClient } from './adapters/notifiers/notifiers.js';
+import { BatchReportRun, type RunRequest } from './application/batch-report-run.js';
 import { DigestWorker } from './application/digest-worker.js';
 import { SettingsService, type SecretReplacement } from './application/settings.js';
-import { renderSafeMarkdown } from './application/incident-processing.js';
 
 export type PersistentRuntimeOptions = {
   dataDir?: string;
@@ -31,6 +29,10 @@ export type PersistentRuntimeOptions = {
   haMaxLogLines?: number;
   haMaxResponseBytes?: number;
   haAnalysisTimeoutMs?: number;
+  providerHttpClient?: ProviderHttpClient;
+  telegramHttpClient?: NotifierHttpClient;
+  haWebSocketFactory?: (url: string) => HomeAssistantSocket;
+  reportUrl?: (request: RunRequest) => string | undefined;
 };
 
 const SETTINGS_KEY = 'runtime';
@@ -113,32 +115,52 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
     }
   };
   if (options.haLogPath) {
-    const manualAnalysis = new ManualAnalysis({
-      collect: async (context) => {
+    const logReader = new HomeAssistantLogDeltaReader({ path: options.haLogPath });
+    const batch = new BatchReportRun({
+      log: { read: async () => logReader.read(await v2Stores.readCursor()) },
+      signatures: v2Stores,
+      persistence: v2Stores,
+      provider: {
+        analyze: async (context, signal) => {
           const current = await settingsStore.get();
-        return new HomeAssistantFactsCollector({
-          apiClient: new HomeAssistantRestClient({ haUrl: current.haUrl, haTokenRef: current.secretRefs.haTokenRef, secrets: secretStore, maxStates: options.haMaxStates, maxResponseBytes: options.haMaxResponseBytes }),
-          logReader: new HomeAssistantLogTailReader({ path: options.haLogPath!, maxLines: options.haMaxLogLines })
-        }).collect(context);
+          if (current.secretRefs.aiKeyRef.startsWith('unconfigured:')) throw new Error('AI_PROVIDER_UNAVAILABLE');
+          const apiKey = await secretStore.resolve(current.secretRefs.aiKeyRef);
+          return createSignatureProvider(current.aiProvider, { apiKey, httpClient: options.providerHttpClient, timeoutMs: options.haAnalysisTimeoutMs }).analyze(context, signal);
+        }
       },
-      detect: (facts, context) => new HomeAssistantIncidentDetector().detect(facts, context), generate: async (input, context) => {
+      haStatus: {
+        snapshot: async () => {
           const current = await settingsStore.get();
-          const aiKeyRef = current.secretRefs.aiKeyRef;
-          if (!aiKeyRef || aiKeyRef.startsWith('unconfigured:')) {
-            return new FakeAIProvider().generate(input, context);
-          }
+          return new HomeAssistantWebSocketClient({ haUrl: current.haUrl, haTokenRef: current.secretRefs.haTokenRef, secrets: secretStore, webSocketFactory: options.haWebSocketFactory }).snapshot();
+        }
+      },
+      notifier: {
+        notify: async (summary) => {
+          const current = await settingsStore.get();
+          const targetRef = current.secretRefs.notifierRefs?.telegram;
+          if (!targetRef || targetRef.startsWith('unconfigured:')) return;
           try {
-            const apiKey = await secretStore.resolve(aiKeyRef);
-            if (current.aiProvider === 'openai') {
-              return new OpenAIProvider({ apiKey }).generate(input, context);
-            }
-            return new GeminiProvider({ apiKey }).generate(input, context);
-          } catch {
-            return new FakeAIProvider().generate(input, context);
-          }
-        }, render: (digest) => renderSafeMarkdown(digest), save: (report, context) => reports.save(report, context), privacyLevel: 'balanced', now, timeoutMs: options.haAnalysisTimeoutMs ?? 60_000
+            const creds = JSON.parse(await secretStore.resolve(targetRef)) as { botToken: string; chatId: string };
+            await new TelegramNotifier({ now, httpClient: options.telegramHttpClient }).sendSummary(summary, { channel: 'telegram', label: `Telegram ${creds.chatId}`, config: creds });
+          } catch { /* Notification configuration and delivery failures never fail a committed v2 run. */ }
+        }
+      },
+      reportUrl: options.reportUrl,
+      now
     });
-    worker = new DigestWorker({ jobs: digestJobs, analysis: manualAnalysis });
+    worker = new DigestWorker({
+      jobs: digestJobs,
+      analysis: {
+        runWithStages: async (onStage, job) => {
+          await onStage('collecting');
+          const request = { runId: job?.id ?? randomUUID(), slotId: job?.triggerWindowId ?? `runtime:${randomUUID()}` };
+          const outcome = await batch.run(request);
+          if (outcome.status === 'failed') throw new Error(outcome.code);
+          await onStage('saving');
+          return { status: 'completed', reportId: `v2-report:${request.runId}` };
+        }
+      }
+    });
     services.digestWorker = worker;
     worker.start();
   }

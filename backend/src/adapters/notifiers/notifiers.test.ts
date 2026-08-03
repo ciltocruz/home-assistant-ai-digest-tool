@@ -136,6 +136,19 @@ describe('notifier adapters', () => {
       message: 'Telegram delivery failed before receiving a response.'
     });
   });
+
+  it('sends a compact linked summary only when a batch has noteworthy findings', async () => {
+    const requests: HttpRequest[] = [];
+    const notifier = new TelegramNotifier({ now: () => '2026-07-02T00:00:00.000Z', httpClient: async (request) => { requests.push(request); return { status: 200, json: async () => ({ ok: true }) }; } });
+    const target = { channel: 'telegram' as const, label: 'Telegram', config: { botToken: TELEGRAM_BOT_TOKEN_SENTINEL, chatId: '4242' } };
+
+    await expect(notifier.sendSummary({ findings: [], reportUrl: 'https://digest.local/reports/r1' }, target)).resolves.toMatchObject({ status: 'skipped' });
+    await expect(notifier.sendSummary({ findings: [{ signature: 'sig', analysis: { summary: 'MQTT failed', recommendation: 'Restart MQTT' } }], reportUrl: 'https://digest.local/reports/r1' }, target)).resolves.toMatchObject({ status: 'sent' });
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.body).toMatchObject({ text: expect.stringContaining('Open report') });
+    expect(JSON.stringify(requests[0]?.body)).not.toContain(TELEGRAM_BOT_TOKEN_SENTINEL);
+  });
 });
 
 type HttpRequest = { url: string; headers?: Record<string, string>; body?: unknown; signal?: AbortSignal };

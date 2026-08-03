@@ -23,6 +23,8 @@ type TelegramNotifierOptions = {
   timeoutMs?: number;
 };
 
+export type TelegramSummary = { findings: Array<{ signature: string; analysis: { summary: string; recommendation: string } }>; reportUrl?: string; language?: 'en' | 'es' };
+
 type MarkdownNotifierOptions = {
   write: (entry: { label: string; body: string }) => Promise<string>;
   now?: () => string;
@@ -50,7 +52,18 @@ export class TelegramNotifier implements Notifier {
     return this.postMessage(target, digest.body);
   }
 
-  private async postMessage(target: ResolvedTargetConfig, text: string): Promise<DeliveryResult> {
+  async sendSummary(summary: TelegramSummary, target: ResolvedTargetConfig): Promise<DeliveryResult> {
+    if (summary.findings.length === 0) return { status: 'skipped', targetRef: targetRef(target), message: 'No noteworthy findings.' };
+    const first = escapeTelegramMarkdown(summary.findings[0]!.analysis.summary);
+    const spanish = summary.language === 'es';
+    const link = summary.reportUrl ? `\n[${spanish ? 'Abrir informe' : 'Open report'}](${escapeTelegramUrl(summary.reportUrl)})` : '';
+    const count = summary.findings.length;
+    return this.postMessage(target, spanish
+      ? `*Resumen de Home Assistant*\n${count} incidencia${count === 1 ? '' : 's'} destacada${count === 1 ? '' : 's'}\. ${first}${link}`
+      : `*Home Assistant digest*\n${count} noteworthy finding${count === 1 ? '' : 's'}\. ${first}${link}`, true);
+  }
+
+  private async postMessage(target: ResolvedTargetConfig, text: string, isMarkdown = false): Promise<DeliveryResult> {
     const botToken = requiredConfig(target, 'botToken');
     const chatId = requiredConfig(target, 'chatId');
     let response: NotifierHttpResponse;
@@ -62,7 +75,7 @@ export class TelegramNotifier implements Notifier {
         headers: { 'content-type': 'application/json' },
         body: {
           chat_id: chatId,
-          text: escapeTelegramMarkdown(text),
+          text: isMarkdown ? text : escapeTelegramMarkdown(text),
           parse_mode: 'MarkdownV2',
           disable_web_page_preview: true
         }
@@ -151,6 +164,10 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function escapeTelegramMarkdown(value: string): string {
   return value.replace(/([_\-*\[\]()~`>#+=|{}.!\\])/g, '\\$1');
+}
+
+function escapeTelegramUrl(value: string): string {
+  return value.replace(/([\\)])/g, '\\$1');
 }
 
 async function fetchJson(request: NotifierHttpRequest): Promise<NotifierHttpResponse> {

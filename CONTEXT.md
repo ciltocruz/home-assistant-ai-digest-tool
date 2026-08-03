@@ -70,3 +70,7 @@ _Avoid_: history depth, scan days
 **Report schedule**:
 The user-chosen execution frequency with no default: presets (15m, 30m, 1h, 6h, 12h, daily with hour) or a custom weekday + time.
 _Avoid_: default interval, run often
+
+**Integration status**:
+The report section fed by the Home Assistant WebSocket API (`config_entries/get`), showing config entry state. Unavailable when the API call fails; the report still generates.
+_Avoid_: integration health from logs, status by guessing
