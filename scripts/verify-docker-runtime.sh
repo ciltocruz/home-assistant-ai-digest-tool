@@ -12,6 +12,7 @@ readonly cleanup_grace_seconds="${VERIFY_DOCKER_CLEANUP_GRACE_SECONDS:-20}"
 readonly caller_cushion_seconds="${VERIFY_DOCKER_CALLER_CUSHION_SECONDS:-5}"
 
 print_timeout_contract() {
+  # shellcheck disable=SC2016
   node --input-type=module -e '
     const durationSeconds = Number(process.argv[1]);
     const cleanupGraceSeconds = Number(process.argv[2]);
@@ -553,7 +554,7 @@ wait_for_job_state() {
     fi
     sleep 0.2
   done
-  printf 'Digest job %s did not reach %s before verification timed out.\n' "$job_id" "$expected_state" >&2
+  printf 'Digest job %s did not reach %s after %d polls.\n' "$job_id" "$expected_state" "$attempt" >&2
   return 1
 }
 
@@ -665,6 +666,7 @@ main() {
   write_run_metadata
 
   if [[ "${1:-}" == '--preflight' ]]; then
+    # shellcheck disable=SC2016
     node --input-type=module -e '
       process.stdout.write(`${JSON.stringify({
         projectName: process.argv[1],
