@@ -2,7 +2,7 @@ schema: spec-driven
 
 context: |
   Project: home-assistant-ai-digest-tool
-  State: initialization-only workspace with AGENTS.md and no product source yet
+  State: initialized workspace with product source and SDD planning artifacts
   Product: public-ready Home Assistant AI digest tool
   Target: Docker-first for Home Assistant Core
   Interfaces: Home Assistant sources, AI providers, notifiers, renderers, persistence

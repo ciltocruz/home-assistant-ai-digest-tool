@@ -3,37 +3,61 @@ import {
   DigestSummarySchema,
   DigestWindowSchema,
   ErrorDtoSchema,
+  EditableSettingsDtoSchema,
+  OnboardingProgressSchema,
+  OnboardingStepCommandSchema,
+  ReportPresentationV1Schema,
   RedactedSettingsDtoSchema,
   ScheduleSchema,
+  SettingsUpdateCommandSchema,
   SetupValidationRequestSchema,
   SetupValidationResponseSchema
 } from './dtos';
 
 describe('shared DTOs', () => {
+  it('accepts resumable onboarding progress without serializing secret values or references', () => {
+    const command = OnboardingStepCommandSchema.parse({
+      step: 'home_assistant',
+      draft: { haUrl: 'http://homeassistant.local:8123' },
+      secrets: { haToken: 'sentinel-onboarding-secret' }
+    });
+    const progress = OnboardingProgressSchema.parse({
+      currentStep: 'ai_provider',
+      completedSteps: ['home_assistant'],
+      draft: { haUrl: 'http://homeassistant.local:8123' },
+      secretMetadata: { haToken: { configured: true, mask: 'se…et' } },
+      completed: false
+    });
+
+    expect(command.secrets.haToken).toBe('sentinel-onboarding-secret');
+    expect(JSON.stringify(progress)).not.toContain('sentinel-onboarding-secret');
+    expect(JSON.stringify(progress)).not.toContain('secret_ref');
+  });
   it('accepts raw secrets only in setup validation requests', () => {
     const request = SetupValidationRequestSchema.parse({
       haUrl: 'https://home-assistant.local:8123',
-      haToken: 'raw-ha-token',
+      haToken: 'sentinel-raw-ha-credential',
       aiProvider: 'gemini',
-      aiKey: 'raw-ai-key',
+      aiKey: 'sentinel-raw-ai-credential',
       telegram: {
-        botToken: 'raw-bot-token',
+        botToken: 'sentinel-raw-telegram-credential',
         chatId: '123456'
       }
     });
 
-    expect(request.haToken).toBe('raw-ha-token');
-    expect(request.aiKey).toBe('raw-ai-key');
-    expect(request.telegram?.botToken).toBe('raw-bot-token');
+    expect(request.haToken).toBe('sentinel-raw-ha-credential');
+    expect(request.aiKey).toBe('sentinel-raw-ai-credential');
+    expect(request.telegram?.botToken).toBe('sentinel-raw-telegram-credential');
   });
 
   it('rejects raw secrets in setup validation responses', () => {
     const parsed = SetupValidationResponseSchema.parse({
+      csrfToken: 'csrf-session-code',
       settings: {
         haUrl: 'https://home-assistant.local:8123',
         ai: {
           provider: 'openai',
-          keyMask: 'sk-...abcd',
+          keyMask: 'sentinel-redacted-abcd',
           ref: 'secret_ai_openai'
         },
         notifiers: [
@@ -54,6 +78,23 @@ describe('shared DTOs', () => {
     expect(JSON.stringify(parsed)).not.toContain('aiKey');
   });
 
+  it('accepts setup validation responses that bootstrap an authenticated CSRF token', () => {
+    const parsed = SetupValidationResponseSchema.parse({
+      csrfToken: 'csrf-session-code',
+      settings: {
+        haUrl: 'https://home-assistant.local:8123',
+        ai: {
+          provider: 'openai',
+          keyMask: 'sentinel-redacted-abcd',
+          ref: 'secret_ai_openai'
+        },
+        notifiers: []
+      }
+    });
+
+    expect(parsed.csrfToken).toBe('csrf-session-code');
+  });
+
   it('keeps settings redacted with secret refs and masks', () => {
     const settings = RedactedSettingsDtoSchema.parse({
       haUrl: 'https://home-assistant.local:8123',
@@ -68,7 +109,28 @@ describe('shared DTOs', () => {
     });
 
     expect(settings.secretRefs.aiKeyRef).toBe('secret_ai_key');
-    expect(JSON.stringify(settings)).not.toContain('raw-ai-key');
+    expect(JSON.stringify(settings)).not.toContain('sentinel-raw-ai-credential');
+  });
+
+  it('accepts explicit secret operations while refusing raw values and references in editable settings', () => {
+    const command = SettingsUpdateCommandSchema.parse({
+      homeAssistant: { url: 'https://home-assistant.local:8123', token: { operation: 'keep_current' } },
+      ai: { provider: 'openai', key: { operation: 'replace', value: 'sentinel-new-provider-key' } },
+      notifications: { channel: 'none' },
+      schedules: [{ kind: 'daily', enabled: true, time: '08:00', timezone: 'Europe/Madrid' }],
+      privacyLevel: 'minimal',
+      retentionDays: 14
+    });
+
+    expect(command.ai.key).toEqual({ operation: 'replace', value: 'sentinel-new-provider-key' });
+    expect(() => EditableSettingsDtoSchema.parse({
+      homeAssistant: { url: 'https://home-assistant.local:8123', token: { configured: true, mask: '••••' }, tokenRef: 'secret-ha' },
+      ai: { provider: 'openai', key: { configured: true, mask: '••••' } },
+      notifications: { channel: 'none' },
+      schedules: command.schedules,
+      privacyLevel: command.privacyLevel,
+      retentionDays: command.retentionDays
+    })).toThrow();
   });
 
   it('accepts valid schedule times at HH:mm boundaries', () => {
@@ -156,6 +218,28 @@ describe('shared DTOs', () => {
     expect(JSON.stringify(summary)).not.toContain('providerPayload');
   });
 
+  it('accepts only durable manual job responses and credential-free report detail', async () => {
+    const { RunDigestRequestSchema, RunDigestResponseSchema, DigestJobStatusSchema, DigestDetailSchema } = await import('./dtos');
+    expect(RunDigestRequestSchema.parse({ kind: 'manual' })).toEqual({ kind: 'manual' });
+    expect(() => RunDigestRequestSchema.parse({ kind: 'daily' })).toThrow();
+    expect(RunDigestResponseSchema.parse({ status: 'queued', jobId: 'job-1' })).toEqual({ status: 'queued', jobId: 'job-1' });
+    expect(DigestJobStatusSchema.parse({ id: 'job-1', status: 'completed', stage: 'completed', attempts: 1, retryCount: 0, retryAvailable: false, reportId: 'digest-1', createdAt: '2026-07-06T01:00:00.000Z', updatedAt: '2026-07-06T01:00:00.000Z' })).toMatchObject({ reportId: 'digest-1' });
+    expect(DigestDetailSchema.parse({ id: 'digest-1', summary: { id: 'digest-1', window: { from: '2026-07-06T00:00:00.000Z', to: '2026-07-06T01:00:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-07-06T01:00:00.000Z', deliveryStatus: 'pending' }, rendered: { format: 'markdown', body: '# Digest' } }).rendered.body).toBe('# Digest');
+  });
+
+  it('accepts versioned structured report presentations from the API', () => {
+    expect(ReportPresentationV1Schema.parse({
+      version: 1,
+      mode: 'structured',
+      overview: { title: 'Home Assistant Digest', detail: 'One condition needs review.' },
+      attention: [{ id: 'attention-1', severity: 'critical', title: 'Garage door sensor', detail: 'Unavailable for 3 hours.' }],
+      observations: [{ id: 'observations-1', severity: 'info', title: 'Hallway temperature', detail: 'Changed more often than usual.' }],
+      allGood: [],
+      recommendations: [{ id: 'recommendation-1', severity: 'critical', title: 'Garage door sensor', detail: 'Unavailable for 3 hours.' }],
+      evidence: [{ id: 'evidence-1', title: 'Recorder window', detail: 'No gaps were reported.' }]
+    })).toMatchObject({ mode: 'structured', version: 1 });
+  });
+
   it('returns field-safe errors without secret values', () => {
     const error = ErrorDtoSchema.parse({
       code: 'VALIDATION_FAILED',
@@ -167,7 +251,7 @@ describe('shared DTOs', () => {
     });
 
     expect(error.fieldErrors?.aiKey).toEqual(['Invalid key format']);
-    expect(JSON.stringify(error)).not.toContain('raw-ai-key');
+    expect(JSON.stringify(error)).not.toContain('sentinel-raw-ai-credential');
   });
 
   it('rejects raw secret fields in response DTOs', () => {
@@ -175,12 +259,12 @@ describe('shared DTOs', () => {
       SetupValidationResponseSchema.parse({
         settings: {
           haUrl: 'https://home-assistant.local:8123',
-          haToken: 'raw-ha-token',
+          haToken: 'sentinel-raw-ha-credential',
           ai: {
             provider: 'openai',
-            keyMask: 'sk-...abcd',
+            keyMask: 'sentinel-redacted-abcd',
             ref: 'secret_ai_openai',
-            aiKey: 'raw-ai-key'
+            aiKey: 'sentinel-raw-ai-credential'
           },
           notifiers: []
         }

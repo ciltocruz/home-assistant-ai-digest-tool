@@ -1,0 +1,207 @@
+{
+  "hero": {
+    "eyebrow": "Docker-first incident briefing",
+    "title": "Home Assistant AI Digest",
+    "copy": "Turn Home Assistant warnings, unavailable entities, stale sensors, and delivery failures into a private daily briefing you can act on.",
+    "privacy": "Secrets are sent only to the local backend and displayed as masks after validation."
+  },
+  "onboarding": {
+    "eyebrow": "First run",
+    "title": "Guided onboarding",
+    "progressLabel": "Setup progress",
+    "stepLabels": {
+      "homeAssistant": "Connect Home Assistant",
+      "aiProvider": "AI provider",
+      "notifier": "Notifier",
+      "schedule": "Schedule",
+      "privacy": "Privacy",
+      "schedulePrivacy": "Schedule and privacy",
+      "firstDigest": "First digest"
+    },
+    "fields": {
+      "homeAssistantUrl": "Home Assistant URL",
+      "homeAssistantToken": "Home Assistant token",
+      "aiProvider": "AI provider",
+      "aiKey": "Provider key",
+      "notifier": "Notifier",
+      "telegramBotToken": "Telegram bot token",
+      "telegramChatId": "Telegram chat ID",
+      "dailyTime": "Digest time",
+      "timezone": "Timezone",
+      "privacyLevel": "Privacy level",
+      "retentionDays": "Retention days",
+      "privacyAccepted": "I accept that selected data may be sent to the AI provider to generate reports."
+    },
+    "notifiers": {
+      "telegram": "Telegram",
+      "markdown": "Markdown report"
+    },
+    "privacy": {
+      "minimal": "Minimal",
+      "balanced": "Balanced",
+      "detailed": "Detailed"
+    },
+    "actions": {
+      "continue": {
+        "homeAssistant": "Continue to AI provider",
+        "aiProvider": "Continue to notifier",
+        "notifier": "Continue to schedule",
+        "schedule": "Continue to privacy",
+        "privacy": "Continue to first digest",
+        "schedulePrivacy": "Continue to first digest"
+      },
+      "validateSetup": "Validate and run first digest",
+      "firstDigestQueued": "First digest queued",
+      "retry": "Retry setup"
+    },
+    "schedulePrivacyNotice": "We will save this schedule and privacy level before running the first digest. Secrets stay referenced and masked.",
+    "missingSetupToken": "Authenticated onboarding is unavailable.",
+    "firstDigestNotice": "The setup is ready. Validation will save the settings and queue the first digest.",
+    "explanations": {
+      "homeAssistant": "We need Home Assistant access to detect incidents. The URL and token are validated before continuing.",
+      "aiProvider": "AI is required to explain incidents. Choose a provider and add its key; it is never shown in full.",
+      "notifier": "Notifications are optional. You can use on-screen reports and configure Telegram later.",
+      "schedule": "The schedule controls when reports are generated.",
+      "privacy": "Privacy controls what context may be sent to AI and how long it is retained.",
+      "schedulePrivacy": "The schedule controls when reports are generated. Privacy controls what context may be sent to AI and how long it is retained."
+    },
+    "progress": { "ready": "Ready to continue.", "validating": "Validating setup…", "saving": "Saving secure settings…", "launching": "Queuing the first digest…", "success": "Settings saved. The first digest is queued.", "retry": "Setup could not be completed. Review the message and retry." },
+    "errors": {
+      "haUrl": "Enter a valid Home Assistant URL.",
+      "haToken": "Add a Home Assistant token.",
+      "aiKey": "Add the AI provider key.",
+      "telegramBotToken": "Add the Telegram bot token.",
+      "telegramChatId": "Add the Telegram chat.",
+      "dailyTime": "Enter a time using HH:MM.",
+      "timezone": "Enter a timezone.",
+      "retentionDays": "Use between 1 and 3650 retention days.",
+      "settingsPersistenceUnavailable": "Settings could not be saved before the first digest. Check the secure backend connection and try again.",
+      "privacyAccepted": "Confirm how data will be used before continuing.",
+      "missingSetupToken": "Authenticated onboarding is unavailable."
+    }
+  },
+  "dashboard": {
+    "ariaLabel": "Dashboard overview",
+    "currentState": {
+      "eyebrow": "System state",
+      "loading": { "title": "Updating state", "copy": "Checking the latest saved reports…" },
+      "error": { "title": "State could not be updated", "copy": "The state will appear when the connection recovers.", "action": "Retry state" },
+      "unavailable": { "title": "State waiting for connection", "copy": "Sign in to view the current state." },
+      "empty": { "title": "No pending incidents", "copy": "Run a report from Active report to check the system." },
+      "ready": { "title": "Current state", "clear": "No incidents require attention.", "attention": "{count} incidents require attention" }
+    },
+    "activeReport": { "title": "Active report" },
+    "latestReport": {
+      "eyebrow": "Latest result",
+      "title": "Latest report",
+      "loading": "Looking for the latest saved report…",
+      "empty": { "copy": "There are no saved reports yet.", "action": "View reports" },
+      "error": { "copy": "The latest report could not be determined.", "action": "View reports" }
+    },
+    "historyPreview": {
+      "eyebrow": "Recent activity",
+      "title": "Recent history",
+      "loading": "Loading recent history…",
+      "summary": "{count} earlier report",
+      "empty": { "copy": "No earlier reports.", "action": "View reports" },
+      "error": { "copy": "Recent history is unavailable.", "action": "View reports" },
+      "action": "View all reports"
+    },
+    "manualDigest": {
+      "eyebrow": "Digest control",
+      "title": "Manual digest",
+      "copy": "Run an on-demand digest against the local backend using saved settings.",
+      "unavailableCopy": "Manual digests will be available after settings and history are persisted.",
+      "action": "Run digest",
+      "pendingAction": "Running digest…",
+      "unavailableAction": "Not available yet",
+      "queued": "Manual digest queued.",
+      "error": "The manual digest could not be started."
+    },
+    "history": {
+      "eyebrow": "History",
+      "loading": {
+        "title": "Loading history",
+        "copy": "Looking for saved digests in the local backend."
+      },
+      "empty": {
+        "title": "No digests yet",
+        "copy": "After you run the first digest, it will appear here with its analyzed window and delivery status."
+      },
+      "error": {
+        "title": "History could not be loaded",
+        "copy": "Check that the session is still active and try again.",
+        "action": "Retry history"
+      },
+      "unavailable": {
+        "title": "History waiting for connection",
+        "copy": "History will load after the frontend has a secure backend session."
+      },
+      "summarySingular": "1 saved digest",
+      "summaryPlural": "{count} saved digests",
+        "analysisWindow": "Analyzed window: {from} — {to}",
+        "openReport": "Open report from {time}",
+      "severityAriaLabel": "Severity counts",
+      "severity": {
+        "critical": "Critical",
+        "warning": "Warnings",
+        "info": "Info"
+      },
+      "deliveryStatus": {
+        "pending": "Pending",
+        "sent": "Sent",
+        "failed": "Failed",
+        "skipped": "Skipped"
+      }
+    },
+    "jobLifecycle": {
+      "ariaLabel": "Active report status",
+      "eyebrow": { "queued": "Queued report", "running": "Report in progress", "completed": "Completed report", "failed": "Report requiring attention" },
+      "loadingTitle": "Checking report",
+      "loadingCopy": "Loading the saved report status…",
+      "loadError": "The report status could not be updated. Try again after the connection has recovered.",
+      "retryLoad": "Retry report status",
+      "retryError": "The report could not be retried. Check the configuration and try again.",
+      "progressLabel": "Progress: {stage}",
+      "lastUpdated": "Last updated: {time}",
+      "viewReport": "View report",
+      "retry": "Retry report",
+      "retrying": "Retrying report…",
+      "status": { "queued": "Queued", "running": "Running", "completed": "Completed", "failed": "Failed" },
+      "stage": { "queued": "Queued", "collecting": "Collecting data", "detecting": "Detecting incidents", "generating": "Generating summary", "rendering": "Preparing report", "saving": "Saving report", "completed": "Completed", "failed": "Failed" },
+      "message": { "queued": "The report is waiting for the local worker.", "collecting": "The required data is being collected.", "detecting": "Actionable incidents are being identified.", "generating": "The summary is being prepared with saved configuration.", "rendering": "The report is being formatted.", "saving": "The report is being saved to history.", "completed": "The report is now available in history.", "failed": "The report needs a recovery action." }
+    }
+  },
+  "shell": { "skipToContent": "Skip to main content", "navigationLabel": "Primary navigation", "dashboard": "Dashboard", "reports": "Reports", "settings": "Settings", "loadingSetup": "Loading saved setup…" },
+  "settings": { "title": "Settings", "signIn": "Sign in to review and update configuration.", "loading": "Loading saved settings…", "loadError": "Settings could not be loaded. Check the session and try again.", "review": "Review the highlighted fields before saving.", "saving": "Saving settings…", "saved": "Settings saved successfully.", "saveError": "Settings could not be saved. Check the fields and try again.", "noteSaved": "Note saved successfully.", "noteError": "The note could not be saved. Review the text and try again.", "ignoreSaved": "Warning added to ignored items.", "ignoreError": "The ignored warning could not be saved. Review the value and try again.", "ignoreRemoved": "Ignored warning removed successfully.", "ignoreRemoveError": "The ignored warning could not be removed. It is still available; try again.", "testingTelegram": "Sending Telegram test…", "telegramSent": "Telegram test sent successfully.", "telegramError": "Telegram test could not be sent. Review the configuration and try again.", "eyebrow": "Settings", "heading": "Connections, schedule, and privacy", "secretDescription": "Current secrets are masked. You can keep them or explicitly replace them.", "navigation": "Settings sections", "retryRemoval": "Retry removal", "homeAssistant": "Home Assistant", "homeAssistantUrl": "Home Assistant URL", "homeAssistantToken": "Home Assistant token", "ai": "AI provider", "provider": "Provider", "providerKey": "Provider key", "notifications": "Notifications", "channel": "Channel", "noNotifications": "Do not send notifications", "telegramChat": "Telegram chat", "telegramBotToken": "Telegram bot token", "sendTelegramTest": "Send Telegram test", "schedule": "Schedule", "frequency": "Frequency", "daily": "Daily", "weekly": "Weekly", "time": "Time", "timezone": "Timezone", "dayOfWeek": "Day of the week", "weekdays": ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], "enableSchedule": "Enable this schedule", "privacyRetention": "Privacy and retention", "detailLevel": "Detail level", "minimal": "Minimal", "balanced": "Balanced", "detailed": "Detailed", "retentionDays": "Retention days", "save": "Save settings", "cancel": "Discard changes", "changesDiscarded": "Unsaved changes were discarded.", "context": "Context", "contextTitle": "Notes and ignored warnings", "contextDescription": "Keep operational context with configuration to avoid duplicate panel changes.", "operatorNotes": "Operator notes", "addNote": "Add note", "note": "Note", "saveNote": "Save note", "savingNote": "Saving note…", "notesUnavailable": "Notes are unavailable in this session.", "noNotes": "No saved notes.", "ignoredWarnings": "Ignored warnings", "addIgnoredWarning": "Add ignored warning", "match": "Match", "ignoreWarning": "Ignore warning", "savingWarning": "Saving warning…", "ignoresUnavailable": "Ignored warnings are unavailable in this session.", "noIgnores": "No ignored warnings.", "noReason": "No reason recorded", "remove": "Remove", "removeIgnoredTitle": "Remove ignored warning", "removeIgnoredDescription": "The warning “{match}” will appear again in upcoming reports.", "loadNotesError": "Notes could not be loaded. Try again.", "loadIgnoresError": "Ignored warnings could not be loaded. Try again.", "configured": "Configured: {mask}", "notConfigured": "Not configured yet.", "keepCurrent": "Keep current value", "replace": "Replace with a new value", "newValue": "New value", "loadingContext": "Loading…", "validHomeAssistantUrl": "Enter a valid Home Assistant URL.", "validTime": "Enter a valid time.", "validTimezone": "Enter a valid timezone.", "validRetention": "Use between 1 and {max} retention days." },
+  "report": {
+    "eyebrow": "Saved report",
+    "title": "Report #{id}",
+    "createdAt": "Generated: {time}",
+    "window": "Analysis window",
+    "delivery": "Delivery",
+    "back": "Back to reports",
+    "loadingTitle": "Loading report",
+    "loadingCopy": "Loading the saved report…",
+    "errorTitle": "Report not found",
+    "errorCopy": "The report may no longer be available. Return to Reports to review the updated history.",
+    "contentAriaLabel": "Report content",
+    "emptyContent": "This report has no readable content.",
+    "severity": { "title": "Severity summary", "ariaLabel": "Severity counts", "critical": "Critical", "warning": "Warnings", "info": "Observations" },
+    "attention": { "title": "Attention", "copy": "This report contains {count} issues that require attention. Review the report content for details." },
+    "observations": { "title": "Observations", "copy": "The report contains {count} informational observations." },
+    "allGood": { "title": "All clear", "copy": "No issues require attention." },
+    "recommendations": { "title": "Recommendations", "legacyCopy": "No structured recommendations are available for this legacy report." },
+    "batch": { "warnings": "Analysis warnings", "integrations": "Integration status", "unavailable": "Integration status is unavailable.", "none": "No integration entries were returned.", "signatures": "Signature analysis", "failure": "Report failed", "trend": "Trend: {trend}; occurrences: {count}.", "recommendation": "Recommendation:", "analysisUnavailable": "Analysis was unavailable for this signature.", "classification": { "new": "New", "recurring": "Recurring", "reactivated": "Reactivated", "latent": "Latent" } },
+    "presentation": {
+      "overview": { "title": "Summary" },
+      "attention": { "title": "Requires attention" },
+      "observations": { "title": "Observations" },
+      "allGood": { "title": "All clear" },
+      "recommendations": { "title": "Recommendation" },
+      "evidence": { "title": "Evidence" },
+      "severity": { "critical": "Critical", "warning": "Warning", "info": "Information" },
+      "legacy": { "title": "Legacy format", "copy": "This report has no structured data. The original content is shown safely." }
+    }
+  }
+}

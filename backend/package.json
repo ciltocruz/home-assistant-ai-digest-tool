@@ -5,9 +5,13 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@ha-digest/shared": "workspace:*"
+    "@ha-digest/shared": "workspace:*",
+    "@js-temporal/polyfill": "0.5.1",
+    "argon2": "0.45.1",
+    "fastify": "5.10.0"
   }
 }

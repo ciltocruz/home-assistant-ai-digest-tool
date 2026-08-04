@@ -1,0 +1,207 @@
+{
+  "hero": {
+    "eyebrow": "Resumen de incidencias Docker-first",
+    "title": "Home Assistant AI Digest",
+    "copy": "Convierte avisos de Home Assistant, entidades no disponibles, sensores obsoletos y fallos de entrega en un resumen privado diario con acciones claras.",
+    "privacy": "Los secretos se envían solo al backend local y se muestran enmascarados tras la validación."
+  },
+  "onboarding": {
+    "eyebrow": "Primer arranque",
+    "title": "Configuración guiada",
+    "progressLabel": "Progreso de configuración",
+    "stepLabels": {
+      "homeAssistant": "Conecta Home Assistant",
+      "aiProvider": "Proveedor de IA",
+      "notifier": "Canal de aviso",
+      "schedule": "Horario",
+      "privacy": "Privacidad",
+      "schedulePrivacy": "Horario y privacidad",
+      "firstDigest": "Primer informe"
+    },
+    "fields": {
+      "homeAssistantUrl": "URL de Home Assistant",
+      "homeAssistantToken": "Token de Home Assistant",
+      "aiProvider": "Proveedor de IA",
+      "aiKey": "Clave del proveedor",
+      "notifier": "Canal de aviso",
+      "telegramBotToken": "Token del bot de Telegram",
+      "telegramChatId": "ID del chat de Telegram",
+      "dailyTime": "Hora del informe",
+      "timezone": "Zona horaria",
+      "privacyLevel": "Nivel de privacidad",
+      "retentionDays": "Días de retención",
+      "privacyAccepted": "Acepto que los datos seleccionados puedan enviarse al proveedor de IA para generar informes."
+    },
+    "notifiers": {
+      "telegram": "Telegram",
+      "markdown": "Informe Markdown"
+    },
+    "privacy": {
+      "minimal": "Mínima",
+      "balanced": "Equilibrada",
+      "detailed": "Detallada"
+    },
+    "actions": {
+      "continue": {
+        "homeAssistant": "Continuar a proveedor de IA",
+        "aiProvider": "Continuar a canal de aviso",
+        "notifier": "Continuar al horario",
+        "schedule": "Continuar a privacidad",
+        "privacy": "Continuar al primer informe",
+        "schedulePrivacy": "Continuar a primer informe"
+      },
+      "validateSetup": "Validar y lanzar primer informe",
+      "firstDigestQueued": "Primer informe en cola",
+      "retry": "Reintentar configuración"
+    },
+    "schedulePrivacyNotice": "Guardaremos este horario y nivel de privacidad antes de lanzar el primer informe. Los secretos seguirán referenciados y enmascarados.",
+    "missingSetupToken": "La configuración autenticada no está disponible.",
+    "firstDigestNotice": "La configuración está lista. Al validar se guardarán los ajustes y se pondrá en cola el primer informe.",
+    "explanations": {
+      "homeAssistant": "Necesitamos acceder a Home Assistant para detectar incidencias. La URL y el token se validan antes de continuar.",
+      "aiProvider": "La IA es necesaria para explicar las incidencias. Elige un proveedor y añade su clave; nunca se muestra completa.",
+      "notifier": "Los avisos son opcionales. Puedes usar informes en pantalla y configurar Telegram más adelante.",
+      "schedule": "El horario determina cuándo se generarán los informes.",
+      "privacy": "La privacidad controla qué contexto puede enviarse a la IA y cuánto tiempo se conserva.",
+      "schedulePrivacy": "El horario determina cuándo se generarán los informes. La privacidad controla qué contexto puede enviarse a la IA y cuánto tiempo se conserva."
+    },
+    "progress": { "ready": "Listo para continuar.", "validating": "Validando configuración…", "saving": "Guardando configuración segura…", "launching": "Poniendo en cola el primer informe…", "success": "Configuración guardada. El primer informe está en cola.", "retry": "No se pudo completar la configuración. Revisa el mensaje y vuelve a intentarlo." },
+    "errors": {
+      "haUrl": "Indica una URL válida de Home Assistant.",
+      "haToken": "Añade un token de Home Assistant.",
+      "aiKey": "Añade la clave del proveedor de IA.",
+      "telegramBotToken": "Añade el token del bot de Telegram.",
+      "telegramChatId": "Añade el chat de Telegram.",
+      "dailyTime": "Indica una hora en formato HH:MM.",
+      "timezone": "Indica una zona horaria.",
+      "retentionDays": "Usa entre 1 y 3650 días de retención.",
+      "settingsPersistenceUnavailable": "No se pudieron guardar los ajustes antes del primer informe. Revisa la conexión segura con el backend y vuelve a intentarlo.",
+      "privacyAccepted": "Confirma cómo se usarán los datos antes de continuar.",
+      "missingSetupToken": "La configuración autenticada no está disponible."
+    }
+  },
+  "dashboard": {
+    "ariaLabel": "Vista general del panel",
+    "currentState": {
+      "eyebrow": "Estado del sistema",
+      "loading": { "title": "Actualizando el estado", "copy": "Comprobando los últimos informes guardados…" },
+      "error": { "title": "No se pudo actualizar el estado", "copy": "El estado se mostrará cuando se recupere la conexión.", "action": "Reintentar estado" },
+      "unavailable": { "title": "Estado pendiente de conexión", "copy": "Inicia sesión para consultar el estado actual." },
+      "empty": { "title": "Sin incidencias pendientes", "copy": "Lanza un informe desde la sección Informe activo para comprobar el sistema." },
+      "ready": { "title": "Estado actual", "clear": "No hay incidencias que requieran atención.", "attention": "{count} incidencias requieren atención" }
+    },
+    "activeReport": { "title": "Informe activo" },
+    "latestReport": {
+      "eyebrow": "Último resultado",
+      "title": "Último informe",
+      "loading": "Buscando el último informe guardado…",
+      "empty": { "copy": "Todavía no hay ningún informe guardado.", "action": "Ver informes" },
+      "error": { "copy": "No se pudo determinar el último informe.", "action": "Ver informes" }
+    },
+    "historyPreview": {
+      "eyebrow": "Actividad reciente",
+      "title": "Historial reciente",
+      "loading": "Cargando el historial reciente…",
+      "summary": "{count} informe anterior",
+      "empty": { "copy": "Sin informes anteriores.", "action": "Ver informes" },
+      "error": { "copy": "El historial reciente no está disponible.", "action": "Ver informes" },
+      "action": "Ver todos los informes"
+    },
+    "manualDigest": {
+      "eyebrow": "Control del informe",
+      "title": "Informe manual",
+      "copy": "Lanza un informe bajo demanda contra el backend local usando los ajustes guardados.",
+      "unavailableCopy": "El informe manual estará disponible después de persistir ajustes e historial.",
+      "action": "Lanzar informe",
+      "pendingAction": "Lanzando informe…",
+      "unavailableAction": "No disponible todavía",
+      "queued": "Informe manual en cola.",
+      "error": "No se pudo lanzar el informe manual."
+    },
+    "history": {
+      "eyebrow": "Historial",
+      "loading": {
+        "title": "Cargando historial",
+        "copy": "Buscando informes guardados en el backend local."
+      },
+      "empty": {
+        "title": "Aún no hay informes",
+        "copy": "Cuando lances el primer informe, aparecerá aquí con su ventana analizada y estado de entrega."
+      },
+      "error": {
+        "title": "No se pudo cargar el historial",
+        "copy": "Revisa que la sesión siga activa y vuelve a intentarlo.",
+        "action": "Reintentar historial"
+      },
+      "unavailable": {
+        "title": "Historial pendiente de conexión",
+        "copy": "El historial se cargará cuando el frontend tenga una sesión segura con el backend."
+      },
+      "summarySingular": "1 informe guardado",
+      "summaryPlural": "{count} informes guardados",
+        "analysisWindow": "Ventana analizada: {from} — {to}",
+        "openReport": "Abrir informe del {time}",
+      "severityAriaLabel": "Recuento por severidad",
+      "severity": {
+        "critical": "Críticas",
+        "warning": "Avisos",
+        "info": "Info"
+      },
+      "deliveryStatus": {
+        "pending": "Pendiente",
+        "sent": "Enviado",
+        "failed": "Fallido",
+        "skipped": "Omitido"
+      }
+    },
+    "jobLifecycle": {
+      "ariaLabel": "Estado de informes activos",
+      "eyebrow": { "queued": "Informe en cola", "running": "Informe en curso", "completed": "Informe completado", "failed": "Informe que requiere atención" },
+      "loadingTitle": "Comprobando el informe",
+      "loadingCopy": "Recuperando el estado guardado del informe…",
+      "loadError": "No se pudo actualizar el estado del informe. Vuelve a intentarlo cuando la conexión se haya restablecido.",
+      "retryLoad": "Reintentar estado del informe",
+      "retryError": "No se pudo reintentar el informe. Revisa la configuración y vuelve a intentarlo.",
+      "progressLabel": "Progreso: {stage}",
+      "lastUpdated": "Última actualización: {time}",
+      "viewReport": "Ver informe",
+      "retry": "Reintentar informe",
+      "retrying": "Reintentando informe…",
+      "status": { "queued": "En cola", "running": "En curso", "completed": "Completado", "failed": "Fallido" },
+      "stage": { "queued": "En cola", "collecting": "Recopilando datos", "detecting": "Detectando incidencias", "generating": "Generando resumen", "rendering": "Preparando informe", "saving": "Guardando informe", "completed": "Completado", "failed": "Fallido" },
+      "message": { "queued": "El informe espera su turno en el trabajador local.", "collecting": "Se están recopilando los datos necesarios.", "detecting": "Se están identificando incidencias accionables.", "generating": "Se está preparando el resumen con la configuración guardada.", "rendering": "Se está dando formato al informe.", "saving": "Se está guardando el informe para el historial.", "completed": "El informe ya está disponible en el historial.", "failed": "El informe necesita una acción de recuperación." }
+    }
+  },
+  "shell": { "skipToContent": "Saltar al contenido principal", "navigationLabel": "Navegación principal", "dashboard": "Panel", "reports": "Informes", "settings": "Configuración", "loadingSetup": "Cargando la configuración guardada…" },
+  "settings": { "title": "Configuración", "signIn": "Inicie sesión para revisar y modificar la configuración.", "loading": "Cargando los ajustes guardados…", "loadError": "No se pudieron cargar los ajustes. Compruebe la sesión y vuelva a intentarlo.", "review": "Revise los campos indicados antes de guardar.", "saving": "Guardando ajustes…", "saved": "Los ajustes se guardaron correctamente.", "saveError": "No se pudieron guardar los ajustes. Compruebe los campos y vuelva a intentarlo.", "noteSaved": "La nota se guardó correctamente.", "noteError": "No se pudo guardar la nota. Revise el texto y vuelva a intentarlo.", "ignoreSaved": "El aviso se añadió a los ignorados.", "ignoreError": "No se pudo guardar el aviso ignorado. Revise el valor y vuelva a intentarlo.", "ignoreRemoved": "El aviso ignorado se quitó correctamente.", "ignoreRemoveError": "No se pudo quitar el aviso ignorado. El aviso sigue disponible; vuelva a intentarlo.", "testingTelegram": "Enviando la prueba de Telegram…", "telegramSent": "La prueba de Telegram se envió correctamente.", "telegramError": "No se pudo enviar la prueba de Telegram. Revise la configuración y vuelva a intentarlo.", "eyebrow": "Configuración", "heading": "Conexiones, horario y privacidad", "secretDescription": "Los secretos actuales se muestran solo enmascarados. Puede conservarlos o sustituirlos de forma explícita.", "navigation": "Secciones de configuración", "retryRemoval": "Reintentar eliminación", "homeAssistant": "Home Assistant", "homeAssistantUrl": "URL de Home Assistant", "homeAssistantToken": "Token de Home Assistant", "ai": "Proveedor de IA", "provider": "Proveedor", "providerKey": "Clave del proveedor", "notifications": "Notificaciones", "channel": "Canal", "noNotifications": "No enviar notificaciones", "telegramChat": "Chat de Telegram", "telegramBotToken": "Token del bot de Telegram", "sendTelegramTest": "Enviar prueba de Telegram", "schedule": "Horario", "frequency": "Frecuencia", "daily": "Diaria", "weekly": "Semanal", "time": "Hora", "timezone": "Zona horaria", "dayOfWeek": "Día de la semana", "weekdays": ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"], "enableSchedule": "Activar este horario", "privacyRetention": "Privacidad y retención", "detailLevel": "Nivel de detalle", "minimal": "Mínimo", "balanced": "Equilibrado", "detailed": "Detallado", "retentionDays": "Días de retención", "save": "Guardar ajustes", "cancel": "Cancelar cambios", "changesDiscarded": "Los cambios sin guardar se descartaron.", "context": "Contexto", "contextTitle": "Notas y avisos ignorados", "contextDescription": "Conserve el contexto operativo junto a la configuración para evitar cambios duplicados en el panel.", "operatorNotes": "Notas del operador", "addNote": "Añadir nota", "note": "Nota", "saveNote": "Guardar nota", "savingNote": "Guardando nota…", "notesUnavailable": "Las notas no están disponibles en esta sesión.", "noNotes": "No hay notas guardadas.", "ignoredWarnings": "Avisos ignorados", "addIgnoredWarning": "Añadir aviso ignorado", "match": "Coincidencia", "ignoreWarning": "Ignorar aviso", "savingWarning": "Guardando aviso…", "ignoresUnavailable": "Los avisos ignorados no están disponibles en esta sesión.", "noIgnores": "No hay avisos ignorados.", "noReason": "Sin motivo registrado", "remove": "Quitar", "removeIgnoredTitle": "Quitar aviso ignorado", "removeIgnoredDescription": "El aviso “{match}” volverá a aparecer en los próximos informes.", "loadNotesError": "No se pudieron cargar las notas. Vuelva a intentarlo.", "loadIgnoresError": "No se pudieron cargar los avisos ignorados. Vuelva a intentarlo.", "configured": "Configurado: {mask}", "notConfigured": "No configurado todavía.", "keepCurrent": "Conservar el valor actual", "replace": "Reemplazar con un valor nuevo", "newValue": "Nuevo valor", "loadingContext": "Cargando…", "validHomeAssistantUrl": "Indica una URL válida de Home Assistant.", "validTime": "Indica una hora válida.", "validTimezone": "Indica una zona horaria.", "validRetention": "Use entre 1 y {max} días de retención." },
+  "report": {
+    "eyebrow": "Informe guardado",
+    "title": "Informe #{id}",
+    "createdAt": "Generado: {time}",
+    "window": "Ventana analizada",
+    "delivery": "Entrega",
+    "back": "Volver a informes",
+    "loadingTitle": "Cargando informe",
+    "loadingCopy": "Recuperando el informe guardado…",
+    "errorTitle": "Informe no encontrado",
+    "errorCopy": "Puede que el informe ya no esté disponible. Vuelve a Informes para consultar el historial actualizado.",
+    "contentAriaLabel": "Contenido del informe",
+    "emptyContent": "El informe no incluye contenido legible.",
+    "severity": { "title": "Resumen de severidad", "ariaLabel": "Recuento por severidad", "critical": "Críticas", "warning": "Avisos", "info": "Observaciones" },
+    "attention": { "title": "Atención", "copy": "Este informe contiene {count} incidencias que requieren atención. Revisa el contenido del informe para conocer el detalle." },
+    "observations": { "title": "Observaciones", "copy": "El informe registra {count} observaciones informativas." },
+    "allGood": { "title": "Todo correcto", "copy": "Sin incidencias que requieran atención." },
+    "recommendations": { "title": "Recomendaciones", "legacyCopy": "No hay recomendaciones estructuradas disponibles para este informe heredado." },
+    "batch": { "warnings": "Avisos del análisis", "integrations": "Estado de integraciones", "unavailable": "El estado de integraciones no está disponible.", "none": "No se recibieron integraciones.", "signatures": "Análisis de firmas", "failure": "El informe ha fallado", "trend": "Tendencia: {trend}; apariciones: {count}.", "recommendation": "Recomendación:", "analysisUnavailable": "El análisis no estuvo disponible para esta firma.", "classification": { "new": "Nueva", "recurring": "Recurrente", "reactivated": "Reactivada", "latent": "Latente" } },
+    "presentation": {
+      "overview": { "title": "Resumen" },
+      "attention": { "title": "Requiere atención" },
+      "observations": { "title": "Observaciones" },
+      "allGood": { "title": "Todo correcto" },
+      "recommendations": { "title": "Recomendación" },
+      "evidence": { "title": "Evidencia" },
+      "severity": { "critical": "Crítica", "warning": "Aviso", "info": "Información" },
+      "legacy": { "title": "Formato heredado", "copy": "Este informe no incluye datos estructurados. Se muestra el contenido original de forma segura." }
+    }
+  }
+}

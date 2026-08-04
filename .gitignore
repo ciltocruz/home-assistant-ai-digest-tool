@@ -1,10 +1,16 @@
 node_modules/
 dist/
 coverage/
+test-results/
 .DS_Store
 .idea/
 *.iml
 .atl/
+AGENTS.md
+docs/review/
+openspec/
+docs/superpowers/
+.preview/
 .env*
 !.env.example
 !.env.template

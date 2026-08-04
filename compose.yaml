@@ -1,0 +1,45 @@
+services:
+  app:
+    build:
+      context: .
+      target: runtime-preview
+    image: home-assistant-ai-digest-tool:preview
+    ports:
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-3000}:3000"
+    environment:
+      APP_BIND_ADDRESS: "${APP_BIND_ADDRESS:-127.0.0.1}"
+      RUNTIME_MODE: "${RUNTIME_MODE:-local}"
+      TRUST_PROXY: "${TRUST_PROXY:-false}"
+      SECURE_COOKIES: "${SECURE_COOKIES:-false}"
+      FRONTEND_DIST_DIR: /app/frontend-dist
+      DATA_DIR: /data
+      LOG_DIR: /data/logs
+      HA_LOGS_DIR: /ha-logs
+      HA_MAX_STATES: "${HA_MAX_STATES:-500}"
+      HA_MAX_LOG_LINES: "${HA_MAX_LOG_LINES:-200}"
+      HA_MAX_RESPONSE_BYTES: "${HA_MAX_RESPONSE_BYTES:-1000000}"
+      HA_ANALYSIS_TIMEOUT_MS: "${HA_ANALYSIS_TIMEOUT_MS:-60000}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/ready').then((response)=>process.exit(response.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    volumes:
+      - ha-digest-data:/data
+      # Mount exactly one HA log file; never mount the HA config directory or Docker socket.
+      - "${HA_LOG_FILE:-./.preview/ha-logs/home-assistant.log}:/ha-logs/home-assistant.log:ro"
+    restart: unless-stopped
+
+volumes:
+  ha-digest-data:

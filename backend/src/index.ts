@@ -1,1 +1,1 @@
-export const backendPlaceholder = 'backend foundation';
+export type * from './domain/index.js';
