@@ -111,7 +111,7 @@ describe('createApiClient', () => {
       ['http://ui.test/api/notifiers/send', 'POST']
     ]);
     expect(calls[0]?.init.headers).not.toMatchObject({ 'x-csrf-token': 'csrf sample value' });
-    for (const call of calls.filter((entry) => (entry.init.method ?? 'GET') !== 'GET')) {
+    for (const call of calls.filter((entry) => entry.init.body !== undefined)) {
       expect(call.init.headers).toMatchObject({ 'x-csrf-token': 'csrf sample value', 'content-type': 'application/json' });
     }
     expect(JSON.parse(String(calls[1]?.init.body))).toEqual({
@@ -126,6 +126,7 @@ describe('createApiClient', () => {
     expect(JSON.parse(String(calls[4]?.init.body))).toEqual({ text: 'Observed restart', occurredAt: '2026-07-10T10:00:00.000Z', tags: ['maintenance'] });
     expect(JSON.parse(String(calls[7]?.init.body))).toEqual({ match: 'sensor.noisy', type: 'entity', reason: 'Known noisy fixture' });
     expect(calls[8]?.init.body).toBeUndefined();
+    expect(new Headers(calls[8]?.init.headers).get('content-type')).toBeNull();
     expect(JSON.parse(String(calls[9]?.init.body))).toEqual({ channel: 'telegram', targetRef: 'ref-telegram', message: 'Synthetic test message' });
     expect(JSON.parse(String(calls[10]?.init.body))).toEqual({ digestId: 'digest-1', targetRef: 'ref-telegram' });
   });
@@ -161,6 +162,24 @@ describe('createApiClient', () => {
     await expect(client.getDigestJob('job-1')).resolves.toMatchObject({ stage: 'failed', retryAvailable: true });
     await expect(client.retryDigestJob('job-1')).resolves.toMatchObject({ status: 'queued', retryCount: 1, retryAvailable: false });
     expect(calls).toEqual(['/api/digests/jobs/job-1:GET', '/api/digests/jobs/job-1/retry:POST']);
+  });
+
+  test('does not label a bodyless retry as a JSON request', async () => {
+    let retryRequest: RequestInit | undefined;
+    const job = { id: 'job-1', status: 'failed', stage: 'failed', attempts: 1, retryCount: 0, retryAvailable: true, errorCode: 'HOME_ASSISTANT_UNAVAILABLE', errorMessage: 'Home Assistant is unavailable.', createdAt: '2026-08-01T10:00:00.000Z', updatedAt: '2026-08-01T10:00:00.000Z' };
+    const client = createApiClient({
+      csrfToken: 'csrf-token',
+      fetch: async (url, init = {}) => {
+        if (String(url).endsWith('/retry')) retryRequest = init;
+        return jsonResponse(202, { ...job, status: 'queued', stage: 'queued', retryCount: 1, retryAvailable: false });
+      }
+    });
+
+    await client.retryDigestJob('job-1');
+
+    expect(retryRequest?.body).toBeUndefined();
+    expect(new Headers(retryRequest?.headers).get('content-type')).toBeNull();
+    expect(new Headers(retryRequest?.headers).get('x-csrf-token')).toBe('csrf-token');
   });
 
   test('keeps a safe contract diagnostic for malformed manual report details', async () => {
