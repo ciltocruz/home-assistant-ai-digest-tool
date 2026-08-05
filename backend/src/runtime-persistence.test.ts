@@ -330,6 +330,50 @@ describe('persistent runtime services', () => {
     DigestDetailSchema.parse(await services.reports.get(history.find((item) => item.id.startsWith('v2-report:'))?.id ?? 'missing'));
   });
 
+  it('returns schema-valid combined history after repairing legacy reports beside failed and successful v2 entries', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-combined-history-'));
+    const initial = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
+    await initial.close?.();
+
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
+    const db = new DatabaseSync(join(dataDir, 'app.db'));
+    runMigrations(db);
+    db.prepare(`insert into reports(
+      id, window_from, window_to, severity_counts_json, rendered_markdown, compressed_payload, created_at
+    ) values (?, ?, ?, ?, ?, ?, ?)`).run(
+      'legacy-invalid',
+      '2026-07-31T21:46:10.471Z',
+      '2026-07-31T21:46:10.471Z',
+      '{"critical":0,"warning":1,"info":0}',
+      '# Legacy report',
+      null,
+      '2026-07-31T21:46:10.471Z'
+    );
+    db.prepare('insert into v2_runs(id, slot_id, status, error_code, created_at) values (?, ?, ?, ?, ?)')
+      .run('successful-v2', 'slot-successful-v2', 'reported', null, '2026-07-31T21:46:11.000Z');
+    db.prepare('insert into v2_reports(id, run_id, status, payload_json, created_at) values (?, ?, ?, ?, ?)')
+      .run('v2-report:successful-v2', 'successful-v2', 'reported', JSON.stringify({ report: { warnings: [] }, signatures: [] }), '2026-07-31T21:46:11.000Z');
+    db.prepare('insert into v2_runs(id, slot_id, status, error_code, created_at) values (?, ?, ?, ?, ?)')
+      .run('failed-v2', 'slot-failed-v2', 'failed', 'REPORT_MISSING', '2026-07-31T21:46:12.000Z');
+    db.close();
+
+    const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
+    try {
+      const history = DigestHistoryResponseSchema.parse(await services.reports.list());
+
+      expect(history).toHaveLength(3);
+      expect(history.map((item) => item.id)).toEqual(expect.arrayContaining(['legacy-invalid', 'v2-report:successful-v2', 'v2-run:failed-v2']));
+      expect(history.find((item) => item.id === 'legacy-invalid')?.window).toEqual({
+        from: '2026-07-31T21:46:10.470Z',
+        to: '2026-07-31T21:46:10.471Z'
+      });
+      expect(history.find((item) => item.id === 'v2-report:successful-v2')).toMatchObject({ runStatus: 'reported' });
+      expect(history.find((item) => item.id === 'v2-run:failed-v2')).toMatchObject({ runStatus: 'failed', warningCodes: ['REPORT_MISSING'] });
+    } finally {
+      await services.close?.();
+    }
+  });
+
   it('applies the configured warning toggle to real queued batch runs while preserving the default exclusion', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-v2-warning-toggle-'));
     const logPath = join(dataDir, 'home-assistant.log');

@@ -20,7 +20,7 @@ describe('SQLite migrations', () => {
       expect.arrayContaining(['admin_accounts', 'auth_sessions', 'deliveries', 'digest_jobs', 'ignore_rules', 'login_attempts', 'notes', 'onboarding_state', 'reports', 'schedule_state', 'secrets', 'settings', 'v2_log_cursor', 'v2_reports', 'v2_runs', 'v2_signatures'])
     );
     expect(db.prepare('select version from schema_migrations').all().map((row) => ({ ...(row as { version: number }) }))).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }
     ]);
   });
 
@@ -44,7 +44,7 @@ describe('SQLite migrations', () => {
     runMigrations(db);
 
     expect(db.prepare('select version from schema_migrations').all().map((row) => ({ ...(row as { version: number }) }))).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }
     ]);
   });
 
@@ -106,7 +106,98 @@ describe('SQLite migrations', () => {
     await expect(jobs.retryFailed('orphan-job')).resolves.toMatchObject({ status: 'queued', retryCount: 1, retryAvailable: false });
     await expect(jobs.retryFailed('orphan-job')).resolves.toMatchObject({ status: 'queued', retryCount: 1, retryAvailable: false });
   });
+
+  it('repairs invalid legacy report windows without changing payload fields and remains idempotent', async () => {
+    const db = await openTestDatabase();
+    runMigrations(db);
+    db.prepare(`insert into reports(
+      id, window_from, window_to, severity_counts_json, rendered_markdown, compressed_payload, created_at
+    ) values (?, ?, ?, ?, ?, ?, ?)`).run(
+      'equal-window',
+      '2026-07-31T21:46:10.471Z',
+      '2026-07-31T21:46:10.471Z',
+      '{"critical":1,"warning":2,"info":3}',
+      '# Equal window',
+      Buffer.from('equal-payload'),
+      '2026-07-31T21:46:10.471Z'
+    );
+    db.prepare(`insert into reports(
+      id, window_from, window_to, severity_counts_json, rendered_markdown, compressed_payload, created_at
+    ) values (?, ?, ?, ?, ?, ?, ?)`).run(
+      'reversed-window',
+      '2026-07-31T21:46:10.472Z',
+      '2026-07-31T21:46:10.471Z',
+      '{"critical":3,"warning":2,"info":1}',
+      '# Reversed window',
+      Buffer.from('reversed-payload'),
+      '2026-07-31T21:46:10.472Z'
+    );
+    db.prepare(`insert into reports(
+      id, window_from, window_to, severity_counts_json, rendered_markdown, compressed_payload, created_at
+    ) values (?, ?, ?, ?, ?, ?, ?)`).run(
+      'valid-window',
+      '2026-07-31T21:46:10.470Z',
+      '2026-07-31T21:46:10.471Z',
+      '{"critical":0,"warning":0,"info":1}',
+      '# Valid window',
+      Buffer.from('valid-payload'),
+      '2026-07-31T21:46:10.473Z'
+    );
+
+    runMigrations(db);
+    const firstRepair = reportRows(db);
+    expect(firstRepair).toEqual([
+      {
+        id: 'equal-window',
+        window_from: '2026-07-31T21:46:10.470Z',
+        window_to: '2026-07-31T21:46:10.471Z',
+        severity_counts_json: '{"critical":1,"warning":2,"info":3}',
+        rendered_markdown: '# Equal window',
+        compressed_payload: 'equal-payload',
+        created_at: '2026-07-31T21:46:10.471Z'
+      },
+      {
+        id: 'reversed-window',
+        window_from: '2026-07-31T21:46:10.470Z',
+        window_to: '2026-07-31T21:46:10.471Z',
+        severity_counts_json: '{"critical":3,"warning":2,"info":1}',
+        rendered_markdown: '# Reversed window',
+        compressed_payload: 'reversed-payload',
+        created_at: '2026-07-31T21:46:10.472Z'
+      },
+      {
+        id: 'valid-window',
+        window_from: '2026-07-31T21:46:10.470Z',
+        window_to: '2026-07-31T21:46:10.471Z',
+        severity_counts_json: '{"critical":0,"warning":0,"info":1}',
+        rendered_markdown: '# Valid window',
+        compressed_payload: 'valid-payload',
+        created_at: '2026-07-31T21:46:10.473Z'
+      }
+    ]);
+
+    runMigrations(db);
+    expect(reportRows(db)).toEqual(firstRepair);
+  });
 });
+
+function reportRows(db: { prepare(sql: string): { all(): unknown[] } }) {
+  return db
+    .prepare('select id, window_from, window_to, severity_counts_json, rendered_markdown, compressed_payload, created_at from reports order by id')
+    .all()
+    .map((row) => {
+      const value = row as {
+        id: string;
+        window_from: string;
+        window_to: string;
+        severity_counts_json: string;
+        rendered_markdown: string;
+        compressed_payload: Buffer;
+        created_at: string;
+      };
+      return { ...value, compressed_payload: Buffer.from(value.compressed_payload).toString('utf8') };
+    });
+}
 
 async function openTestDatabase() {
   const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');

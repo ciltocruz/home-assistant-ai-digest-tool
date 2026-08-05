@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-const MIGRATION_VERSION = 6;
+const MIGRATION_VERSION = 7;
 
 export function runMigrations(db: DatabaseSync): void {
   db.exec('pragma foreign_keys = on');
@@ -123,12 +123,14 @@ function applyMigrations(db: DatabaseSync): void {
   addDigestJobColumns(db);
   addV2BatchTables(db);
   repairOrphanedCompletedV2Jobs(db);
+  repairLegacyReportWindows(db);
   addAuthenticationTables(db);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(1);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(2);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(3);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(4);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(5);
+  db.prepare('insert or ignore into schema_migrations(version) values (?)').run(6);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(MIGRATION_VERSION);
   db.prepare(
     `insert or ignore into onboarding_state(singleton, current_step, completed_steps_json, draft_json, secret_refs_json, secret_metadata_json, completed, updated_at)
@@ -139,6 +141,21 @@ function applyMigrations(db: DatabaseSync): void {
        case when exists(select 1 from settings where key = 'runtime' and value_json not like '%unconfigured%') then 1 else 0 end,
        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`
   ).run();
+}
+
+function repairLegacyReportWindows(db: DatabaseSync): void {
+  const rows = db.prepare('select id, window_from, window_to from reports').all() as Array<{ id: string; window_from: string; window_to: string }>;
+  const update = db.prepare('update reports set window_from = ? where id = ?');
+
+  for (const row of rows) {
+    const fromMs = Date.parse(row.window_from);
+    const toMs = Date.parse(row.window_to);
+    if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs < toMs) continue;
+
+    const repairedFrom = new Date(toMs - 1);
+    if (Number.isNaN(repairedFrom.getTime())) continue;
+    update.run(repairedFrom.toISOString(), row.id);
+  }
 }
 
 export function repairOrphanedCompletedV2Jobs(db: DatabaseSync): void {
