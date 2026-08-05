@@ -315,6 +315,15 @@ button, input, select, textarea { font: inherit; }
   width: 100%;
 }
 
+#onboarding-flow select {
+  color-scheme: dark;
+}
+
+#onboarding-flow option {
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+
 #onboarding-flow input:focus,
 #onboarding-flow select:focus {
   border-color: var(--ha-orange);

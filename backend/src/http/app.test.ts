@@ -19,6 +19,26 @@ describe('account authentication boundary', () => {
     expect(legacy.statusCode).toBe(401);
   });
 
+  it('uses eight characters as the password minimum for registration and changes', async () => {
+    app = createApp({ services: services(), auth: { sessionTtlMs: 60_000 } });
+    const tooShort = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: '1234567', language: 'en' } });
+    expect(tooShort.statusCode).toBe(400);
+    expect(tooShort.json<{ message: string }>().message).toContain('8 characters');
+
+    app = createApp({ services: services(), auth: { sessionTtlMs: 60_000 } });
+    const registered = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: '12345678', language: 'en' } });
+    expect(registered.statusCode).toBe(200);
+    const cookie = registered.headers['set-cookie'];
+    const csrfToken = registered.json<{ csrfToken: string }>().csrfToken;
+    const changed = await app.inject({
+      method: 'POST',
+      url: '/api/account/password',
+      headers: { cookie, 'x-csrf-token': csrfToken },
+      payload: { currentPassword: '12345678', nextPassword: '87654321' }
+    });
+    expect(changed.statusCode).toBe(204);
+  });
+
   it('requires a valid CSRF token for mutations, expires sessions, and throttles bad passwords', async () => {
     let now = Date.parse('2026-08-03T10:00:00.000Z');
     const runtime = services(() => now);

@@ -169,7 +169,7 @@ function AccountScreen({ mode, api, onAuthenticated }: { mode: 'loading' | 'regi
   return <main className="onboarding-root" id="onboarding-flow"><form className="onboarding-step-content" onSubmit={(event) => void submit(event)}>
     <p className="onboarding-eyebrow">{mode === 'register' ? 'First run' : 'Welcome back'}</p><h1>{mode === 'register' ? 'Create your administrator account' : 'Sign in'}</h1>
     {mode === 'register' ? <label>Language<select value={language} onChange={(event) => setLanguage(event.currentTarget.value as 'en' | 'es')}><option value="en">English</option><option value="es">Español</option></select></label> : null}
-    <label>Password<input aria-label="Password" type="password" autoComplete={mode === 'register' ? 'new-password' : 'current-password'} minLength={12} required value={password} onChange={(event) => setPassword(event.currentTarget.value)} /></label>
+    <label>Password<input aria-label="Password" type="password" autoComplete={mode === 'register' ? 'new-password' : 'current-password'} minLength={8} required value={password} onChange={(event) => setPassword(event.currentTarget.value)} /></label>
     <button type="submit">{mode === 'register' ? 'Create account' : 'Sign in'}</button>{error ? <p role="alert">{error}</p> : null}
   </form></main>;
 }

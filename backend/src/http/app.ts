@@ -112,7 +112,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     const body = asRecord(request.body);
     const password = String(body.password ?? '');
     const language = body.language === 'es' ? 'es' : 'en';
-    if (password.length < 12) return sendError(reply, 400, 'VALIDATION_FAILED', 'Choose a password with at least 12 characters.', request.id);
+    if (password.length < 8) return sendError(reply, 400, 'VALIDATION_FAILED', 'Choose a password with at least 8 characters.', request.id);
     const store = requireAuthStore(auth);
     if (!await store.createAdmin(password, language)) return sendError(reply, 409, 'ADMIN_EXISTS', 'An administrator account already exists. Sign in instead.', request.id);
     return startSession(reply, options.auth, store, request.id);
@@ -168,7 +168,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     const body = asRecord(request.body);
     const currentPassword = String(body.currentPassword ?? '');
     const nextPassword = String(body.nextPassword ?? '');
-    if (nextPassword.length < 12) return sendError(reply, 400, 'VALIDATION_FAILED', 'Choose a password with at least 12 characters.', request.id);
+    if (nextPassword.length < 8) return sendError(reply, 400, 'VALIDATION_FAILED', 'Choose a password with at least 8 characters.', request.id);
     if (!await requireAuthStore(auth).changePassword(currentPassword, nextPassword)) return sendError(reply, 401, 'UNAUTHENTICATED', 'Invalid credentials.', request.id);
     const sessionId = readCookie(request, SESSION_COOKIE);
     if (sessionId) await requireAuthStore(auth).removeSession(sessionId);
