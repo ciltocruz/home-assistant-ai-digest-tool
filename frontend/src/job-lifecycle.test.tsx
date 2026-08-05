@@ -4,6 +4,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { JobLifecycle, restoreActiveJobIds, type JobLifecycleApi } from './job-lifecycle.js';
+import { ApiClientError } from './api-client.js';
 import { setLocale } from './i18n/index.js';
 
 Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: true, value: true });
@@ -110,6 +111,23 @@ describe('JobLifecycle', () => {
     expect(container.textContent).toContain('No se pudo reintentar el informe');
     expect(Array.from(container.querySelectorAll('button')).filter((button) => button.textContent === 'Reintentar informe')).toHaveLength(1);
     expect(container.textContent).not.toContain('Reintentar estado del informe');
+  });
+
+  test('surfaces the safe server detail when retry fails with an ApiClientError', async () => {
+    const api: JobLifecycleApi = {
+      getDigestJob: vi.fn(async () => job({ status: 'failed', stage: 'failed', retryAvailable: true })),
+      retryDigestJob: vi.fn(async () => { throw new ApiClientError('CSRF_REQUIRED', 'CSRF token required for this request.', 'retry-request'); })
+    };
+    const { container } = await mountLifecycle(api, ['job-1']);
+    const retry = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Reintentar informe');
+
+    await act(async () => {
+      retry?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('No se pudo reintentar el informe');
+    expect(container.textContent).toContain('CSRF token required for this request.');
   });
 
   test('restores only active job identifiers after a reload', () => {

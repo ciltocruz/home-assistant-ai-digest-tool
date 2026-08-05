@@ -49,7 +49,7 @@ V2 report retention keeps the newest 10 reports by default. Removing old report 
 
 ## Account and session security
 
-The first operator creates the admin account in the browser. Password hashes use Argon2id; sessions and CSRF tokens are stored only as hashes. The session cookie is `HttpOnly`, `SameSite=Lax`, and `Secure` in controlled TLS reverse-proxy mode. Login failures are rate limited, and changing the password invalidates existing sessions.
+The first operator creates the admin account in the browser. Password hashes use Argon2id; server-side sessions and CSRF tokens are stored only as hashes. The session cookie is `HttpOnly`, `SameSite=Lax`, and `Secure` in controlled TLS reverse-proxy mode. A separate `ha_digest_csrf` cookie is intentionally readable by the application so reloads and multiple tabs can reuse the same CSRF token; mutating requests must still send that value in the `X-CSRF-Token` header and the server validates its hash. Login failures are rate limited, and changing the password invalidates existing sessions.
 
 ## Report job lifecycle and recovery
 

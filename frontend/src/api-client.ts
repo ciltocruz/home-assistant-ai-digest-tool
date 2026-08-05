@@ -71,7 +71,7 @@ export function createApiClient(options: ApiClientOptions = {}) {
   async function request<T>(path: string, schema: z.ZodType<T>, init: RequestInit = {}): Promise<T> {
     const headers = Object.fromEntries(new Headers(init.headers).entries());
     headers['content-type'] = 'application/json';
-    if (csrfToken && init.method && init.method !== 'GET') headers['x-csrf-token'] = csrfToken;
+    if (csrfToken && (init.method && init.method !== 'GET' || path === '/api/session')) headers['x-csrf-token'] = csrfToken;
 
     let response: Response;
     try {

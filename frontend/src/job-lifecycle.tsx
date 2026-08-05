@@ -95,8 +95,9 @@ export function JobLifecycle({ api, jobIds, onCompleted, pollIntervalMs = 4_000 
       const job = await api.retryDigestJob(jobId);
       setJobs((current) => ({ ...current, [job.id]: job }));
       rememberActiveJob(job.id);
-    } catch {
-      setActionError(t('dashboard.jobLifecycle.retryError'));
+    } catch (error) {
+      const detail = error instanceof Error ? redactSensitiveText(error.message) : '';
+      setActionError(detail ? `${t('dashboard.jobLifecycle.retryError')} ${detail}` : t('dashboard.jobLifecycle.retryError'));
     } finally {
       setRetrying(null);
     }

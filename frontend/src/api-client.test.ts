@@ -51,6 +51,22 @@ describe('createApiClient', () => {
     expect(JSON.parse(String(calls[0]?.init.body))).toEqual({ password: 'a-long-enough-password', language: 'en' });
   });
 
+  test('reuses the current CSRF token when the authenticated session is bootstrapped again', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const client = createApiClient({
+      csrfToken: 'csrf sample value',
+      fetch: async (url, init = {}) => {
+        calls.push({ url: String(url), init });
+        return jsonResponse(200, { csrfToken: 'csrf sample value', language: 'en' });
+      }
+    });
+
+    await client.getSession();
+
+    expect(calls[0]?.url).toBe('/api/session');
+    expect(calls[0]?.init.headers).toMatchObject({ 'x-csrf-token': 'csrf sample value' });
+  });
+
   test('uses endpoint contracts for settings, digest history, notes, ignores, and notifier actions', async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const client = createApiClient({

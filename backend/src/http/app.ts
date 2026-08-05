@@ -74,6 +74,7 @@ export type CreateAppOptions = {
 type Session = { id: string; csrfToken: string; expiresAtMs: number };
 
 const SESSION_COOKIE = 'ha_digest_session';
+const CSRF_COOKIE = 'ha_digest_csrf';
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 export function createApp(options: CreateAppOptions): FastifyInstance {
@@ -135,15 +136,18 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     const session = await authenticate(request, auth);
     if (!session) return sendError(reply, 401, 'UNAUTHENTICATED', 'Authenticated session required.', request.id);
     const store = requireAuthStore(auth);
-    const csrfToken = session.csrfToken || await store.issueCsrf(session.id);
+    const suppliedCsrf = typeof request.headers['x-csrf-token'] === 'string' ? request.headers['x-csrf-token'] : readCookie(request, CSRF_COOKIE);
+    const resumed = suppliedCsrf ? await store.readSession(session.id, suppliedCsrf) : null;
+    const csrfToken = resumed?.csrfToken || await store.issueCsrf(session.id);
     if (!csrfToken) return sendError(reply, 503, 'SESSION_UNAVAILABLE', 'The authenticated session could not be resumed safely.', request.id);
+    reply.header('set-cookie', csrfCookie(csrfToken, options.auth));
     return { csrfToken, language: await store.language() };
   });
 
   app.delete('/api/session', async (request, reply) => {
     const sessionId = readCookie(request, SESSION_COOKIE);
     if (sessionId) await requireAuthStore(auth).removeSession(sessionId);
-    reply.header('set-cookie', expiredSessionCookie(options.auth));
+    reply.header('set-cookie', [expiredSessionCookie(options.auth), expiredCsrfCookie(options.auth)]);
     return reply.code(204).send();
   });
 
@@ -175,7 +179,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     if (!await requireAuthStore(auth).changePassword(currentPassword, nextPassword)) return sendError(reply, 401, 'UNAUTHENTICATED', 'Invalid credentials.', request.id);
     const sessionId = readCookie(request, SESSION_COOKIE);
     if (sessionId) await requireAuthStore(auth).removeSession(sessionId);
-    reply.header('set-cookie', expiredSessionCookie(options.auth));
+    reply.header('set-cookie', [expiredSessionCookie(options.auth), expiredCsrfCookie(options.auth)]);
     return reply.code(204).send();
   });
 
@@ -282,7 +286,7 @@ function parseRequest<T>(schema: { safeParse(value: unknown): { success: true; d
 
 async function startSession(reply: FastifyReply, auth: BackendAuthOptions, store: AuthStore, requestId: string) {
   const session = await store.createSession(auth.sessionTtlMs);
-  reply.header('set-cookie', sessionCookie(session, auth));
+  reply.header('set-cookie', [sessionCookie(session, auth), csrfCookie(session.csrfToken, auth)]);
   return reply.send({ csrfToken: session.csrfToken, language: await store.language() });
 }
 
@@ -345,6 +349,14 @@ function sessionCookie(session: Session, auth: BackendAuthOptions): string {
 
 function expiredSessionCookie(auth: BackendAuthOptions): string {
   return `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${auth.secureCookies ? '; Secure' : ''}`;
+}
+
+function csrfCookie(token: string, auth: BackendAuthOptions): string {
+  return `${CSRF_COOKIE}=${encodeURIComponent(token)}; Path=/; SameSite=Lax; Max-Age=${Math.floor(auth.sessionTtlMs / 1000)}${auth.secureCookies ? '; Secure' : ''}`;
+}
+
+function expiredCsrfCookie(auth: BackendAuthOptions): string {
+  return `${CSRF_COOKIE}=; Path=/; SameSite=Lax; Max-Age=0${auth.secureCookies ? '; Secure' : ''}`;
 }
 
 function requireAuthStore(auth: AuthStore | undefined): AuthStore {

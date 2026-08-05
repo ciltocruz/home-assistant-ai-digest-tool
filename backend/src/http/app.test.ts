@@ -11,11 +11,18 @@ describe('account authentication boundary', () => {
     app = createApp({ services: services(), auth: { sessionTtlMs: 60_000, secureCookies: true } });
     const created = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: 'long-enough-password', language: 'en' } });
     const legacy = await app.inject({ method: 'POST', url: '/api/setup', payload: {} });
+    const setCookies = Array.isArray(created.headers['set-cookie']) ? created.headers['set-cookie'] : [created.headers['set-cookie'] ?? ''];
+    const cookies = setCookies.join('; ');
+    const sessionCookie = setCookies.find((cookie) => cookie.startsWith('ha_digest_session=')) ?? '';
+    const csrfCookie = setCookies.find((cookie) => cookie.startsWith('ha_digest_csrf=')) ?? '';
 
     expect(created.statusCode).toBe(200);
-    expect(created.headers['set-cookie']).toContain('HttpOnly');
-    expect(created.headers['set-cookie']).toContain('SameSite=Lax');
-    expect(created.headers['set-cookie']).toContain('Secure');
+    expect(cookies).toContain('ha_digest_session=');
+    expect(sessionCookie).toContain('HttpOnly');
+    expect(cookies).toContain('SameSite=Lax');
+    expect(cookies).toContain('Secure');
+    expect(cookies).toContain('ha_digest_csrf=');
+    expect(csrfCookie).not.toContain('HttpOnly');
     expect(legacy.statusCode).toBe(401);
   });
 
