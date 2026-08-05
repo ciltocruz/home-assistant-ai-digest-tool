@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
+import { DigestDetailSchema, DigestHistoryResponseSchema } from '@ha-digest/shared';
 import { parseHomeAssistantLog } from '../../domain/batch.js';
 import { runMigrations } from './migrations.js';
 import { SQLiteV2Stores } from './sqlite-v2-stores.js';
@@ -60,6 +61,70 @@ describe('SQLiteV2Stores', () => {
     for (const table of ['v2_log_cursor', 'v2_signatures', 'v2_runs', 'v2_reports']) {
       expect(db.prepare(`select count(*) as count from ${table}`).get()).toEqual({ count: 0 });
     }
+  });
+
+  it('commits a successful retry over a failed run and remains idempotent', async () => {
+    const db = await openTestDatabase();
+    runMigrations(db);
+    const stores = new SQLiteV2Stores(db, 10, () => '2026-08-05T20:00:00.000Z');
+    const entries = parseHomeAssistantLog(['2026-08-05 19:00:00 ERROR [homeassistant.components.demo] Failure 42']);
+    const plan = await stores.classifyAndStage(entries, '2026-08-05T20:00:00.000Z');
+    const request = { runId: 'retry-run', slotId: 'retry-slot' };
+
+    await stores.fail({ request, code: 'AI_ANALYSIS_UNAVAILABLE', errorMessage: 'Provider unavailable.' });
+
+    const failedHistory = DigestHistoryResponseSchema.parse(await stores.listReports());
+    expect(failedHistory).toHaveLength(1);
+    expect(Date.parse(failedHistory[0]!.window.to) - Date.parse(failedHistory[0]!.window.from)).toBe(1);
+    DigestDetailSchema.parse(await stores.getReport('v2-run:retry-run'));
+
+    const reportId = await stores.commit({
+      request,
+      cursor: { dev: 1, ino: 2, size: 100, offset: 100 },
+      signatures: plan,
+      report: { status: 'reported', findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [] }
+    });
+
+    expect(reportId).toBe('v2-report:retry-run');
+    expect(db.prepare('select status, error_code from v2_runs where id = ?').get('retry-run')).toEqual({ status: 'reported', error_code: null });
+    expect(db.prepare('select count(*) as count from v2_reports where run_id = ?').get('retry-run')).toEqual({ count: 1 });
+    expect(db.prepare('select count(*) as count from v2_report_signatures where report_id = ?').get(reportId)).toEqual({ count: 1 });
+    expect(await stores.readCursor()).toEqual({ dev: 1, ino: 2, size: 100, offset: 100 });
+
+    const history = DigestHistoryResponseSchema.parse(await stores.listReports());
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({ id: reportId, runStatus: 'reported' });
+    expect(await stores.getReport('v2-run:retry-run')).toBeNull();
+    DigestDetailSchema.parse(await stores.getReport(reportId));
+
+    await expect(stores.commit({
+      request,
+      cursor: { dev: 1, ino: 2, size: 100, offset: 100 },
+      signatures: plan,
+      report: { status: 'reported', findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [] }
+    })).resolves.toBe(reportId);
+    expect(db.prepare('select count(*) as count from v2_reports where run_id = ?').get('retry-run')).toEqual({ count: 1 });
+  });
+
+  it('keeps a normal successful run and legacy reports independent', async () => {
+    const db = await openTestDatabase();
+    runMigrations(db);
+    const stores = new SQLiteV2Stores(db, 10, () => '2026-08-05T20:00:00.000Z');
+    const entries = parseHomeAssistantLog(['2026-08-05 19:00:00 ERROR [homeassistant.components.demo] Failure 42']);
+    const plan = await stores.classifyAndStage(entries, '2026-08-05T20:00:00.000Z');
+    const commit = {
+      request: { runId: 'normal-run', slotId: 'normal-slot' },
+      cursor: { dev: 1, ino: 2, size: 100, offset: 100 },
+      signatures: plan,
+      report: { status: 'reported' as const, findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [] }
+    };
+
+    await stores.commit(commit);
+    await stores.commit(commit);
+
+    expect(db.prepare('select count(*) as count from v2_runs').get()).toEqual({ count: 1 });
+    expect(db.prepare('select count(*) as count from v2_reports').get()).toEqual({ count: 1 });
+    expect(DigestHistoryResponseSchema.parse(await stores.listReports())).toHaveLength(1);
   });
 });
 

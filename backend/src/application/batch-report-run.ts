@@ -16,7 +16,7 @@ export interface LogDeltaPort { read(): Promise<LogDelta>; }
 export interface SignatureMemory { classifyAndStage(entries: ParsedLogEntry[], at: string): Promise<SignaturePlan>; }
 export interface SignatureProvider { analyze(context: BoundedSignatureContext, signal: AbortSignal): Promise<SignatureAnalysis>; }
 export interface BatchPersistence {
-  commit(plan: CommitPlan): Promise<void>;
+  commit(plan: CommitPlan): Promise<string>;
   fail(run: FailedRun): Promise<void>;
 }
 export interface HAStatusPort { snapshot(): Promise<IntegrationStatusSnapshot>; }
@@ -33,7 +33,7 @@ export type CommitPlan = {
 };
 export type FailedRun = { request: RunRequest; code: 'AI_ANALYSIS_UNAVAILABLE'; errorMessage: string };
 export type RunOutcome =
-  | { status: 'quiet' | 'reported' | 'partial'; warnings: string[] }
+  | { status: 'quiet' | 'reported' | 'partial'; warnings: string[]; reportId: string }
   | { status: 'failed'; code: 'AI_ANALYSIS_UNAVAILABLE'; errorMessage: string };
 
 export type BatchReportRunDependencies = {
@@ -71,8 +71,8 @@ export class BatchReportRun {
     const notesBySignature = notesForSignatures(reportedSignatures, notes);
     const integrationStatus = await this.readIntegrationStatus();
     if (reportedSignatures.length === 0) {
-      await this.dependencies.persistence.commit({ request, cursor: delta.cursor, signatures: plan, reportedSignatures, notesBySignature, report: { status: 'quiet', findings: [], warnings: [], integrationStatus } });
-      return { status: 'quiet', warnings: [] };
+      const reportId = await this.dependencies.persistence.commit({ request, cursor: delta.cursor, signatures: plan, reportedSignatures, notesBySignature, report: { status: 'quiet', findings: [], warnings: [], integrationStatus } });
+      return { status: 'quiet', warnings: [], reportId };
     }
 
     const analyses = await Promise.all(reportedSignatures.map(async (signature) => {
@@ -90,11 +90,11 @@ export class BatchReportRun {
     }
     const warnings = findings.length === analyses.length ? [] : ['AI_ANALYSIS_PARTIAL'];
     const status = warnings.length ? 'partial' : 'reported';
-    await this.dependencies.persistence.commit({ request, cursor: delta.cursor, signatures: plan, reportedSignatures, notesBySignature, report: { status, findings, warnings, integrationStatus } });
+    const reportId = await this.dependencies.persistence.commit({ request, cursor: delta.cursor, signatures: plan, reportedSignatures, notesBySignature, report: { status, findings, warnings, integrationStatus } });
     try {
       await this.dependencies.notifier?.notify({ findings, reportUrl: this.dependencies.reportUrl?.(request), language: await this.dependencies.language?.() ?? 'en' });
     } catch { /* A notifier failure must not turn a committed report into a failed run. */ }
-    return { status, warnings };
+    return { status, warnings, reportId };
   }
 
   private async readIntegrationStatus(): Promise<IntegrationStatusSnapshot> {

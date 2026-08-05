@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-const MIGRATION_VERSION = 5;
+const MIGRATION_VERSION = 6;
 
 export function runMigrations(db: DatabaseSync): void {
   db.exec('pragma foreign_keys = on');
@@ -122,11 +122,13 @@ function applyMigrations(db: DatabaseSync): void {
   `);
   addDigestJobColumns(db);
   addV2BatchTables(db);
+  repairOrphanedCompletedV2Jobs(db);
   addAuthenticationTables(db);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(1);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(2);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(3);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(4);
+  db.prepare('insert or ignore into schema_migrations(version) values (?)').run(5);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(MIGRATION_VERSION);
   db.prepare(
     `insert or ignore into onboarding_state(singleton, current_step, completed_steps_json, draft_json, secret_refs_json, secret_metadata_json, completed, updated_at)
@@ -137,6 +139,30 @@ function applyMigrations(db: DatabaseSync): void {
        case when exists(select 1 from settings where key = 'runtime' and value_json not like '%unconfigured%') then 1 else 0 end,
        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`
   ).run();
+}
+
+export function repairOrphanedCompletedV2Jobs(db: DatabaseSync): void {
+  db.prepare(`
+    update digest_jobs
+       set status = 'failed',
+           stage = 'failed',
+           retry_count = 0,
+           report_id = null,
+           error_code = 'REPORT_MISSING',
+           error_message = 'The completed report was not persisted. One safe retry is available.',
+           lease_until = null,
+           available_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+           updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+     where status = 'completed'
+       and stage = 'completed'
+       and report_id like 'v2-report:%'
+       and not exists (select 1 from v2_reports where v2_reports.id = digest_jobs.report_id)
+       and exists (
+         select 1 from v2_runs
+          where v2_runs.id = substr(digest_jobs.report_id, 11)
+            and v2_runs.status = 'failed'
+       )
+  `).run();
 }
 
 function addAuthenticationTables(db: DatabaseSync): void {

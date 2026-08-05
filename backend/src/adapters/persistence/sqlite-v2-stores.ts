@@ -15,19 +15,32 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
     return classifySignatures(entries, known, { now: at });
   }
 
-  async commit(plan: CommitPlan): Promise<void> {
+  async commit(plan: CommitPlan): Promise<string> {
+    let reportId = `v2-report:${plan.request.runId}`;
     this.transaction(() => {
-      if (this.runExists(plan.request.runId, plan.request.slotId)) return;
-      this.insertRun(plan.request.runId, plan.request.slotId, plan.report.status, null);
+      const existingRun = this.findRun(plan.request.runId, plan.request.slotId);
+      const runId = existingRun?.id ?? plan.request.runId;
+      reportId = `v2-report:${runId}`;
+      const existingReport = this.findReportForRun(runId);
+      if (existingReport) {
+        if (existingRun?.status === 'failed') {
+          this.db.prepare('update v2_runs set status = ?, error_code = null where id = ?').run(existingReport.status, runId);
+        }
+        return;
+      }
+      if (existingRun) {
+        this.db.prepare('update v2_runs set status = ?, error_code = null where id = ?').run(plan.report.status, runId);
+      } else {
+        this.insertRun(runId, plan.request.slotId, plan.report.status, null);
+      }
       this.saveCursor(plan.cursor);
       for (const signature of [...plan.signatures.baselineEntries, ...plan.signatures.signatures.flatMap((item) => item.occurrences)]) {
         this.upsertSignature(signature);
       }
-      const reportId = `v2-report:${plan.request.runId}`;
-      const createdAt = new Date().toISOString();
+      const createdAt = this.now();
       this.db.prepare(
         'insert into v2_reports(id, run_id, status, payload_json, created_at) values (?, ?, ?, ?, ?)'
-       ).run(reportId, plan.request.runId, plan.report.status, JSON.stringify({ report: plan.report, signatures: plan.reportedSignatures ?? plan.signatures.signatures, notesBySignature: plan.notesBySignature ?? {} }), createdAt);
+       ).run(reportId, runId, plan.report.status, JSON.stringify({ report: plan.report, signatures: plan.reportedSignatures ?? plan.signatures.signatures, notesBySignature: plan.notesBySignature ?? {} }), createdAt);
       for (const finding of plan.report.findings) {
         this.db.prepare(
           'insert into v2_report_signatures(report_id, signature, summary, recommendation) values (?, ?, ?, ?)'
@@ -35,11 +48,12 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
       }
       this.retainReports();
     });
+    return reportId;
   }
 
   async fail(run: FailedRun): Promise<void> {
     this.transaction(() => {
-      if (!this.runExists(run.request.runId, run.request.slotId)) {
+      if (!this.findRun(run.request.runId, run.request.slotId)) {
         this.insertRun(run.request.runId, run.request.slotId, 'failed', run.code);
       }
     });
@@ -97,13 +111,17 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
     return rows.map((row) => ({ id: row.id, match: row.match, ...(row.type ? { type: row.type } : {}), ...(row.reason ? { reason: row.reason } : {}), ...(row.expires_at ? { expiresAt: row.expires_at } : {}), createdAt: row.created_at }));
   }
 
-  private runExists(id: string, slotId: string): boolean {
-    return Boolean(this.db.prepare('select 1 from v2_runs where id = ? or slot_id = ?').get(id, slotId));
+  private findRun(id: string, slotId: string): { id: string; status: string } | undefined {
+    return this.db.prepare('select id, status from v2_runs where id = ? or slot_id = ?').get(id, slotId) as { id: string; status: string } | undefined;
+  }
+
+  private findReportForRun(runId: string): { id: string; status: 'quiet' | 'reported' | 'partial' } | undefined {
+    return this.db.prepare('select id, status from v2_reports where run_id = ?').get(runId) as { id: string; status: 'quiet' | 'reported' | 'partial' } | undefined;
   }
 
   private insertRun(id: string, slotId: string, status: string, errorCode: string | null): void {
     this.db.prepare('insert into v2_runs(id, slot_id, status, error_code, created_at) values (?, ?, ?, ?, ?)')
-      .run(id, slotId, status, errorCode, new Date().toISOString());
+      .run(id, slotId, status, errorCode, this.now());
   }
 
   private saveCursor(cursor: LogCursor): void {
@@ -111,7 +129,7 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
       `insert into v2_log_cursor(singleton, dev, ino, size, offset, updated_at) values (1, ?, ?, ?, ?, ?)
        on conflict(singleton) do update set dev = excluded.dev, ino = excluded.ino, size = excluded.size,
        offset = excluded.offset, updated_at = excluded.updated_at`
-    ).run(cursor.dev, cursor.ino, cursor.size, cursor.offset, new Date().toISOString());
+    ).run(cursor.dev, cursor.ino, cursor.size, cursor.offset, this.now());
   }
 
   private upsertSignature(entry: ParsedLogEntry): void {
@@ -152,8 +170,8 @@ function severity(signatures: SignaturePlan['signatures']) {
   return signatures.reduce((total, item) => ({ ...total, critical: total.critical + Number(item.level === 'CRITICAL'), warning: total.warning + Number(item.level === 'ERROR' || item.level === 'WARNING') }), { critical: 0, warning: 0, info: 0 });
 }
 function summaryFor(row: V2ReportRow): DigestSummary {
-  const value = payload(row); const now = row.created_at;
-  return { id: row.id, window: { from: now, to: now }, severityCounts: severity(value.signatures), createdAt: now, deliveryStatus: 'skipped', runStatus: row.status, warningCodes: value.report.warnings, signatureCounts: counts(value.signatures) };
+  const value = payload(row);
+  return { id: row.id, window: pointInTimeWindow(row.created_at), severityCounts: severity(value.signatures), createdAt: row.created_at, deliveryStatus: 'skipped', runStatus: row.status, warningCodes: value.report.warnings, signatureCounts: counts(value.signatures) };
 }
 function detailFor(row: V2ReportRow): DigestDetail {
   const value = payload(row); const analyses = new Map(value.report.findings.map((finding) => [finding.signature, finding.analysis]));
@@ -164,11 +182,15 @@ function detailFor(row: V2ReportRow): DigestDetail {
   };
 }
 function failedSummary(row: FailedRunRow): DigestSummary {
-  return { id: `v2-run:${row.id}`, window: { from: row.created_at, to: row.created_at }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: row.created_at, deliveryStatus: 'skipped', runStatus: 'failed', warningCodes: row.error_code ? [row.error_code] : [] };
+  return { id: `v2-run:${row.id}`, window: pointInTimeWindow(row.created_at), severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: row.created_at, deliveryStatus: 'skipped', runStatus: 'failed', warningCodes: row.error_code ? [row.error_code] : [] };
 }
 function failedDetail(row: FailedRunRow): DigestDetail {
   const summary = failedSummary(row);
   return { id: summary.id, summary, rendered: { format: 'markdown', body: '' }, presentation: { version: 2, mode: 'batch', status: 'failed', warnings: summary.warningCodes ?? [], signatures: [], failure: row.error_code ?? 'REPORT_FAILED' } };
+}
+
+function pointInTimeWindow(createdAt: string): { from: string; to: string } {
+  return { from: new Date(Date.parse(createdAt) - 1).toISOString(), to: createdAt };
 }
 
 export class SQLiteScheduleStateStore {

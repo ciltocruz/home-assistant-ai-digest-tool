@@ -15,7 +15,7 @@ function harness(analyze: SignatureProvider['analyze']) {
   const commits: Parameters<BatchPersistence['commit']>[0][] = [];
   const failures: unknown[] = [];
   const signatures: SignatureMemory = { classifyAndStage: vi.fn(async () => plan) };
-  const persistence: BatchPersistence = { commit: async (value) => { commits.push(value); }, fail: async (value) => { failures.push(value); } };
+  const persistence: BatchPersistence = { commit: async (value) => { commits.push(value); return 'report-id'; }, fail: async (value) => { failures.push(value); } };
   return { run: new BatchReportRun({ log: { read: async () => delta }, signatures, provider: { analyze }, persistence, now: () => '2026-07-30T00:00:00.000Z', maxContextOccurrences: 1, maxContextBytes: 100, providerAuth: { status: 'deferred' } }), commits, failures };
 }
 
@@ -24,7 +24,7 @@ describe('BatchReportRun', () => {
     const analyze = vi.fn(async (context) => ({ summary: context.signature, recommendation: 'fix it' }));
     const { run, commits } = harness(analyze);
 
-    await expect(run.run({ runId: 'run-1', slotId: 'slot-1' })).resolves.toEqual({ status: 'reported', warnings: [] });
+    await expect(run.run({ runId: 'run-1', slotId: 'slot-1' })).resolves.toEqual({ status: 'reported', warnings: [], reportId: 'report-id' });
     expect(analyze).toHaveBeenCalledTimes(3);
     expect(analyze.mock.calls[0]?.[0].occurrences).toEqual(['one token=[REDACTED]']);
     expect(commits).toHaveLength(1);
@@ -37,7 +37,7 @@ describe('BatchReportRun', () => {
       return { summary: context.component, recommendation: 'fix it' };
     });
 
-    await expect(run.run({ runId: 'run-2', slotId: 'slot-2' })).resolves.toEqual({ status: 'partial', warnings: ['AI_ANALYSIS_PARTIAL'] });
+    await expect(run.run({ runId: 'run-2', slotId: 'slot-2' })).resolves.toEqual({ status: 'partial', warnings: ['AI_ANALYSIS_PARTIAL'], reportId: 'report-id' });
     expect(commits).toHaveLength(1);
     expect(commits[0]?.report.warnings).toEqual(['AI_ANALYSIS_PARTIAL']);
     expect(failures).toEqual([]);
@@ -54,7 +54,7 @@ describe('BatchReportRun', () => {
   it('keeps HA degradation in the committed report and notifies only committed findings', async () => {
     const notified: unknown[] = [];
     const commits: Parameters<BatchPersistence['commit']>[0][] = [];
-    const run = new BatchReportRun({ log: { read: async () => delta }, signatures: { classifyAndStage: async () => plan }, provider: { analyze: async () => ({ summary: 'summary', recommendation: 'fix' }) }, persistence: { commit: async (value) => { commits.push(value); }, fail: async () => undefined }, haStatus: { snapshot: async () => ({ available: false, integrations: [] }) }, notifier: { notify: async (summary) => { notified.push(summary); } } });
+    const run = new BatchReportRun({ log: { read: async () => delta }, signatures: { classifyAndStage: async () => plan }, provider: { analyze: async () => ({ summary: 'summary', recommendation: 'fix' }) }, persistence: { commit: async (value) => { commits.push(value); return 'report-id'; }, fail: async () => undefined }, haStatus: { snapshot: async () => ({ available: false, integrations: [] }) }, notifier: { notify: async (summary) => { notified.push(summary); } } });
 
     await run.run({ runId: 'run-4', slotId: 'slot-4' });
 

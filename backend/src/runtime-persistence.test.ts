@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { DigestDetailSchema, DigestHistoryResponseSchema } from '@ha-digest/shared';
 import { runMigrations } from './adapters/persistence/migrations.js';
 import { SQLiteSecretStore } from './adapters/persistence/sqlite-secret-store.js';
 import { parseHomeAssistantLog } from './domain/batch.js';
@@ -311,6 +312,22 @@ describe('persistent runtime services', () => {
     expect(queued.status).toBe('queued');
     expect(events).toEqual({ configEntries: 1, ai: 1, telegram: 1 });
     await expect(services.digestJobs.get(queued.jobId)).resolves.toMatchObject({ status: 'completed', reportId: expect.stringMatching(/^v2-report:/) });
+
+    await (services.reports as unknown as ReportStore).save({
+      id: 'legacy-report',
+      rendered: { format: 'markdown', body: '# Legacy report' },
+      summary: {
+        id: 'legacy-report',
+        window: { from: '2026-07-12T09:59:59.999Z', to: NOW },
+        severityCounts: { critical: 0, warning: 0, info: 1 },
+        createdAt: NOW,
+        deliveryStatus: 'pending'
+      }
+    });
+    const history = DigestHistoryResponseSchema.parse(await services.reports.list());
+    expect(history.map((item) => item.id)).toEqual(expect.arrayContaining(['legacy-report', expect.stringMatching(/^v2-report:/)]));
+    DigestDetailSchema.parse(await services.reports.get('legacy-report'));
+    DigestDetailSchema.parse(await services.reports.get(history.find((item) => item.id.startsWith('v2-report:'))?.id ?? 'missing'));
   });
 
   it('applies the configured warning toggle to real queued batch runs while preserving the default exclusion', async () => {

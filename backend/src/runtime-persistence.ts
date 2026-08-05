@@ -164,7 +164,7 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
           const outcome = await batch.run(request);
           if (outcome.status === 'failed') throw new Error(`${outcome.code}: ${outcome.errorMessage}`);
           await onStage('saving');
-          return { status: 'completed', reportId: `v2-report:${request.runId}` };
+          return { status: 'completed', reportId: outcome.reportId };
         }
       }
     });

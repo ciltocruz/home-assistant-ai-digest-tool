@@ -20,7 +20,7 @@ describe('SQLite migrations', () => {
       expect.arrayContaining(['admin_accounts', 'auth_sessions', 'deliveries', 'digest_jobs', 'ignore_rules', 'login_attempts', 'notes', 'onboarding_state', 'reports', 'schedule_state', 'secrets', 'settings', 'v2_log_cursor', 'v2_reports', 'v2_runs', 'v2_signatures'])
     );
     expect(db.prepare('select version from schema_migrations').all().map((row) => ({ ...(row as { version: number }) }))).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }
     ]);
   });
 
@@ -44,7 +44,7 @@ describe('SQLite migrations', () => {
     runMigrations(db);
 
     expect(db.prepare('select version from schema_migrations').all().map((row) => ({ ...(row as { version: number }) }))).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }
     ]);
   });
 
@@ -71,6 +71,40 @@ describe('SQLite migrations', () => {
     runMigrations(db);
 
     expect(db.prepare('select stage, retry_count, report_id from digest_jobs where id = ?').get('legacy-job')).toEqual({ stage: 'completed', retry_count: 0, report_id: null });
+  });
+
+  it('repairs only an orphaned completed v2 job and makes it retryable once', async () => {
+    const db = await openTestDatabase();
+    runMigrations(db);
+    db.prepare('insert into v2_runs(id, slot_id, status, error_code, created_at) values (?, ?, ?, ?, ?)')
+      .run('orphan-run', 'orphan-slot', 'failed', 'AI_PROVIDER_UNAVAILABLE', '2026-08-05T19:00:00.000Z');
+    db.prepare(`insert into digest_jobs(
+      id, trigger_window_id, kind, status, stage, attempts, retry_count, available_at, report_id, created_at, updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      'orphan-job', 'orphan-window', 'manual', 'completed', 'completed', 1, 1,
+      '2026-08-05T19:00:00.000Z', 'v2-report:orphan-run', '2026-08-05T19:00:00.000Z', '2026-08-05T19:00:00.000Z'
+    );
+    db.prepare(`insert into digest_jobs(
+      id, trigger_window_id, kind, status, stage, attempts, retry_count, available_at, report_id, created_at, updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      'unrelated-job', 'unrelated-window', 'manual', 'completed', 'completed', 1, 1,
+      '2026-08-05T19:00:00.000Z', 'legacy-report:unrelated', '2026-08-05T19:00:00.000Z', '2026-08-05T19:00:00.000Z'
+    );
+
+    runMigrations(db);
+    const repaired = db.prepare('select status, stage, retry_count, report_id, error_code from digest_jobs where id = ?').get('orphan-job');
+    expect(repaired).toMatchObject({ status: 'failed', stage: 'failed', retry_count: 0, report_id: null, error_code: 'REPORT_MISSING' });
+    expect(db.prepare('select status, stage, retry_count, report_id from digest_jobs where id = ?').get('unrelated-job')).toEqual({ status: 'completed', stage: 'completed', retry_count: 1, report_id: 'legacy-report:unrelated' });
+
+    const firstRepairState = { ...repaired as Record<string, unknown> };
+    runMigrations(db);
+    expect(db.prepare('select status, stage, retry_count, report_id, error_code from digest_jobs where id = ?').get('orphan-job')).toEqual(firstRepairState);
+
+    const { SQLiteDigestJobStore } = await import('./sqlite-digest-job-store.js');
+    const jobs = new SQLiteDigestJobStore(db, { now: () => new Date('2026-08-05T20:00:00.000Z') });
+    await expect(jobs.get('orphan-job')).resolves.toMatchObject({ status: 'failed', retryCount: 0, retryAvailable: true });
+    await expect(jobs.retryFailed('orphan-job')).resolves.toMatchObject({ status: 'queued', retryCount: 1, retryAvailable: false });
+    await expect(jobs.retryFailed('orphan-job')).resolves.toMatchObject({ status: 'queued', retryCount: 1, retryAvailable: false });
   });
 });
 
