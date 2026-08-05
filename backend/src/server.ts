@@ -30,7 +30,8 @@ export async function startRuntimeServer(
       haMaxLogLines: config.haMaxLogLines,
       haMaxResponseBytes: config.haMaxResponseBytes,
       haAnalysisTimeoutMs: config.haAnalysisTimeoutMs,
-      failureReporter: logger.reportApiFailure
+      failureReporter: logger.reportApiFailure,
+      digestFailureReporter: logger.reportDigestFailure
     });
     await app.listen({ host: config.host, port: config.port });
 

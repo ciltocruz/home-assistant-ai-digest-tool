@@ -18,7 +18,7 @@ import { TelegramNotifier, type NotifierHttpClient } from './adapters/notifiers/
 import { SQLiteV2Stores } from './adapters/persistence/sqlite-v2-stores.js';
 import { SQLiteAuthStore } from './adapters/persistence/sqlite-auth-store.js';
 import { BatchReportRun, type RunRequest } from './application/batch-report-run.js';
-import { DigestWorker } from './application/digest-worker.js';
+import { DigestWorker, type DigestWorkerFailureEvent } from './application/digest-worker.js';
 import { SettingsService, type SecretReplacement } from './application/settings.js';
 
 export type PersistentRuntimeOptions = {
@@ -34,6 +34,7 @@ export type PersistentRuntimeOptions = {
   telegramHttpClient?: NotifierHttpClient;
   haWebSocketFactory?: (url: string) => HomeAssistantSocket;
   reportUrl?: (request: RunRequest) => string | undefined;
+  digestFailureReporter?: (event: DigestWorkerFailureEvent) => void;
 };
 
 const SETTINGS_KEY = 'runtime';
@@ -154,13 +155,14 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
     });
     worker = new DigestWorker({
       jobs: digestJobs,
+      failureReporter: options.digestFailureReporter,
       analysis: {
         runWithStages: async (onStage, job) => {
           await onStage('collecting');
           const current = await settingsStore.get();
           const request = { runId: job?.id ?? randomUUID(), slotId: job?.triggerWindowId ?? `runtime:${randomUUID()}`, includeWarnings: current.includeWarnings ?? false };
           const outcome = await batch.run(request);
-          if (outcome.status === 'failed') throw new Error(outcome.code);
+          if (outcome.status === 'failed') throw new Error(`${outcome.code}: ${outcome.errorMessage}`);
           await onStage('saving');
           return { status: 'completed', reportId: `v2-report:${request.runId}` };
         }

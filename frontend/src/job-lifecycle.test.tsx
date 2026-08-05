@@ -54,13 +54,15 @@ describe('JobLifecycle', () => {
       status: 'failed',
       stage: 'failed',
       errorCode: 'HOME_ASSISTANT_UNAVAILABLE',
-      errorMessage: 'No se pudieron recopilar datos de Home Assistant. Revise la conexión y el token.',
+      errorMessage: "Gemini 404: model 'gemini-flash-latest' failed (classification: model retired). Provider message: models/gemini-1.5-flash is not found.",
       retryAvailable: true
     }), job({ status: 'queued', stage: 'queued', retryCount: 1, retryAvailable: false }));
     const { container } = await mountLifecycle(api, ['job-1']);
 
     const alert = container.querySelector('[role="alert"]');
-    expect(alert?.textContent).toContain('No se pudieron recopilar datos de Home Assistant');
+    expect(alert?.textContent).toContain('Gemini 404');
+    expect(alert?.textContent).toContain('model retired');
+    expect(alert?.textContent).toContain('models/gemini-1.5-flash is not found');
     expect(container.textContent).toContain('Informe que requiere atención');
     const retry = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Reintentar informe');
     expect(retry).toBeDefined();

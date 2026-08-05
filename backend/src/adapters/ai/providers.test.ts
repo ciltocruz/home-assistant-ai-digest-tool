@@ -88,12 +88,25 @@ describe('AI provider adapters', () => {
 
     expect(digest.attentionItems[0]?.title).toBe('Kitchen sensor');
     expect(requests).toHaveLength(1);
-    expect(requests[0]?.url).toContain('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent');
+    expect(requests[0]?.url).toContain('https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent');
     expect(requests[0]?.url).toContain('key=gemini-test-secret');
     const body = JSON.stringify(requests[0]?.body);
     expect(body).toContain('redacted incident context');
     expect(body).toContain('[REDACTED]');
     expect(body).not.toContain('gemini-test-secret');
+  });
+
+  it('keeps an explicitly selected Gemini model instead of replacing it with the default', async () => {
+    const requests: HttpRequest[] = [];
+    const provider = new GeminiProvider({
+      apiKey: 'gemini-test-secret',
+      model: 'gemini-3.1-flash',
+      httpClient: async (request) => { requests.push(request); return { status: 200, json: async () => geminiResponse }; }
+    });
+
+    await provider.generate(input);
+
+    expect(requests[0]?.url).toContain('/models/gemini-3.1-flash:generateContent');
   });
 
   it('returns provider failures without exposing API keys or raw responses', async () => {
@@ -102,8 +115,63 @@ describe('AI provider adapters', () => {
       httpClient: async () => ({ status: 500, json: async () => ({ error: { message: `raw provider detail ${OPENAI_TEST_KEY}` } }) })
     });
 
-    await expect(provider.generate(input)).rejects.toThrow('OpenAI provider request failed with status 500');
+    await expect(provider.generate(input)).rejects.toThrow("OpenAI 500: model 'gpt-4o-mini' failed (classification: other)");
+    await expect(provider.generate(input)).rejects.toThrow('raw provider detail');
     await expect(provider.generate(input)).rejects.not.toThrow(OPENAI_TEST_KEY);
+  });
+
+  it('explains a retired Gemini model from the provider response', async () => {
+    const retiredMessage = 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent.';
+    const provider = new GeminiProvider({
+      apiKey: 'gemini-test-secret',
+      model: 'gemini-1.5-flash',
+      httpClient: async () => ({ status: 404, json: async () => ({ error: { message: retiredMessage } }) })
+    });
+
+    const error = await provider.generate(input).catch((value: unknown) => value);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toMatchObject({ provider: 'Gemini', model: 'gemini-1.5-flash', status: 404, classification: 'model retired' });
+    expect((error as Error).message).toContain('Gemini 404');
+    expect((error as Error).message).toContain("model 'gemini-1.5-flash'");
+    expect((error as Error).message).toContain(retiredMessage);
+    expect((error as Error).message).toContain('model retired');
+    expect((error as Error).message).toContain('Update the model to gemini-flash-latest');
+    expect((error as Error).message).not.toContain('gemini-test-secret');
+  });
+
+  it.each([
+    [429, 'You exceeded your current quota.', 'quota'],
+    [429, 'You exceeded your current quota; check your plan and billing details.', 'billing']
+  ] as const)('classifies Gemini %s provider evidence as %s', async (status, providerMessage, classification) => {
+    const provider = new GeminiProvider({
+      apiKey: 'gemini-test-secret',
+      model: 'gemini-3.6-flash',
+      httpClient: async () => ({ status, json: async () => ({ error: { message: providerMessage } }) })
+    });
+
+    const error = await provider.generate(input).catch((value: unknown) => value);
+
+    expect((error as Error).message).toContain(`Gemini 429: model 'gemini-3.6-flash' failed (classification: ${classification})`);
+    expect((error as Error).message).toContain(providerMessage);
+    expect((error as Error).message).not.toContain('gemini-test-secret');
+  });
+
+  it.each([
+    [401, 'Incorrect API key provided.'],
+    [403, 'The API key is not authorized for this resource.']
+  ] as const)('classifies OpenAI %s authentication failures as invalid key', async (status, providerMessage) => {
+    const provider = new OpenAIProvider({
+      apiKey: OPENAI_TEST_KEY,
+      model: 'gpt-test-model',
+      httpClient: async () => ({ status, json: async () => ({ error: { message: providerMessage } }) })
+    });
+
+    const error = await provider.generate(input).catch((value: unknown) => value);
+
+    expect((error as Error).message).toContain(`OpenAI ${status}: model 'gpt-test-model' failed (classification: invalid key)`);
+    expect((error as Error).message).toContain(providerMessage);
+    expect((error as Error).message).not.toContain(OPENAI_TEST_KEY);
   });
 
   it('returns safe errors when OpenAI returns malformed JSON content', async () => {
@@ -140,7 +208,8 @@ describe('AI provider adapters', () => {
       }
     });
 
-    await expect(provider.generate(input)).rejects.toThrow('Gemini provider request failed before receiving a response');
+    await expect(provider.generate(input)).rejects.toThrow("Gemini unavailable: model 'gemini-flash-latest' failed (classification: other)");
+    await expect(provider.generate(input)).rejects.toThrow('network failed for');
     await expect(provider.generate(input)).rejects.not.toThrow('gemini-test-secret');
   });
 
@@ -160,7 +229,8 @@ describe('AI provider adapters', () => {
 
     const error = await result;
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toBe('OpenAI provider request failed before receiving a response');
+    expect((error as Error).message).toContain("OpenAI unavailable: model 'gpt-4o-mini' failed (classification: timeout)");
+    expect((error as Error).message).toContain('aborted');
     expect((error as Error).message).not.toContain(OPENAI_TEST_KEY);
   });
 
@@ -180,7 +250,8 @@ describe('AI provider adapters', () => {
 
     const error = await result;
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toBe('Gemini provider request failed before receiving a response');
+    expect((error as Error).message).toContain("Gemini unavailable: model 'gemini-flash-latest' failed (classification: timeout)");
+    expect((error as Error).message).toContain('aborted');
     expect((error as Error).message).not.toContain('gemini-test-secret');
   });
 
@@ -199,7 +270,7 @@ describe('AI provider adapters', () => {
 
   it.each([
     ['openai', 'https://fake.openai/v1/chat/completions', { choices: [{ message: { content: JSON.stringify({ summary: 'OpenAI summary', recommendation: 'Restart it' }) } }] }],
-    ['gemini', 'https://fake.gemini/gemini-1.5-flash:generateContent?key=provider-secret', { candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'Gemini summary', recommendation: 'Check it' }) }] } }] }],
+    ['gemini', 'https://fake.gemini/gemini-flash-latest:generateContent?key=provider-secret', { candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'Gemini summary', recommendation: 'Check it' }) }] } }] }],
     ['ollama', 'http://fake.ollama/api/chat', { message: { content: JSON.stringify({ summary: 'Ollama summary', recommendation: 'Inspect it' }) } }]
   ] as const)('uses bounded redacted per-signature %s requests', async (kind, url, response) => {
     const requests: HttpRequest[] = [];
@@ -219,7 +290,8 @@ describe('AI provider adapters', () => {
     const malformed = createSignatureProvider('ollama', { apiKey: 'unused', httpClient: async () => ({ status: 200, json: async () => ({ message: { content: 'not-json ollama-secret' } }) }) });
     const context = { signature: 'sig', component: 'mqtt', classification: 'new' as const, occurrences: [] };
 
-    await expect(statusFailure.analyze(context, new AbortController().signal)).rejects.toThrow('Ollama provider request failed with status 500');
+    await expect(statusFailure.analyze(context, new AbortController().signal)).rejects.toThrow("Ollama 500: model 'llama3.2' failed (classification: other)");
+    await expect(statusFailure.analyze(context, new AbortController().signal)).rejects.not.toThrow('ollama-secret');
     await expect(malformed.analyze(context, new AbortController().signal)).rejects.toThrow('Ollama provider returned an invalid signature analysis');
   });
 
@@ -227,7 +299,7 @@ describe('AI provider adapters', () => {
     vi.useFakeTimers();
     const provider = createSignatureProvider('ollama', { apiKey: 'unused', timeoutMs: 25, httpClient: async (request) => new Promise((_, reject) => request.signal?.addEventListener('abort', () => reject(new Error('ollama-secret')), { once: true })) });
     const result = provider.analyze({ signature: 'sig', component: 'mqtt', classification: 'new', occurrences: [] }, new AbortController().signal);
-    const assertion = expect(result).rejects.toThrow('Ollama provider request failed before receiving a response');
+    const assertion = expect(result).rejects.toThrow("Ollama unavailable: model 'llama3.2' failed (classification: timeout)");
     await vi.advanceTimersByTimeAsync(25);
     await assertion;
   });

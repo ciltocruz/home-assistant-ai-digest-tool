@@ -26,16 +26,41 @@ type ProviderOptions = {
 
 export type SignatureProviderOptions = ProviderOptions & { baseUrl?: string };
 
+export type AIProviderFailureClassification = 'model retired' | 'quota' | 'billing' | 'invalid key' | 'timeout' | 'other';
+
+export class AIProviderError extends Error {
+  readonly status: number | 'unavailable';
+  readonly classification: AIProviderFailureClassification;
+  readonly provider: string;
+  readonly model: string;
+
+  constructor(details: {
+    provider: string;
+    model: string;
+    status: number | 'unavailable';
+    classification: AIProviderFailureClassification;
+    message: string;
+  }) {
+    super(details.message);
+    this.name = 'AIProviderError';
+    this.provider = details.provider;
+    this.model = details.model;
+    this.status = details.status;
+    this.classification = details.classification;
+  }
+}
+
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
-const DEFAULT_GEMINI_MODEL = 'gemini-1.5-flash';
+const DEFAULT_GEMINI_MODEL = 'gemini-flash-latest';
 const DEFAULT_PROVIDER_TIMEOUT_MS = 30_000;
 
 abstract class SignatureHttpProvider implements SignatureProvider {
   protected readonly httpClient: ProviderHttpClient;
   protected readonly timeoutMs: number;
   abstract readonly name: string;
+  protected abstract readonly model: string;
 
   constructor(protected readonly options: SignatureProviderOptions) {
     this.httpClient = options.httpClient ?? fetchJson;
@@ -43,9 +68,12 @@ abstract class SignatureHttpProvider implements SignatureProvider {
   }
 
   async analyze(context: BoundedSignatureContext, signal: AbortSignal): Promise<SignatureAnalysis> {
-    const response = await safeProviderRequest(this.name, withTimeout(this.timeoutMs, signal, (requestSignal) => this.request(context, requestSignal)));
-    if (response.status < 200 || response.status >= 300) throw new Error(`${this.name} provider request failed with status ${response.status}`);
-    return parseSignatureAnalysis(this.content(await response.json()), this.name);
+    const response = await requestProvider(this.name, this.model, this.timeoutMs, signal, (requestSignal) => this.request(context, requestSignal), undefined, this.options.apiKey);
+    try {
+      return parseSignatureAnalysis(this.content(await response.json()), this.name);
+    } catch (error) {
+      throw providerFailure(this.name, this.model, response.status, errorDetail(error), 'other', this.options.apiKey);
+    }
   }
 
   protected abstract request(context: BoundedSignatureContext, signal: AbortSignal): Promise<ProviderHttpResponse>;
@@ -60,10 +88,16 @@ export function createSignatureProvider(provider: 'openai' | 'gemini' | 'ollama'
 
 class OpenAISignatureProvider extends SignatureHttpProvider {
   readonly name = 'OpenAI';
+  protected readonly model: string;
+
+  constructor(options: SignatureProviderOptions) {
+    super(options);
+    this.model = options.model ?? DEFAULT_OPENAI_MODEL;
+  }
 
   protected request(context: BoundedSignatureContext, signal: AbortSignal): Promise<ProviderHttpResponse> {
     return this.httpClient({ method: 'POST', url: this.options.baseUrl ?? OPENAI_URL, signal, headers: { authorization: `Bearer ${this.options.apiKey}`, 'content-type': 'application/json' }, body: {
-      model: this.options.model ?? DEFAULT_OPENAI_MODEL, response_format: { type: 'json_object' },
+      model: this.model, response_format: { type: 'json_object' },
       messages: [{ role: 'system', content: signatureInstructions() }, { role: 'user', content: signaturePrompt(context) }]
     } });
   }
@@ -73,10 +107,16 @@ class OpenAISignatureProvider extends SignatureHttpProvider {
 
 class GeminiSignatureProvider extends SignatureHttpProvider {
   readonly name = 'Gemini';
+  protected readonly model: string;
+
+  constructor(options: SignatureProviderOptions) {
+    super(options);
+    this.model = options.model ?? DEFAULT_GEMINI_MODEL;
+  }
 
   protected request(context: BoundedSignatureContext, signal: AbortSignal): Promise<ProviderHttpResponse> {
     const root = this.options.baseUrl ?? GEMINI_URL;
-    return this.httpClient({ method: 'POST', url: `${root}/${encodeURIComponent(this.options.model ?? DEFAULT_GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(this.options.apiKey)}`, signal, headers: { 'content-type': 'application/json' }, body: {
+    return this.httpClient({ method: 'POST', url: `${root}/${encodeURIComponent(this.model)}:generateContent?key=${encodeURIComponent(this.options.apiKey)}`, signal, headers: { 'content-type': 'application/json' }, body: {
       contents: [{ role: 'user', parts: [{ text: `${signatureInstructions()}\n\n${signaturePrompt(context)}` }] }], generationConfig: { responseMimeType: 'application/json' }
     } });
   }
@@ -86,10 +126,16 @@ class GeminiSignatureProvider extends SignatureHttpProvider {
 
 class OllamaSignatureProvider extends SignatureHttpProvider {
   readonly name = 'Ollama';
+  protected readonly model: string;
+
+  constructor(options: SignatureProviderOptions) {
+    super(options);
+    this.model = options.model ?? 'llama3.2';
+  }
 
   protected request(context: BoundedSignatureContext, signal: AbortSignal): Promise<ProviderHttpResponse> {
     return this.httpClient({ method: 'POST', url: `${(this.options.baseUrl ?? 'http://ollama:11434').replace(/\/$/, '')}/api/chat`, signal, headers: { 'content-type': 'application/json' }, body: {
-      model: this.options.model ?? 'llama3.2', stream: false,
+      model: this.model, stream: false,
       messages: [{ role: 'system', content: signatureInstructions() }, { role: 'user', content: signaturePrompt(context) }]
     } });
   }
@@ -133,9 +179,12 @@ export class OpenAIProvider implements AIProvider {
 
   async generate(input: RedactedDigestInput, context?: ExecutionContext): Promise<StructuredDigest> {
     context?.checkpoint();
-    const response = await safeProviderRequest(
+    const response = await requestProvider(
       'OpenAI',
-      withTimeout(this.timeoutMs, context?.signal, (signal) => this.httpClient({
+      this.model,
+      this.timeoutMs,
+      context?.signal,
+      (signal) => this.httpClient({
         method: 'POST',
         url: OPENAI_URL,
         signal,
@@ -151,14 +200,18 @@ export class OpenAIProvider implements AIProvider {
             { role: 'user', content: redactedPrompt(input) }
           ]
         }
-      })),
-      context
+      }),
+      context?.checkpoint,
+      this.options.apiKey
     );
 
     context?.checkpoint();
-    if (response.status < 200 || response.status >= 300) throw new Error(`OpenAI provider request failed with status ${response.status}`);
-    const payload = await response.json();
-    return parseStructuredDigest(extractOpenAIContent(payload), 'OpenAI');
+    try {
+      const payload = await response.json();
+      return parseStructuredDigest(extractOpenAIContent(payload), 'OpenAI');
+    } catch (error) {
+      throw providerFailure('OpenAI', this.model, response.status, errorDetail(error), 'other', this.options.apiKey);
+    }
   }
 }
 
@@ -176,9 +229,12 @@ export class GeminiProvider implements AIProvider {
 
   async generate(input: RedactedDigestInput, context?: ExecutionContext): Promise<StructuredDigest> {
     context?.checkpoint();
-    const response = await safeProviderRequest(
+    const response = await requestProvider(
       'Gemini',
-      withTimeout(this.timeoutMs, context?.signal, (signal) => this.httpClient({
+      this.model,
+      this.timeoutMs,
+      context?.signal,
+      (signal) => this.httpClient({
         method: 'POST',
         url: `${GEMINI_URL}/${encodeURIComponent(this.model)}:generateContent?key=${encodeURIComponent(this.options.apiKey)}`,
         signal,
@@ -192,32 +248,145 @@ export class GeminiProvider implements AIProvider {
           ],
           generationConfig: { responseMimeType: 'application/json' }
         }
-      })),
-      context
+      }),
+      context?.checkpoint,
+      this.options.apiKey
     );
 
     context?.checkpoint();
-    if (response.status < 200 || response.status >= 300) throw new Error(`Gemini provider request failed with status ${response.status}`);
-    const payload = await response.json();
-    return parseStructuredDigest(extractGeminiContent(payload), 'Gemini');
+    try {
+      const payload = await response.json();
+      return parseStructuredDigest(extractGeminiContent(payload), 'Gemini');
+    } catch (error) {
+      throw providerFailure('Gemini', this.model, response.status, errorDetail(error), 'other', this.options.apiKey);
+    }
   }
 }
 
-async function safeProviderRequest(provider: string, request: Promise<ProviderHttpResponse>, context?: ExecutionContext): Promise<ProviderHttpResponse> {
-  try {
-    return await request;
-  } catch {
-    if (context?.signal.aborted) context.checkpoint();
-    throw new Error(`${provider} provider request failed before receiving a response`);
-  }
-}
-
-async function withTimeout<T>(timeoutMs: number, parentSignal: AbortSignal | undefined, operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+async function requestProvider(
+  provider: string,
+  model: string,
+  timeoutMs: number,
+  parentSignal: AbortSignal | undefined,
+  operation: (signal: AbortSignal) => Promise<ProviderHttpResponse>,
+  checkpoint?: ExecutionContext['checkpoint'],
+  apiKey?: string
+): Promise<ProviderHttpResponse> {
   const cancellation = combineAbortSignals(parentSignal, timeoutMs);
   try {
-    return await operation(cancellation.signal);
+    let response: ProviderHttpResponse;
+    try {
+      response = await operation(cancellation.signal);
+    } catch (error) {
+      if (parentSignal?.aborted) {
+        try {
+          checkpoint?.();
+        } catch (checkpointError) {
+          throw checkpointError;
+        }
+        throw providerFailure(provider, model, undefined, errorDetail(error), 'other', apiKey);
+      }
+      const classification = cancellation.signal.aborted ? 'timeout' : 'other';
+      throw providerFailure(provider, model, undefined, errorDetail(error), classification, apiKey);
+    }
+    if (response.status < 200 || response.status >= 300) {
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch (error) {
+        payload = { error: { message: errorDetail(error) } };
+      }
+      throw providerFailure(provider, model, response.status, providerErrorMessage(payload), undefined, apiKey);
+    }
+    return response;
   } finally {
     cancellation.dispose();
+  }
+}
+
+function providerFailure(
+  provider: string,
+  model: string,
+  status: number | undefined,
+  detail: string,
+  classification = classifyProviderFailure(status, detail),
+  apiKey?: string
+): AIProviderError {
+  const safeDetail = redactProviderError(detail || 'The provider returned no error message.', apiKey);
+  const statusLabel = status ?? 'unavailable';
+  const prefix = `${provider} ${statusLabel}: model '${model}'`;
+  if (classification === 'model retired') {
+    const remediation = provider === 'Gemini' ? ' Update the model to gemini-flash-latest.' : '';
+    return new AIProviderError({
+      provider,
+      model,
+      status: statusLabel,
+      classification,
+      message: `${prefix} no longer exists (retired; classification: model retired).${remediation} Provider message: ${safeDetail}`
+    });
+  }
+  const detailLabel = classification === 'timeout' ? 'Original error' : 'Provider message';
+  return new AIProviderError({
+    provider,
+    model,
+    status: statusLabel,
+    classification,
+    message: `${prefix} failed (classification: ${classification}). ${detailLabel}: ${safeDetail}`
+  });
+}
+
+function classifyProviderFailure(status: number | undefined, detail: string): AIProviderFailureClassification {
+  if (status === undefined && /timeout|timed out|aborted/i.test(detail)) return 'timeout';
+  if (status === 401 || status === 403) return 'invalid key';
+  if (status === 404 && /model|not found|not supported|generatecontent/i.test(detail)) return 'model retired';
+  if (status === 429 && /billing|paid plan|payment|subscription|upgrade|plan|free tier/i.test(detail)) return 'billing';
+  if (status === 429) return 'quota';
+  return 'other';
+}
+
+function providerErrorMessage(payload: unknown): string {
+  const root = asRecord(payload);
+  const error = asRecord(root.error);
+  if (typeof error.message === 'string') return error.message;
+  if (typeof root.message === 'string') return root.message;
+  if (typeof payload === 'string') return payload;
+  try {
+    return JSON.stringify(payload);
+  } catch {
+    return 'The provider returned an unreadable error response.';
+  }
+}
+
+function errorDetail(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === 'string') return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return 'The provider request failed without an error message.';
+  }
+}
+
+function redactProviderError(value: string, apiKey?: string): string {
+  const redacted = apiKey ? value.split(apiKey).join('[REDACTED]') : value;
+  return redacted
+    .replace(/\bBearer\s+[^\s'"<>,);]+/gi, 'Bearer [REDACTED]')
+    .replace(/([?&](?:key|api[_-]?key|token|access[_-]?token|password|secret)=)[^&#\s]+/gi, '$1[REDACTED]')
+    .replace(/(\b(?:api[_-]?key|access[_-]?token|password|secret)\s*[:=]\s*)[^\s,;}]+/gi, '$1[REDACTED]')
+    .replace(/\b(?:AIza|sk-|ghp_)[A-Za-z0-9_:-]{8,}\b/g, '[REDACTED]')
+    .replace(/https?:\/\/[^\s'"<>]+/gi, redactUrl)
+    .replace(/\b[A-Za-z0-9_-]*secret[A-Za-z0-9_:-]*\b/gi, '[REDACTED]');
+}
+
+function redactUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    for (const key of [...url.searchParams.keys()]) {
+      if (/key|token|password|secret|auth/i.test(key)) url.searchParams.set(key, '[REDACTED]');
+    }
+    return url.toString();
+  } catch {
+    return '[REDACTED_URL]';
   }
 }
 

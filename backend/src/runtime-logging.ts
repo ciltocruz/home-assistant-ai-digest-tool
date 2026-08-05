@@ -24,12 +24,20 @@ export type RuntimeStartupFailureEvent = {
   errorName: 'Error' | 'TypeError';
 };
 
+export type RuntimeDigestFailureEvent = {
+  jobId: string;
+  stage: 'provider' | 'source' | 'processing' | 'storage';
+  errorCode: string;
+  errorMessage: string;
+};
+
 export type RuntimeLogger = {
   reportApiFailure(event: OperationalFailureEvent): void;
+  reportDigestFailure(event: RuntimeDigestFailureEvent): void;
   reportStartupFailure(event: RuntimeStartupFailureEvent): void;
 };
 
-type RuntimeLogEvent = (OperationalFailureEvent & { event: 'runtime_api_failure' }) | RuntimeStartupFailureEvent;
+type RuntimeLogEvent = (OperationalFailureEvent & { event: 'runtime_api_failure' }) | (RuntimeDigestFailureEvent & { event: 'runtime_digest_failure' }) | RuntimeStartupFailureEvent;
 
 const DEFAULT_MAX_BYTES = 256 * 1024;
 
@@ -72,6 +80,9 @@ export function createRuntimeLogger(options: RuntimeFailureLoggerOptions = {}): 
     reportApiFailure(event) {
       write({ event: 'runtime_api_failure', ...event });
     },
+    reportDigestFailure(event) {
+      write({ event: 'runtime_digest_failure', ...event, errorMessage: redactRuntimeMessage(event.errorMessage) });
+    },
     reportStartupFailure(event) {
       write(event);
     }
@@ -88,4 +99,12 @@ function boundedLogLine(entry: object, maxBytes: number): string {
 
   const fallback = `${JSON.stringify({ level: 'error', event: 'runtime_log_entry_truncated' })}\n`;
   return Buffer.byteLength(fallback, 'utf8') <= maxBytes ? fallback : '\n';
+}
+
+function redactRuntimeMessage(value: string): string {
+  return value
+    .replace(/\bBearer\s+[^\s'"<>,);]+/gi, 'Bearer [REDACTED]')
+    .replace(/([?&](?:key|api[_-]?key|token|access[_-]?token|password|secret)=)[^&#\s]+/gi, '$1[REDACTED]')
+    .replace(/(\b(?:key|api[_-]?key|access[_-]?token|password|secret)\s*[:=]\s*)[^\s,;}]+/gi, '$1[REDACTED]')
+    .replace(/\b(?:AIza|sk-|ghp_)[A-Za-z0-9_:-]{8,}\b/g, '[REDACTED]');
 }

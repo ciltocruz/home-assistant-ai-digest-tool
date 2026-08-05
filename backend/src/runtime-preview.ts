@@ -4,6 +4,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { BackendApiServices, BackendAuthOptions, CreateAppOptions } from './http/app.js';
 import { createApp } from './http/app.js';
 import { createPersistentRuntimeServices } from './runtime-persistence.js';
+import type { RuntimeDigestFailureEvent } from './runtime-logging.js';
 import type { SetupValidationRequest } from '@ha-digest/shared';
 
 export type RuntimePreviewOptions = {
@@ -14,6 +15,7 @@ export type RuntimePreviewOptions = {
   trustProxy?: boolean;
   now?: () => string;
   failureReporter?: CreateAppOptions['failureReporter'];
+  digestFailureReporter?: (event: RuntimeDigestFailureEvent) => void;
 };
 
 type RuntimeCheck = { status: 'ready' } | { status: 'degraded'; reason: string };
@@ -29,7 +31,7 @@ export type PersistentRuntimePreviewOptions = RuntimePreviewOptions & {
 export async function createPersistentRuntimePreviewApp(options: PersistentRuntimePreviewOptions): Promise<FastifyInstance> {
   return createRuntimePreviewApp({
     ...options,
-    services: await createPersistentRuntimeServices({ dataDir: options.dataDir, now: options.now, haLogPath: options.haLogsDir ? join(options.haLogsDir, 'home-assistant.log') : undefined, haMaxStates: options.haMaxStates, haMaxLogLines: options.haMaxLogLines, haMaxResponseBytes: options.haMaxResponseBytes, haAnalysisTimeoutMs: options.haAnalysisTimeoutMs })
+    services: await createPersistentRuntimeServices({ dataDir: options.dataDir, now: options.now, haLogPath: options.haLogsDir ? join(options.haLogsDir, 'home-assistant.log') : undefined, haMaxStates: options.haMaxStates, haMaxLogLines: options.haMaxLogLines, haMaxResponseBytes: options.haMaxResponseBytes, haAnalysisTimeoutMs: options.haAnalysisTimeoutMs, digestFailureReporter: options.digestFailureReporter })
   });
 }
 

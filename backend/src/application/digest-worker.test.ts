@@ -38,6 +38,24 @@ describe('DigestWorker', () => {
     expect(JSON.stringify(fail.mock.calls)).not.toContain('token-value-must-not-leak');
   });
 
+  it('preserves detailed provider failures for storage and reporting while redacting credentials', async () => {
+    const failureMessages: string[] = [];
+    const fail = vi.fn(async (_id: string, _code: string, message: string) => { failureMessages.push(message); });
+    const report = vi.fn();
+    const worker = new DigestWorker({
+      jobs: { leaseNext: async () => job, setStage: async () => undefined, complete: async () => undefined, fail },
+      failureReporter: report,
+      analysis: { runWithStages: async () => { throw new Error('AI_ANALYSIS_UNAVAILABLE: Gemini 404: model gemini-flash-latest failed; key=raw-provider-token'); } }
+    });
+
+    await worker.runOnce();
+
+    expect(fail).toHaveBeenCalledWith('job-1', 'AI_PROVIDER_UNAVAILABLE', expect.stringContaining('Gemini 404'));
+    expect(failureMessages[0]).not.toContain('raw-provider-token');
+    expect(report).toHaveBeenCalledWith(expect.objectContaining({ stage: 'provider', errorMessage: expect.stringContaining('Gemini 404') }));
+    expect(JSON.stringify(report.mock.calls)).not.toContain('raw-provider-token');
+  });
+
   it('waits for active execution during shutdown', async () => {
     let release: (() => void) | undefined;
     const worker = new DigestWorker({

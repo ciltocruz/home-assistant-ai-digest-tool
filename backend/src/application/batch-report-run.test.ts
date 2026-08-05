@@ -46,9 +46,9 @@ describe('BatchReportRun', () => {
   it('records an all-provider failure as a web-only failed run without advancing the cursor', async () => {
     const { run, commits, failures } = harness(async () => { throw new Error('provider down'); });
 
-    await expect(run.run({ runId: 'run-3', slotId: 'slot-3' })).resolves.toEqual({ status: 'failed', code: 'AI_ANALYSIS_UNAVAILABLE' });
+    await expect(run.run({ runId: 'run-3', slotId: 'slot-3' })).resolves.toEqual({ status: 'failed', code: 'AI_ANALYSIS_UNAVAILABLE', errorMessage: 'provider down' });
     expect(commits).toEqual([]);
-    expect(failures).toEqual([{ request: { runId: 'run-3', slotId: 'slot-3' }, code: 'AI_ANALYSIS_UNAVAILABLE' }]);
+    expect(failures).toEqual([{ request: { runId: 'run-3', slotId: 'slot-3' }, code: 'AI_ANALYSIS_UNAVAILABLE', errorMessage: 'provider down' }]);
   });
 
   it('keeps HA degradation in the committed report and notifies only committed findings', async () => {

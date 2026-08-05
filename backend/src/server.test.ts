@@ -18,6 +18,7 @@ describe('runtime server startup', () => {
         createApp,
         createLogger: () => ({
           reportApiFailure: vi.fn(),
+          reportDigestFailure: vi.fn(),
           reportStartupFailure: (event) => startupEvents.push(event)
         }),
         setExitCode
@@ -41,7 +42,7 @@ describe('runtime server startup', () => {
       },
       {
         createApp: async () => ({ listen: vi.fn(async () => undefined), close }) as never,
-        createLogger: () => ({ reportApiFailure: vi.fn(), reportStartupFailure: vi.fn() }),
+        createLogger: () => ({ reportApiFailure: vi.fn(), reportDigestFailure: vi.fn(), reportStartupFailure: vi.fn() }),
         registerSignalHandler: (signal, handler) => handlers.set(signal, handler)
       }
     );

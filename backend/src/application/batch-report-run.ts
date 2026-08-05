@@ -31,10 +31,10 @@ export type CommitPlan = {
   notesBySignature?: Record<string, NoteDto[]>;
   report: { status: 'quiet' | 'reported' | 'partial'; findings: Array<{ signature: string; analysis: SignatureAnalysis }>; warnings: string[]; integrationStatus?: IntegrationStatusSnapshot };
 };
-export type FailedRun = { request: RunRequest; code: 'AI_ANALYSIS_UNAVAILABLE' };
+export type FailedRun = { request: RunRequest; code: 'AI_ANALYSIS_UNAVAILABLE'; errorMessage: string };
 export type RunOutcome =
   | { status: 'quiet' | 'reported' | 'partial'; warnings: string[] }
-  | { status: 'failed'; code: 'AI_ANALYSIS_UNAVAILABLE' };
+  | { status: 'failed'; code: 'AI_ANALYSIS_UNAVAILABLE'; errorMessage: string };
 
 export type BatchReportRunDependencies = {
   log: LogDeltaPort;
@@ -77,15 +77,16 @@ export class BatchReportRun {
 
     const analyses = await Promise.all(reportedSignatures.map(async (signature) => {
       try {
-        return { signature, analysis: await this.dependencies.provider.analyze(this.contextFor(signature), new AbortController().signal) };
-      } catch {
-        return { signature, analysis: null };
+        return { signature, analysis: await this.dependencies.provider.analyze(this.contextFor(signature), new AbortController().signal), error: undefined };
+      } catch (error) {
+        return { signature, analysis: null, error };
       }
     }));
     const findings = analyses.flatMap(({ signature, analysis }) => analysis ? [{ signature: signature.signature, analysis }] : []);
     if (findings.length === 0) {
-      await this.dependencies.persistence.fail({ request, code: 'AI_ANALYSIS_UNAVAILABLE' });
-      return { status: 'failed', code: 'AI_ANALYSIS_UNAVAILABLE' };
+      const errorMessage = firstProviderFailureMessage(analyses.map(({ error }) => error));
+      await this.dependencies.persistence.fail({ request, code: 'AI_ANALYSIS_UNAVAILABLE', errorMessage });
+      return { status: 'failed', code: 'AI_ANALYSIS_UNAVAILABLE', errorMessage };
     }
     const warnings = findings.length === analyses.length ? [] : ['AI_ANALYSIS_PARTIAL'];
     const status = warnings.length ? 'partial' : 'reported';
@@ -134,4 +135,16 @@ function redact(value: string): string {
   return value
     .replace(/\bBearer\s+[-._~+/=A-Za-z0-9]+\b/gi, 'Bearer [REDACTED]')
     .replace(/\b(token|api[_-]?key|password|secret)(\s*[:=]\s*)[^\s&]+/gi, (_match, key, separator) => `${key}${separator}[REDACTED]`);
+}
+
+function firstProviderFailureMessage(errors: unknown[]): string {
+  const detail = errors.find((error): error is Error => error instanceof Error && error.message.length > 0)?.message;
+  return redactProviderFailure(detail ?? 'The AI provider failed without an error message.');
+}
+
+function redactProviderFailure(value: string): string {
+  return value
+    .replace(/\bBearer\s+[^\s'"<>,);]+/gi, 'Bearer [REDACTED]')
+    .replace(/([?&](?:key|api[_-]?key|token|access[_-]?token|password|secret)=)[^&#\s]+/gi, '$1[REDACTED]')
+    .replace(/\b(?:AIza|sk-|ghp_)[A-Za-z0-9_:-]{8,}\b/g, '[REDACTED]');
 }

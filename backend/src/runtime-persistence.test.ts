@@ -44,6 +44,7 @@ describe('persistent runtime services', () => {
       privacyLevel: 'balanced',
       retentionDays: 30
     });
+    expect(settings.ai).not.toHaveProperty('model');
     expect(await readFile(join(dataDir, 'app.db'), 'utf8')).not.toContain(AI_SECRET);
   });
 
@@ -384,17 +385,34 @@ describe('persistent runtime services', () => {
     });
   });
 
-  it('records provider-wide v2 failure instead of silently substituting a fake analysis', async () => {
+  it('stores and exposes the verbose safe provider failure on the actual digest job path', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-v2-no-fallback-'));
     const logPath = join(dataDir, 'home-assistant.log');
     await writeFile(logPath, '2026-07-12 10:00:00 ERROR [mqtt] connection failed\n');
-    const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW, haLogPath: logPath, providerHttpClient: async () => ({ status: 503, json: async () => ({}) }) });
-    await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'openai', aiKey: AI_SECRET });
+    const providerMessage = 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent.';
+    const failures: Array<{ errorCode: string; errorMessage: string }> = [];
+    const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW, haLogPath: logPath, digestFailureReporter: (event) => failures.push(event), providerHttpClient: async () => ({ status: 404, json: async () => ({ error: { message: providerMessage } }) }) });
+    await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET });
     const queued = await services.digestJobs.enqueue({ kind: 'manual', triggerWindowId: 'v2:no-fallback' });
 
     await (services.digestWorker as { runOnce(): Promise<void> } | undefined)?.runOnce();
 
-    await expect(services.digestJobs.get(queued.jobId)).resolves.toMatchObject({ status: 'failed', errorCode: 'AI_PROVIDER_UNAVAILABLE' });
+    const stored = await services.digestJobs.get(queued.jobId);
+    expect(stored).toMatchObject({ status: 'failed', errorCode: 'AI_PROVIDER_UNAVAILABLE' });
+    expect(stored?.errorMessage).toContain('Gemini 404');
+    expect(stored?.errorMessage).toContain("model 'gemini-flash-latest'");
+    expect(stored?.errorMessage).toContain(providerMessage);
+    expect(stored?.errorMessage).toContain('model retired');
+    expect(stored?.errorMessage).not.toContain(AI_SECRET);
+    expect(failures).toEqual([expect.objectContaining({ errorCode: 'AI_PROVIDER_UNAVAILABLE', errorMessage: stored?.errorMessage })]);
+
+    const app = createApp({ services, auth: authOptions() });
+    const response = await authenticatedGet(app, `/api/digests/jobs/${queued.jobId}`);
+    await app.close();
+    await services.close?.();
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ errorMessage: stored?.errorMessage });
+    expect(JSON.stringify(response.json())).not.toContain(AI_SECRET);
   });
 });
 

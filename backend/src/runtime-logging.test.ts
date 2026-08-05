@@ -27,6 +27,25 @@ describe('runtime failure logger', () => {
     expect(log).not.toContain('secret');
   });
 
+  it('writes detailed secret-safe AI provider failures for digest jobs', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-runtime-ai-logs-'));
+    const logger = createRuntimeLogger({ dataDir, now: () => '2026-07-15T10:00:00.000Z' });
+
+    logger.reportDigestFailure({
+      jobId: 'job-1',
+      stage: 'provider',
+      errorCode: 'AI_PROVIDER_UNAVAILABLE',
+      errorMessage: "Gemini 404: model 'gemini-1.5-flash' no longer exists (retired; classification: model retired). Provider message: models/gemini-1.5-flash is not found. key=super-secret"
+    });
+
+    const log = await readFile(join(dataDir, 'logs', 'runtime.log'), 'utf8');
+
+    expect(log).toContain('"event":"runtime_digest_failure"');
+    expect(log).toContain('Gemini 404');
+    expect(log).toContain('model retired');
+    expect(log).not.toContain('super-secret');
+  });
+
   it('falls back to stderr when persistent logging fails without leaking sensitive error details', async () => {
     const stderrMessages: string[] = [];
     const failingSink: RuntimeLogSink = {
