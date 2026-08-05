@@ -19,6 +19,88 @@ afterEach(() => {
 });
 
 describe('App persisted onboarding', () => {
+  it('hydrates the saved locale before rendering the account gate', async () => {
+    setLocale('en');
+    localStorage.setItem('ha-digest-locale', 'es');
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      return path === '/api/auth/status'
+        ? new Response(JSON.stringify({ hasAdmin: true }), { status: 200 })
+        : new Response(JSON.stringify({ code: 'UNAUTHENTICATED', message: 'Sign in required.', requestId: 'account-gate' }), { status: 401 });
+    }));
+    container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('Bienvenido de nuevo');
+    expect(container.textContent).toContain('Iniciar sesión');
+    expect(container.textContent).not.toContain('Welcome back');
+    root.unmount();
+  });
+
+  it('uses the selected locale while rendering the registration gate', async () => {
+    setLocale('en');
+    localStorage.setItem('ha-digest-locale', 'en');
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      return path === '/api/auth/status'
+        ? new Response(JSON.stringify({ hasAdmin: false }), { status: 200 })
+        : new Response(JSON.stringify({ code: 'UNAUTHENTICATED', message: 'Sign in required.', requestId: 'account-register' }), { status: 401 });
+    }));
+    container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const language = container.querySelector('select');
+    expect(language).not.toBeNull();
+    await act(async () => {
+      language!.value = 'es';
+      language!.dispatchEvent(new Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('Primer arranque');
+    expect(container.textContent).toContain('Crear cuenta');
+    root.unmount();
+  });
+
+  it('shows bootstrap recovery instead of a login prompt for a server failure', async () => {
+    setLocale('es');
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      return path === '/api/auth/status'
+        ? new Response(JSON.stringify({ hasAdmin: true }), { status: 200 })
+        : new Response(JSON.stringify({ code: 'INTERNAL_ERROR', message: 'Request failed.', requestId: 'bootstrap-failure' }), { status: 503 });
+    }));
+    container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('No se pudo comprobar el acceso');
+    expect(container.textContent).toContain('Reintentar');
+    expect(container.querySelector('input')).toBeNull();
+    expect(container.textContent).not.toContain('Bienvenido de nuevo');
+    root.unmount();
+  });
+
   it('loads the saved onboarding screen after a browser reload', async () => {
     const progress: OnboardingProgress = { currentStep: 'schedule', completedSteps: ['home_assistant', 'ai_provider', 'notifications'], draft: { haUrl: 'http://homeassistant.local:8123' }, secretMetadata: { haToken: { configured: true, mask: 'se…et' } }, completed: false };
     const api = {

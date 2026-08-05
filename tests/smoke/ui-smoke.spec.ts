@@ -17,6 +17,7 @@ type MockState = {
   hasAdmin: boolean;
   loggedIn: boolean;
   language: 'en' | 'es';
+  sessionCookieRequired: boolean;
 };
 
 const SMOKE_HA_AUTH_SENTINEL = 'SMOKE_SENTINEL_HA_AUTH_VALUE';
@@ -41,8 +42,8 @@ test('registers, signs in, completes onboarding, and runs the first deterministi
 
   await page.goto('/');
   await page.getByLabel('Language').selectOption('es');
-  await page.getByLabel('Password').fill('smoke-account-password');
-  await page.getByRole('button', { name: 'Create account' }).click();
+  await page.getByLabel('Contraseña').fill('smoke-account-password');
+  await page.getByRole('button', { name: 'Crear cuenta' }).click();
   const onboarding = page.getByRole('form', { name: 'Configuración guiada' });
   await onboarding.getByLabel('URL de Home Assistant').fill('http://homeassistant.local:8123');
   await onboarding.getByLabel('Token de Home Assistant').fill(SMOKE_HA_AUTH_SENTINEL);
@@ -73,7 +74,16 @@ test('gates operations and preserves shell navigation', async ({ page }) => {
   await expect(page.getByRole('navigation', { name: 'Navegación principal' })).toHaveCount(0);
 
   state.onboardingCompleted = true;
+  state.sessionCookieRequired = true;
+  const resumedSession = page.waitForResponse((response) => {
+    const request = response.request();
+    return new URL(response.url()).pathname === '/api/session' && request.method() === 'GET';
+  });
   await page.reload();
+  const sessionResponse = await resumedSession;
+  expect(sessionResponse.status()).toBe(200);
+  expect((await sessionResponse.json()).csrfToken).toMatch(/\S+/);
+  expect(sessionResponse.request().headers().cookie).toContain('ha_digest_session=smoke-session');
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole('link', { name: 'Panel', exact: true })).toHaveAttribute('aria-current', 'page');
 
@@ -314,7 +324,8 @@ async function mockRuntimeApi(page: Page): Promise<MockState> {
     reportPresentations: {},
     hasAdmin: true,
     loggedIn: true,
-    language: 'es'
+    language: 'es',
+    sessionCookieRequired: false
   };
 
   await page.route('/api/**', async (route) => {
@@ -325,7 +336,12 @@ async function mockRuntimeApi(page: Page): Promise<MockState> {
     if (url.pathname === '/api/auth/status' && request.method() === 'GET') return json(route, { hasAdmin: state.hasAdmin });
     if (url.pathname === '/api/auth/register' && request.method() === 'POST') { state.hasAdmin = true; state.loggedIn = true; state.language = body.language; return json(route, { csrfToken: SMOKE_CSRF_SENTINEL, language: state.language }); }
     if (url.pathname === '/api/session' && request.method() === 'POST') { state.loggedIn = true; return json(route, { csrfToken: SMOKE_CSRF_SENTINEL, language: state.language }); }
-    if (url.pathname === '/api/session' && request.method() === 'GET') return state.loggedIn ? json(route, { csrfToken: SMOKE_CSRF_SENTINEL, language: state.language }) : json(route, { code: 'UNAUTHENTICATED', message: 'Sign in required.', requestId: 'smoke' }, 401);
+    if (url.pathname === '/api/session' && request.method() === 'GET') {
+      const hasSessionCookie = (request.headers()['cookie'] ?? '').includes('ha_digest_session=smoke-session');
+      return state.loggedIn && (!state.sessionCookieRequired || hasSessionCookie)
+        ? json(route, { csrfToken: SMOKE_CSRF_SENTINEL, language: state.language })
+        : json(route, { code: 'UNAUTHENTICATED', message: 'Sign in required.', requestId: 'smoke' }, 401);
+    }
 
     if (url.pathname === '/api/onboarding' && request.method() === 'GET') return json(route, onboardingProgress(state));
     if (url.pathname === '/api/onboarding' && request.method() === 'PATCH') {
@@ -389,6 +405,8 @@ async function mockRuntimeApi(page: Page): Promise<MockState> {
 
     return json(route, { code: 'NOT_FOUND', message: 'No smoke route matched.', requestId: 'smoke' }, 404);
   });
+
+  await page.context().addCookies([{ name: 'ha_digest_session', value: 'smoke-session', url: 'http://127.0.0.1:4173' }]);
 
   return state;
 }

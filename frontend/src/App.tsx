@@ -4,7 +4,7 @@ import { ApiClientError, redactSensitiveText } from './api-client.js';
 import { createApiClient } from './api-client.js';
 import { Dashboard, DashboardHistory, type DashboardApi } from './dashboard.js';
 import { ExperienceShell } from './experience-shell.js';
-import { setLocale, t } from './i18n/index.js';
+import { currentLocale, hydrateLocale, setLocale, t } from './i18n/index.js';
 import { JobLifecycle, rememberActiveJob, restoreActiveJobIds, type JobLifecycleApi } from './job-lifecycle.js';
 import { OnboardingFlow, createInitialOnboardingState, restoreOnboardingState, type OnboardingApi, type OnboardingState } from './onboarding.js';
 import { ReportDetail } from './report-detail.js';
@@ -20,19 +20,22 @@ type ManualDigestApi = {
 };
 
 export function App({ api }: { api?: AppApi } = {}) {
+  useState(() => hydrateLocale());
   const [candidateApi] = useState<(AppApi & Partial<SessionApi>) | undefined>(() => api ?? createApiClient());
   const [onboardingState] = useState<OnboardingState>(createInitialOnboardingState);
   const [sessionReady, setSessionReady] = useState(() => Boolean(api));
-  const [authState, setAuthState] = useState<'loading' | 'register' | 'login' | 'ready'>(() => api ? 'ready' : 'loading');
+  const [authState, setAuthState] = useState<'loading' | 'register' | 'login' | 'error' | 'ready'>(() => api ? 'ready' : 'loading');
+  const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
   const [activeJobIds, setActiveJobIds] = useState(restoreActiveJobIds);
   const [historyRevision, setHistoryRevision] = useState(0);
   useEffect(() => {
     if (api || !candidateApi || typeof candidateApi.getSession !== 'function' || typeof candidateApi.getAuthStatus !== 'function') return;
     void candidateApi.getAuthStatus!().then(({ hasAdmin }) => candidateApi.getSession!()
       .then((session) => { setLocale(session.language); setSessionReady(true); setAuthState('ready'); })
-      .catch(() => setAuthState(hasAdmin ? 'login' : 'register'))).catch(() => setAuthState('login'));
-  }, [api, candidateApi]);
-  if (authState !== 'ready') return <AccountScreen mode={authState} api={candidateApi} onAuthenticated={() => { setSessionReady(true); setAuthState('ready'); }} />;
+      .catch((error) => setAuthState(isUnauthenticated(error) ? (hasAdmin ? 'login' : 'register') : 'error')))
+      .catch((error) => setAuthState(isUnauthenticated(error) ? 'login' : 'error'));
+  }, [api, candidateApi, bootstrapAttempt]);
+  if (authState !== 'ready') return <AccountScreen mode={authState} api={candidateApi} onAuthenticated={() => { setSessionReady(true); setAuthState('ready'); }} onRetry={() => { setAuthState('loading'); setBootstrapAttempt((attempt) => attempt + 1); }} />;
   const onboardingApi = hasOnboardingApi(candidateApi) ? candidateApi : undefined;
   const dashboardApi = sessionReady && hasDashboardApi(candidateApi) ? candidateApi : undefined;
   const manualDigestApi = sessionReady && hasManualDigestApi(candidateApi) ? candidateApi : undefined;
@@ -153,23 +156,28 @@ function hasSettingsApi(api: AppApi | undefined): api is AppApi & SettingsApi {
   return typeof api?.getSettings === 'function' && typeof api.updateSettings === 'function';
 }
 
-function AccountScreen({ mode, api, onAuthenticated }: { mode: 'loading' | 'register' | 'login'; api?: Partial<SessionApi>; onAuthenticated(): void }) {
+function isUnauthenticated(error: unknown): boolean {
+  return error instanceof ApiClientError && error.code === 'UNAUTHENTICATED';
+}
+
+function AccountScreen({ mode, api, onAuthenticated, onRetry }: { mode: 'loading' | 'register' | 'login' | 'error'; api?: Partial<SessionApi>; onAuthenticated(): void; onRetry(): void }) {
   const [password, setPassword] = useState('');
-  const [language, setLanguage] = useState<'en' | 'es'>('en');
+  const [language, setLanguage] = useState<'en' | 'es'>(() => currentLocale());
   const [error, setError] = useState('');
-  if (mode === 'loading') return <main className="onboarding-root"><p>Checking secure access…</p></main>;
+  if (mode === 'loading') return <main className="onboarding-root"><p>{t('account.loading')}</p></main>;
+  if (mode === 'error') return <main className="onboarding-root" id="onboarding-flow"><section className="onboarding-step-content" role="alert"><p className="onboarding-eyebrow">{t('account.securityCheck')}</p><h1>{t('account.bootstrapErrorTitle')}</h1><p>{t('account.bootstrapErrorCopy')}</p><button type="button" onClick={onRetry}>{t('account.retry')}</button></section></main>;
   async function submit(event: FormEvent) {
     event.preventDefault(); setError('');
     try {
        const session = mode === 'register' ? await api?.register?.(password, language) : await api?.login?.(password);
        if (session) setLocale(session.language);
       onAuthenticated();
-    } catch (reason) { setError(reason instanceof Error ? redactSensitiveText(reason.message) : 'Sign-in failed.'); }
+     } catch (reason) { setError(reason instanceof Error ? redactSensitiveText(reason.message) : t('account.signInFailed')); }
   }
   return <main className="onboarding-root" id="onboarding-flow"><form className="onboarding-step-content" onSubmit={(event) => void submit(event)}>
-    <p className="onboarding-eyebrow">{mode === 'register' ? 'First run' : 'Welcome back'}</p><h1>{mode === 'register' ? 'Create your administrator account' : 'Sign in'}</h1>
-    {mode === 'register' ? <label>Language<select value={language} onChange={(event) => setLanguage(event.currentTarget.value as 'en' | 'es')}><option value="en">English</option><option value="es">Español</option></select></label> : null}
-    <label>Password<input aria-label="Password" type="password" autoComplete={mode === 'register' ? 'new-password' : 'current-password'} minLength={8} required value={password} onChange={(event) => setPassword(event.currentTarget.value)} /></label>
-    <button type="submit">{mode === 'register' ? 'Create account' : 'Sign in'}</button>{error ? <p role="alert">{error}</p> : null}
+     <p className="onboarding-eyebrow">{mode === 'register' ? t('account.firstRun') : t('account.welcomeBack')}</p><h1>{mode === 'register' ? t('account.createTitle') : t('account.signInTitle')}</h1>
+     {mode === 'register' ? <label>{t('account.language')}<select value={language} onChange={(event) => { const next = event.currentTarget.value as 'en' | 'es'; setLanguage(next); setLocale(next); }}><option value="en">{t('account.english')}</option><option value="es">{t('account.spanish')}</option></select></label> : null}
+     <label>{t('account.password')}<input aria-label={t('account.password')} type="password" autoComplete={mode === 'register' ? 'new-password' : 'current-password'} minLength={8} required value={password} onChange={(event) => setPassword(event.currentTarget.value)} /></label>
+     <button type="submit">{mode === 'register' ? t('account.createAction') : t('account.signInAction')}</button>{error ? <p role="alert">{error}</p> : null}
   </form></main>;
 }

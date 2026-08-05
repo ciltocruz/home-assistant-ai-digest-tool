@@ -20,6 +20,13 @@ export type MessageCatalog = typeof es;
 export type TranslationKey = LeafPath<MessageCatalog>;
 
 let activeLocale: Locale = defaultLocale;
+export function hydrateLocale(): Locale {
+  const stored = typeof localStorage !== 'undefined' ? localStorage.getItem('ha-digest-locale') : null;
+  if (stored === 'en' || stored === 'es') activeLocale = stored;
+  if (typeof document !== 'undefined') document.documentElement.lang = activeLocale === 'es' ? 'es-ES' : 'en';
+  return activeLocale;
+}
+
 export function setLocale(locale: Locale): void {
   activeLocale = locale;
   if (typeof document !== 'undefined') document.documentElement.lang = locale === 'es' ? 'es-ES' : 'en';

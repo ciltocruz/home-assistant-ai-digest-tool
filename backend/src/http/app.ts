@@ -134,7 +134,10 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
   app.get('/api/session', async (request, reply) => {
     const session = await authenticate(request, auth);
     if (!session) return sendError(reply, 401, 'UNAUTHENTICATED', 'Authenticated session required.', request.id);
-    return { csrfToken: session.csrfToken, language: await requireAuthStore(auth).language() };
+    const store = requireAuthStore(auth);
+    const csrfToken = session.csrfToken || await store.issueCsrf(session.id);
+    if (!csrfToken) return sendError(reply, 503, 'SESSION_UNAVAILABLE', 'The authenticated session could not be resumed safely.', request.id);
+    return { csrfToken, language: await store.language() };
   });
 
   app.delete('/api/session', async (request, reply) => {
