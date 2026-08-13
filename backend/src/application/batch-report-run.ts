@@ -15,7 +15,7 @@ export type BoundedSignatureContext = {
 
 export interface LogDeltaPort { read(): Promise<LogDelta>; }
 export interface SignatureMemory { classifyAndStage(entries: ParsedLogEntry[], at: string): Promise<SignaturePlan>; }
-export interface SignatureProvider { analyze(context: BoundedSignatureContext, signal: AbortSignal): Promise<SignatureAnalysis>; }
+export interface SignatureProvider { analyze(context: BoundedSignatureContext, signal: AbortSignal, language?: 'en' | 'es'): Promise<SignatureAnalysis>; }
 export interface BatchPersistence {
   commit(plan: CommitPlan): Promise<string>;
   getDeliveryStatus?(reportId: string): Promise<DeliveryStatus | null>;
@@ -79,9 +79,10 @@ export class BatchReportRun {
       return { status: 'quiet', warnings: [], reportId };
     }
 
+    const language = await this.dependencies.language?.() ?? 'en';
     const analyses = await Promise.all(reportedSignatures.map(async (signature) => {
       try {
-        return { signature, analysis: await this.dependencies.provider.analyze(this.contextFor(signature), new AbortController().signal), error: undefined };
+        return { signature, analysis: await this.dependencies.provider.analyze(this.contextFor(signature), new AbortController().signal, language), error: undefined };
       } catch (error) {
         return { signature, analysis: null, error };
       }
@@ -104,7 +105,7 @@ export class BatchReportRun {
       if (this.dependencies.notifier) {
         const attempt = await this.dependencies.persistence.claimDeliveryAttempt(reportId);
         if (!attempt.shouldSend) return { status, warnings, reportId, deliveryStatus: attempt.status };
-        deliveryStatus = await this.dependencies.notifier.notify({ findings, reportUrl: this.dependencies.reportUrl?.(request), language: await this.dependencies.language?.() ?? 'en' });
+        deliveryStatus = await this.dependencies.notifier.notify({ findings, reportUrl: this.dependencies.reportUrl?.(request), language });
       }
     } catch {
       // An exception leaves external delivery unknown; pending prevents an automatic duplicate.

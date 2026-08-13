@@ -141,7 +141,8 @@ test('opens report deep links, preserves browser navigation, and presents legacy
   await expect(reportLink).toBeVisible();
   await reportLink.click();
   await expect(page).toHaveURL(/\/reports\/report-latest$/);
-  await expect(page.getByRole('heading', { name: 'Informe #report-latest' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Detalle del informe' })).toBeVisible();
+  await expect(page.getByText('report-latest', { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Resumen de severidad' })).toBeVisible();
   await expect(page.locator('pre')).toHaveCount(0);
 
@@ -178,8 +179,8 @@ test('renders structured and legacy reports', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Evidencia' })).toBeVisible();
 
   await page.goto('/reports/report-legacy');
-  await expect(page.getByRole('heading', { name: 'Formato heredado' })).toBeVisible();
-  await expect(page.getByText('Este informe se generó con una versión anterior y no contiene análisis de IA estructurado por firma.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Informe importado (formato anterior)' })).toBeVisible();
+  await expect(page.getByText('Este informe se generó con una versión anterior y no contiene un análisis de IA estructurado por problema detectado.')).toBeVisible();
   const legacyDisclosure = page.locator('details.report-legacy-disclosure');
   await expect(legacyDisclosure).toHaveCount(1);
   expect(await legacyDisclosure.getAttribute('open')).toBeNull();
@@ -189,7 +190,7 @@ test('renders structured and legacy reports', async ({ page }) => {
   await expect(page.locator('pre')).toHaveCount(0);
 });
 
-test('shows the selected report before its history list on a mobile viewport', async ({ page }) => {
+test('keeps selected report reading order and responsive layout through live resizing', async ({ page }) => {
   const state = await mockRuntimeApi(page);
   state.onboardingCompleted = true;
   await page.setViewportSize({ width: 390, height: 844 });
@@ -203,21 +204,52 @@ test('shows the selected report before its history list on a mobile viewport', a
   const historyBox = await history.boundingBox();
 
   expect(detailBox?.y).toBeLessThan(historyBox?.y ?? Number.POSITIVE_INFINITY);
+  expect(await page.locator('.reports-workspace > *').evaluateAll((items) => items.map((item) => item.className))).toEqual(expect.arrayContaining([expect.stringContaining('report-detail'), expect.stringContaining('history-panel')]));
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(await page.evaluate(() => document.documentElement.clientWidth));
+
+  await page.setViewportSize({ width: 1000, height: 844 });
+  const tabletDetail = await detail.boundingBox();
+  const tabletHistory = await history.boundingBox();
+  expect(tabletDetail?.y).toBeLessThan(tabletHistory?.y ?? Number.POSITIVE_INFINITY);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(await page.evaluate(() => document.documentElement.clientWidth));
+
+  await page.setViewportSize({ width: 1500, height: 900 });
+  const desktopDetail = await detail.boundingBox();
+  const desktopHistory = await history.boundingBox();
+  expect(desktopDetail?.x).toBeLessThan(desktopHistory?.x ?? Number.POSITIVE_INFINITY);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(await page.evaluate(() => document.documentElement.clientWidth));
 });
 
-test('shows history and the selected report side by side on a desktop viewport', async ({ page }) => {
+test('uses the full reports workspace when no detail is selected', async ({ page }) => {
   const state = await mockRuntimeApi(page);
   state.onboardingCompleted = true;
+  state.history = [digestSummary('report-latest', { critical: 1, warning: 0, info: 1, createdAt: '2026-08-01T10:00:00.000Z' })];
+  await page.setViewportSize({ width: 1500, height: 900 });
 
-  await page.goto('/reports/report-latest');
-  const detail = page.locator('.report-detail');
-  const history = page.locator('.history-panel');
-  await expect(detail).toBeVisible();
-  await expect(history).toBeVisible();
-  const detailBox = await detail.boundingBox();
-  const historyBox = await history.boundingBox();
+  await page.goto('/reports');
 
-  expect(detailBox?.x).toBeGreaterThan(historyBox?.x ?? Number.POSITIVE_INFINITY);
+  const workspace = await page.locator('.reports-workspace').boundingBox();
+  const history = await page.locator('.history-panel').boundingBox();
+  expect(history?.width).toBeGreaterThan((workspace?.width ?? 0) * 0.95);
+});
+
+test('deletes a report only after confirmation and returns to refreshed history', async ({ page }) => {
+  const state = await mockRuntimeApi(page);
+  state.onboardingCompleted = true;
+  state.history = [
+    digestSummary('report-selected', { critical: 1, warning: 0, info: 0, createdAt: '2026-08-01T10:00:00.000Z' }),
+    digestSummary('report-neighbor', { critical: 0, warning: 1, info: 0, createdAt: '2026-08-01T09:00:00.000Z' })
+  ];
+
+  await page.goto('/reports/report-selected');
+  await page.getByRole('button', { name: 'Eliminar informe' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Eliminar informe' });
+  await expect(dialog).toContainText('Esta acción no se puede deshacer');
+  await dialog.getByRole('button', { name: 'Eliminar informe' }).click();
+
+  await expect(page).toHaveURL(/\/reports$/);
+  await expect(page.getByRole('link', { name: /Abrir informe del/ })).toHaveCount(1);
+  expect(state.history.map((item) => item.id)).toEqual(['report-neighbor']);
 });
 
 test('keeps configuration controls off the dashboard and routes to configuration', async ({ page }) => {
@@ -333,7 +365,8 @@ test('persists onboarding, settings, and the queued-to-report lifecycle across b
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Completado' })).toBeVisible();
   await page.getByRole('link', { name: 'Ver informe', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Informe #smoke-report-2' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Detalle del informe' })).toBeVisible();
+  await expect(page.getByText('smoke-report-2', { exact: true })).toBeVisible();
 });
 
 async function mockRuntimeApi(page: Page): Promise<MockState> {
@@ -400,6 +433,11 @@ async function mockRuntimeApi(page: Page): Promise<MockState> {
       const id = url.pathname.split('/').at(-2) ?? 'unknown';
       state.jobPhase = 0;
       return json(route, jobStatus(id, state.jobPhase), 202);
+    }
+    if (url.pathname.startsWith('/api/digests/') && url.pathname !== '/api/digests/history' && request.method() === 'DELETE') {
+      const id = decodeURIComponent(url.pathname.slice('/api/digests/'.length));
+      state.history = state.history.filter((item) => item.id !== id);
+      return route.fulfill({ status: 204, body: '' });
     }
     if (url.pathname.startsWith('/api/digests/') && url.pathname !== '/api/digests/history' && request.method() === 'GET') {
       const id = url.pathname.split('/').at(-1) ?? 'unknown';

@@ -278,6 +278,29 @@ describe('account authentication boundary', () => {
     expect(response.statusCode).toBe(500);
     expect(response.json()).toMatchObject({ code: 'INTERNAL_ERROR' });
   });
+
+  it('deletes exactly one authenticated report with CSRF and returns 404 when it is absent', async () => {
+    const runtimeServices = services();
+    const removed: string[] = [];
+    runtimeServices.reports.remove = async (id) => { removed.push(id); return id === 'report-to-delete'; };
+    app = createApp({ services: runtimeServices, auth: { sessionTtlMs: 60_000 } });
+    const registered = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: 'long-enough-password', language: 'en' } });
+    const cookie = registered.headers['set-cookie'];
+    const csrfToken = registered.json<{ csrfToken: string }>().csrfToken;
+
+    const unauthenticated = await app.inject({ method: 'DELETE', url: '/api/digests/report-to-delete', headers: { 'x-csrf-token': csrfToken } });
+    const missingCsrf = await app.inject({ method: 'DELETE', url: '/api/digests/report-to-delete', headers: { cookie } });
+    const invalidCsrf = await app.inject({ method: 'DELETE', url: '/api/digests/report-to-delete', headers: { cookie, 'x-csrf-token': 'wrong-token' } });
+    const removedResponse = await app.inject({ method: 'DELETE', url: '/api/digests/report-to-delete', headers: { cookie, 'x-csrf-token': csrfToken } });
+    const absentResponse = await app.inject({ method: 'DELETE', url: '/api/digests/missing-report', headers: { cookie, 'x-csrf-token': csrfToken } });
+
+    expect(unauthenticated.statusCode).toBe(401);
+    expect(missingCsrf.statusCode).toBe(403);
+    expect(invalidCsrf.statusCode).toBe(403);
+    expect(removedResponse.statusCode).toBe(204);
+    expect(absentResponse.statusCode).toBe(404);
+    expect(removed).toEqual(['report-to-delete', 'missing-report']);
+  });
 });
 
 function services(now = Date.now): BackendApiServices {
@@ -294,7 +317,7 @@ function services(now = Date.now): BackendApiServices {
       loginAllowed: async () => attempts < 5, recordFailedLogin: async () => { attempts += 1; }, clearFailedLogins: async () => { attempts = 0; }, language: async () => language
     },
     onboarding: { get: async () => ({ currentStep: 'home_assistant', completedSteps: [], draft: {}, secretMetadata: {}, completed: false }), save: async () => ({ currentStep: 'home_assistant', completedSteps: [], draft: {}, secretMetadata: {}, completed: false }), complete: async () => ({ haUrl: settings.homeAssistant.url, ai: { provider: 'gemini', keyMask: '••••ai', ref: 'ai' }, notifiers: [] }) },
-    settings: { get: async () => settings, update: async () => settings }, digestJobs: { enqueue: async () => ({ status: 'queued' as const, jobId: 'job' }), get: async () => null, retryFailed: async () => null }, reports: { list: async () => [], get: async () => null }, notes: { add: async (input) => ({ id: 'note', ...input, createdAt: new Date(now()).toISOString() }), listWindow: async () => [] }, ignores: { add: async (input) => ({ id: 'ignore', ...input, createdAt: new Date(now()).toISOString() }), remove: async () => undefined, listActive: async () => [] }, notifiers: { test: async () => ({ status: 'success' as const, message: 'ok', checkedAt: new Date(now()).toISOString() }), send: async (input) => ({ status: 'skipped' as const, targetRef: input.targetRef }) }
+    settings: { get: async () => settings, update: async () => settings }, digestJobs: { enqueue: async () => ({ status: 'queued' as const, jobId: 'job' }), get: async () => null, retryFailed: async () => null }, reports: { list: async () => [], get: async () => null, remove: async () => false }, notes: { add: async (input) => ({ id: 'note', ...input, createdAt: new Date(now()).toISOString() }), listWindow: async () => [] }, ignores: { add: async (input) => ({ id: 'ignore', ...input, createdAt: new Date(now()).toISOString() }), remove: async () => undefined, listActive: async () => [] }, notifiers: { test: async () => ({ status: 'success' as const, message: 'ok', checkedAt: new Date(now()).toISOString() }), send: async (input) => ({ status: 'skipped' as const, targetRef: input.targetRef }) }
   };
 }
 function note() { return { text: 'Operator note', occurredAt: '2026-08-03T10:00:00.000Z', tags: [] }; }

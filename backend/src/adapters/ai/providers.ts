@@ -68,8 +68,8 @@ abstract class SignatureHttpProvider implements SignatureProvider {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS;
   }
 
-  async analyze(context: BoundedSignatureContext, signal: AbortSignal): Promise<SignatureAnalysis> {
-    const response = await requestProvider(this.name, this.model, this.timeoutMs, signal, (requestSignal) => this.request(context, requestSignal), undefined, this.options.apiKey);
+  async analyze(context: BoundedSignatureContext, signal: AbortSignal, language: 'en' | 'es' = 'en'): Promise<SignatureAnalysis> {
+    const response = await requestProvider(this.name, this.model, this.timeoutMs, signal, (requestSignal) => this.request(context, language, requestSignal), undefined, this.options.apiKey);
     try {
       return parseSignatureAnalysis(this.content(await response.json()), this.name, this.options.apiKey);
     } catch (error) {
@@ -77,7 +77,7 @@ abstract class SignatureHttpProvider implements SignatureProvider {
     }
   }
 
-  protected abstract request(context: BoundedSignatureContext, signal: AbortSignal): Promise<ProviderHttpResponse>;
+  protected abstract request(context: BoundedSignatureContext, language: 'en' | 'es', signal: AbortSignal): Promise<ProviderHttpResponse>;
   protected abstract content(payload: unknown): string;
 }
 
@@ -96,10 +96,10 @@ class OpenAISignatureProvider extends SignatureHttpProvider {
     this.model = options.model ?? DEFAULT_OPENAI_MODEL;
   }
 
-  protected request(context: BoundedSignatureContext, signal: AbortSignal): Promise<ProviderHttpResponse> {
+  protected request(context: BoundedSignatureContext, language: 'en' | 'es', signal: AbortSignal): Promise<ProviderHttpResponse> {
     return this.httpClient({ method: 'POST', url: this.options.baseUrl ?? OPENAI_URL, signal, headers: { authorization: `Bearer ${this.options.apiKey}`, 'content-type': 'application/json' }, body: {
       model: this.model, response_format: { type: 'json_object' },
-      messages: [{ role: 'system', content: signatureInstructions() }, { role: 'user', content: signaturePrompt(context) }]
+      messages: [{ role: 'system', content: signatureInstructions(language) }, { role: 'user', content: signaturePrompt(context) }]
     } });
   }
 
@@ -115,10 +115,10 @@ class GeminiSignatureProvider extends SignatureHttpProvider {
     this.model = options.model ?? DEFAULT_GEMINI_MODEL;
   }
 
-  protected request(context: BoundedSignatureContext, signal: AbortSignal): Promise<ProviderHttpResponse> {
+  protected request(context: BoundedSignatureContext, language: 'en' | 'es', signal: AbortSignal): Promise<ProviderHttpResponse> {
     const root = this.options.baseUrl ?? GEMINI_URL;
     return this.httpClient({ method: 'POST', url: `${root}/${encodeURIComponent(this.model)}:generateContent?key=${encodeURIComponent(this.options.apiKey)}`, signal, headers: { 'content-type': 'application/json' }, body: {
-      contents: [{ role: 'user', parts: [{ text: `${signatureInstructions()}\n\n${signaturePrompt(context)}` }] }], generationConfig: { responseMimeType: 'application/json' }
+      contents: [{ role: 'user', parts: [{ text: `${signatureInstructions(language)}\n\n${signaturePrompt(context)}` }] }], generationConfig: { responseMimeType: 'application/json' }
     } });
   }
 
@@ -134,10 +134,10 @@ class OllamaSignatureProvider extends SignatureHttpProvider {
     this.model = options.model ?? 'llama3.2';
   }
 
-  protected request(context: BoundedSignatureContext, signal: AbortSignal): Promise<ProviderHttpResponse> {
+  protected request(context: BoundedSignatureContext, language: 'en' | 'es', signal: AbortSignal): Promise<ProviderHttpResponse> {
     return this.httpClient({ method: 'POST', url: `${(this.options.baseUrl ?? 'http://ollama:11434').replace(/\/$/, '')}/api/chat`, signal, headers: { 'content-type': 'application/json' }, body: {
       model: this.model, stream: false,
-      messages: [{ role: 'system', content: signatureInstructions() }, { role: 'user', content: signaturePrompt(context) }]
+      messages: [{ role: 'system', content: signatureInstructions(language) }, { role: 'user', content: signaturePrompt(context) }]
     } });
   }
 
@@ -380,8 +380,11 @@ function redactedPrompt(input: RedactedDigestInput): string {
   return `Use this redacted incident context to generate a digest:\n${JSON.stringify(input)}`;
 }
 
-function signatureInstructions(): string {
-  return 'Analyze one redacted Home Assistant log signature. Return JSON only with summary and recommendation. Do not reveal or request secrets, tokens, credentials, or full logs.';
+function signatureInstructions(language: 'en' | 'es'): string {
+  const outputLanguage = language === 'es'
+    ? 'Write both string values in neutral professional Spanish.'
+    : 'Write both string values in English.';
+  return `Analyze one redacted Home Assistant log signature. Return JSON only with stable English keys summary and recommendation. ${outputLanguage} Do not reveal or request secrets, tokens, credentials, or full logs.`;
 }
 
 function signaturePrompt(context: BoundedSignatureContext): string {

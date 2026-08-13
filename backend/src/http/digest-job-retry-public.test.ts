@@ -136,7 +136,7 @@ async function createFixture() {
     settings: { get: async () => ({ homeAssistant: { url: 'http://ha.test:8123', token: { configured: true } }, ai: { provider: 'gemini', key: { configured: true } }, notifications: { channel: 'none' }, schedules: [], privacyLevel: 'balanced', retentionDays: 30 }), update: async () => { throw new Error('unused'); } },
     digestJobs: { enqueue: jobs.enqueue.bind(jobs), get: jobs.get.bind(jobs), retryFailed: jobs.retryFailed.bind(jobs) },
     digestWorker: { wake },
-    reports: { list: async () => [], get: async () => null },
+    reports: { list: async () => [], get: async () => null, remove: async () => false },
     notes: { add: async () => { throw new Error('unused'); }, listWindow: async () => [] },
     ignores: { add: async () => { throw new Error('unused'); }, remove: async () => undefined, listActive: async () => [] },
     notifiers: { test: async () => ({ status: 'success', message: 'ok', checkedAt: '2026-08-05T19:00:00.000Z' }), send: async () => ({ status: 'skipped', targetRef: 'ref' }) }

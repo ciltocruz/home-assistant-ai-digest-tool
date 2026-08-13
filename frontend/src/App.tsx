@@ -12,7 +12,7 @@ import type { AppRoute } from './router.js';
 import { SettingsPanel, type SettingsApi } from './settings.js';
 import type { DigestDetail, RunDigestRequest, RunDigestResponse } from '@ha-digest/shared';
 
-type AppApi = Partial<OnboardingApi & DashboardApi & JobLifecycleApi & { getDigest(id: string): Promise<DigestDetail> }>;
+type AppApi = Partial<OnboardingApi & DashboardApi & JobLifecycleApi & { getDigest(id: string): Promise<DigestDetail>; deleteDigest(id: string): Promise<void> }>;
 type SessionApi = { getSession(): Promise<{ language: 'en' | 'es' }>; getAuthStatus(): Promise<{ hasAdmin: boolean }>; register(password: string, language: 'en' | 'es'): Promise<{ language: 'en' | 'es' }>; login(password: string): Promise<{ language: 'en' | 'es' }> };
 
 type ManualDigestApi = {
@@ -52,9 +52,9 @@ export function App({ api }: { api?: AppApi } = {}) {
 }
 
 function OperationalRoute({ route, api, settingsApi, dashboardApi, manualDigestApi, jobLifecycleApi, activeJobIds, historyRevision, onQueued, onCompleted }: { route: Exclude<AppRoute, { kind: 'setup' }>; api?: AppApi; settingsApi?: SettingsApi; dashboardApi?: DashboardApi; manualDigestApi?: ManualDigestApi; jobLifecycleApi?: JobLifecycleApi; activeJobIds: string[]; historyRevision: number; onQueued(jobId: string): void; onCompleted(): void }) {
-  if (route.kind === 'report') return <ReportsWorkspace api={api} reportId={route.reportId} refreshKey={historyRevision} />;
+  if (route.kind === 'report') return <ReportsWorkspace api={api} reportId={route.reportId} refreshKey={historyRevision} onChanged={onCompleted} />;
   if (route.kind === 'settings') return <SettingsPanel api={settingsApi} section={route.section} />;
-  if (route.kind === 'reports') return <ReportsWorkspace api={api} refreshKey={historyRevision} />;
+  if (route.kind === 'reports') return <ReportsWorkspace api={api} refreshKey={historyRevision} onChanged={onCompleted} />;
 
   return <Dashboard
     api={dashboardApi}
@@ -74,15 +74,15 @@ function ActiveReport({ manualDigestApi, jobLifecycleApi, activeJobIds, onQueued
   return <ManualDigestCard api={manualDigestApi} onQueued={onQueued} />;
 }
 
-function ReportsWorkspace({ api, reportId, refreshKey }: { api?: AppApi; reportId?: string; refreshKey: number }) {
+function ReportsWorkspace({ api, reportId, refreshKey, onChanged }: { api?: AppApi; reportId?: string; refreshKey: number; onChanged(): void }) {
   const dashboardApi = hasDashboardApi(api) ? api : undefined;
-  return <section className="reports-workspace" aria-label={t('shell.reports')}>
-    <DashboardHistory api={dashboardApi} refreshKey={refreshKey} />
-    {reportId ? <ReportRoute api={api} reportId={reportId} /> : null}
+  return <section className={`reports-workspace${reportId ? ' reports-workspace--selected' : ' reports-workspace--list'}`} aria-label={t('shell.reports')}>
+    {reportId ? <ReportRoute api={api} reportId={reportId} onDeleted={() => { onChanged(); window.history.pushState({}, '', '/reports'); window.dispatchEvent(new PopStateEvent('popstate')); }} /> : null}
+    <DashboardHistory api={dashboardApi} refreshKey={refreshKey} headingLevel={reportId ? 'h2' : 'h1'} />
   </section>;
 }
 
-function ReportRoute({ api, reportId }: { api?: { getDigest?(id: string): Promise<DigestDetail> }; reportId: string }) {
+function ReportRoute({ api, reportId, onDeleted }: { api?: { getDigest?(id: string): Promise<DigestDetail>; deleteDigest?(id: string): Promise<void> }; reportId: string; onDeleted(): void }) {
   const [state, setState] = useState<{ status: 'loading' } | { status: 'ready'; report: DigestDetail } | { status: 'error' }>({ status: 'loading' });
   useEffect(() => {
     if (!api?.getDigest) {
@@ -97,7 +97,7 @@ function ReportRoute({ api, reportId }: { api?: { getDigest?(id: string): Promis
 
   if (state.status === 'loading') return <section className="panel report-detail" aria-live="polite"><h2>{t('report.loadingTitle')}</h2><p>{t('report.loadingCopy')}</p></section>;
   if (state.status === 'error') return <section className="panel report-detail" role="alert"><h2>{t('report.errorTitle')}</h2><p>{t('report.errorCopy')}</p><a className="report-link" href="/reports">{t('report.back')}</a></section>;
-  return <ReportDetail report={state.report} embedded />;
+  return <ReportDetail report={state.report} onDelete={api?.deleteDigest ? async () => { await api.deleteDigest!(reportId); onDeleted(); } : undefined} />;
 }
 
 function ManualDigestCard({ api, onQueued }: { api?: ManualDigestApi; onQueued(jobId: string): void }) {

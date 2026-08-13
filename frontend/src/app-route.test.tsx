@@ -2,7 +2,7 @@
 
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { App } from './App.js';
 import { setLocale } from './i18n/index.js';
 
@@ -66,8 +66,11 @@ describe('App report route', () => {
 
     await act(async () => { root.render(<App api={api} />); await Promise.resolve(); });
 
-    expect(container.textContent).toContain('Informe #report-9');
+    expect(container.textContent).toContain('Detalle del informe');
+    expect(container.textContent).toContain('report-9');
     expect(container.textContent).toContain('Informe recuperado.');
+    expect(container.querySelector('h1')?.textContent).toBe('Detalle del informe');
+    expect(container.querySelector('.history-panel h2')?.textContent).toBe('Informes');
     expect(container.querySelector('.report-detail a[href="/reports"]')?.textContent).toBe('Volver a informes');
   });
 
@@ -89,6 +92,69 @@ describe('App report route', () => {
     expect(container.querySelector('a[href="/reports"]')?.getAttribute('aria-current')).toBe('page');
     expect(container.textContent).toContain('Informe no encontrado');
     expect(container.querySelector('.report-detail a[href="/reports"]')?.textContent).toBe('Volver a informes');
+  });
+
+  test('confirms report deletion, returns to history, and refreshes the remaining reports', async () => {
+    history.pushState({}, '', '/reports/report-delete');
+    let deleted = false;
+    const deleteDigest = vi.fn(async () => { deleted = true; });
+    const report = {
+      id: 'report-delete',
+      summary: { id: 'report-delete', window: { from: '2026-08-01T09:00:00.000Z', to: '2026-08-01T10:00:00.000Z' }, severityCounts: { critical: 0, warning: 1, info: 0 }, createdAt: '2026-08-01T10:00:00.000Z', deliveryStatus: 'sent' as const },
+      rendered: { format: 'markdown' as const, body: '# Informe' }
+    };
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push(root);
+    const api = {
+      getOnboarding: async () => ({ currentStep: 'first_report' as const, completedSteps: [], draft: {}, secretMetadata: {}, completed: true }),
+      getDigest: async () => report,
+      deleteDigest,
+      listHistory: async () => deleted ? [] : [report.summary]
+    };
+
+    await act(async () => { root.render(<App api={api} />); await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+    const remove = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Eliminar informe');
+    await act(async () => remove?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+
+    const dialog = container.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain('Eliminar informe');
+    expect(dialog?.textContent).toContain('Esta acción no se puede deshacer');
+    const confirm = Array.from(dialog?.querySelectorAll('button') ?? []).find((button) => button.textContent === 'Eliminar informe');
+    await act(async () => { confirm?.dispatchEvent(new MouseEvent('click', { bubbles: true })); await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(deleteDigest).toHaveBeenCalledWith('report-delete');
+    expect(location.pathname).toBe('/reports');
+    expect(container.textContent).toContain('Aún no hay informes');
+    expect(container.textContent).not.toContain('Detalle del informe');
+  });
+
+  test('keeps the report available and shows a recoverable message when deletion fails', async () => {
+    history.pushState({}, '', '/reports/report-delete-failure');
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push(root);
+    const report = {
+      id: 'report-delete-failure',
+      summary: { id: 'report-delete-failure', window: { from: '2026-08-01T09:00:00.000Z', to: '2026-08-01T10:00:00.000Z' }, severityCounts: { critical: 0, warning: 1, info: 0 }, createdAt: '2026-08-01T10:00:00.000Z', deliveryStatus: 'sent' as const },
+      rendered: { format: 'markdown' as const, body: '# Informe' }
+    };
+    await act(async () => { root.render(<App api={{
+      getOnboarding: async () => ({ currentStep: 'first_report', completedSteps: [], draft: {}, secretMetadata: {}, completed: true }),
+      getDigest: async () => report,
+      deleteDigest: async () => { throw new Error('storage unavailable'); }
+    }} />); await Promise.resolve(); });
+    const remove = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Eliminar informe');
+    await act(async () => remove?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    const confirm = Array.from(container.querySelector('[role="dialog"]')?.querySelectorAll('button') ?? []).find((button) => button.textContent === 'Eliminar informe');
+    await act(async () => { confirm?.dispatchEvent(new MouseEvent('click', { bubbles: true })); await Promise.resolve(); });
+
+    expect(location.pathname).toBe('/reports/report-delete-failure');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('No se pudo eliminar el informe. Sigue disponible; vuelve a intentarlo.');
   });
 
   test('keeps the completed lifecycle card visible long enough to follow its report link', async () => {

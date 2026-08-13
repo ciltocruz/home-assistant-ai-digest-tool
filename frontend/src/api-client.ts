@@ -120,6 +120,7 @@ export function createApiClient(options: ApiClientOptions = {}) {
     retryDigestJob: (id: string): Promise<DigestJobStatus> => request(`/api/digests/jobs/${encodeURIComponent(id)}/retry`, DigestJobStatusSchema, { method: 'POST' }),
     listHistory: (): Promise<DigestHistoryResponse> => request('/api/digests/history', DigestHistoryResponseSchema),
     getDigest: (id: string): Promise<DigestDetail> => request(`/api/digests/${encodeURIComponent(id)}`, DigestDetailSchema),
+    deleteDigest: (id: string): Promise<void> => request(`/api/digests/${encodeURIComponent(id)}`, z.unknown(), { method: 'DELETE' }).then(() => undefined),
     addNote: (input: NoteCreate): Promise<NoteDto> => request('/api/notes', NoteDtoSchema, { method: 'POST', body: JSON.stringify(NoteCreateSchema.parse(input)) }),
     listNotes: (window: { from: string; to: string }): Promise<NoteDto[]> => {
       const params = new URLSearchParams({ from: window.from, to: window.to });

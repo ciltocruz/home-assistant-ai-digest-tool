@@ -59,10 +59,11 @@ describe('DashboardHistory', () => {
     expect(state.status).toBe('ready');
     expect(html).toContain('1 informe guardado');
     expect(html).toContain('10 jul 2026, 10:00');
+    expect(html).toContain('<span class="history-field-label">Fecha</span>');
     expect(html).toContain('Críticas 1');
     expect(html).toContain('Avisos 2');
     expect(html).toContain('Info 3');
-    expect(html).toContain('Enviado');
+    expect(html).toContain('Enviada');
   });
 
   test('makes every saved report an accessible deep link', async () => {
@@ -80,11 +81,44 @@ describe('DashboardHistory', () => {
     expect(html).toContain('Ventana analizada: 10 jul 2026, 09:00 — 10 jul 2026, 10:00');
   });
 
+  test('separates a partial report result from its failed notification without inventing analysis counts', async () => {
+    const state = await loadDigestHistory(fakeDashboardApi([{
+      ...historyItem,
+      source: 'v2',
+      runStatus: 'partial',
+      warningCodes: ['AI_ANALYSIS_PARTIAL'],
+      signatureCounts: { new: 20, recurring: 10, reactivated: 8, latent: 0 },
+      deliveryStatus: 'failed'
+    }]));
+    const html = renderToStaticMarkup(<DashboardHistory state={state} />);
+
+    expect(html).toContain('Resultado del informe');
+    expect(html).toContain('Generado con análisis de IA incompleto');
+    expect(html).toContain('Análisis de IA');
+    expect(html).toContain('Algunos problemas detectados no pudieron explicarse');
+    expect(html).toContain('Notificación');
+    expect(html).toContain('No se pudo enviar');
+    expect(html).not.toContain('>Fallido<');
+    expect(html).not.toContain('7 de 38');
+    expect(html).not.toContain('AI_ANALYSIS_PARTIAL');
+  });
+
+  test('marks an older-format report honestly and keeps report and notification outcomes explicit', async () => {
+    const state = await loadDigestHistory(fakeDashboardApi([{ ...historyItem, source: 'legacy', deliveryStatus: 'skipped' }]));
+    const html = renderToStaticMarkup(<DashboardHistory state={state} />);
+
+    expect(html).toContain('Informe importado (formato anterior)');
+    expect(html).toContain('Resultado del informe');
+    expect(html).toContain('Informe importado');
+    expect(html).toContain('Notificación');
+    expect(html).toContain('No enviada (omitida o no configurada)');
+  });
+
   test.each([
-    { locale: 'en' as const, source: 'legacy' as const, sourceLabel: 'Legacy report', deliveryLabel: 'Sent' },
+    { locale: 'en' as const, source: 'legacy' as const, sourceLabel: 'Imported report (older format)', deliveryLabel: 'Sent' },
     { locale: 'en' as const, source: 'v2' as const, sourceLabel: 'AI report', deliveryLabel: 'Sent' },
-    { locale: 'es' as const, source: 'legacy' as const, sourceLabel: 'Informe heredado', deliveryLabel: 'Enviado' },
-    { locale: 'es' as const, source: 'v2' as const, sourceLabel: 'Informe de IA', deliveryLabel: 'Enviado' }
+    { locale: 'es' as const, source: 'legacy' as const, sourceLabel: 'Informe importado (formato anterior)', deliveryLabel: 'Enviada' },
+    { locale: 'es' as const, source: 'v2' as const, sourceLabel: 'Informe de IA', deliveryLabel: 'Enviada' }
   ])('shows the $source source label separately from delivery in $locale history', async ({ locale, source, sourceLabel, deliveryLabel }) => {
     setLocale(locale);
     const state = await loadDigestHistory(fakeDashboardApi([{ ...historyItem, source }]));
@@ -258,6 +292,16 @@ describe('Dashboard', () => {
     expect(html).toContain('Sin informes anteriores.');
     expect(html).toContain('href="/reports"');
     expect(html).toContain('Ver informes');
+  });
+
+  test('uses a dedicated latest-report layout with horizontal severity groups', () => {
+    const html = renderToStaticMarkup(<Dashboard state={{ status: 'ready', items: [historyItem] }} activeReport={<p>Sin informe activo</p>} />);
+
+    expect(html).toContain('history-item--latest');
+    expect(html).toContain('history-statuses');
+    expect(html).toContain('severity-chip--critical');
+    expect(html).toContain('severity-chip--warning');
+    expect(html).toContain('severity-chip--info');
   });
 });
 

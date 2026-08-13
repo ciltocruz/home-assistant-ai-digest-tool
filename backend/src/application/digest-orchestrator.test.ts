@@ -216,6 +216,7 @@ class FakeJobStore {
 class FakeReportStore implements ReportStore {
   saved: Array<Parameters<ReportStore['save']>[0] & { id: string }> = [];
   async save(report: Parameters<ReportStore['save']>[0]) { this.saved.push({ ...report, id: report.id }); }
+  async remove(id: string) { const index = this.saved.findIndex((report) => report.id === id); if (index < 0) return false; this.saved.splice(index, 1); return true; }
   async list() { return this.saved.map((report) => report.summary); }
   async get(id: string) { return this.saved.find((report) => report.id === id) ?? null; }
 }

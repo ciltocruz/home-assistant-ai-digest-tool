@@ -148,14 +148,36 @@
         "info": "Info"
       },
       "deliveryStatus": {
-         "pending": "Delivery pending confirmation",
+         "pending": "Pending confirmation",
          "sent": "Sent",
-         "failed": "Failed",
-         "skipped": "No notification sent"
+         "failed": "Could not send",
+         "skipped": "Not sent (skipped or not configured)"
       },
       "source": {
-        "legacy": "Legacy report",
+        "legacy": "Imported report (older format)",
         "v2": "AI report"
+      },
+      "fields": {
+        "date": "Date",
+        "window": "Analysis window",
+        "source": "Source",
+        "reportResult": "Report result",
+        "aiAnalysis": "AI analysis",
+        "notification": "Notification"
+      },
+      "reportResult": {
+        "generated": "Generated",
+        "partial": "Generated with incomplete AI analysis",
+        "failed": "Not generated",
+        "legacy": "Imported report"
+      },
+      "aiAnalysis": {
+        "complete": "Every detected problem received an explanation",
+        "partial": "Some detected problems could not be explained",
+        "failed": "AI analysis could not be generated",
+        "quiet": "There were no detected problems to explain",
+        "legacy": "Unavailable in this older format",
+        "unknown": "Open the detail to review the available analysis"
       }
     },
     "jobLifecycle": {
@@ -181,7 +203,8 @@
   "settings": { "title": "Settings", "signIn": "Sign in to review and update configuration.", "loading": "Loading saved settings…", "loadError": "Settings could not be loaded. Check the session and try again.", "review": "Review the highlighted fields before saving.", "saving": "Saving settings…", "saved": "Settings saved successfully.", "saveError": "Settings could not be saved. Check the fields and try again.", "noteSaved": "Note saved successfully.", "noteError": "The note could not be saved. Review the text and try again.", "ignoreSaved": "Warning added to ignored items.", "ignoreError": "The ignored warning could not be saved. Review the value and try again.", "ignoreRemoved": "Ignored warning removed successfully.", "ignoreRemoveError": "The ignored warning could not be removed. It is still available; try again.", "testingTelegram": "Sending Telegram test…", "telegramSent": "Telegram test sent successfully.", "telegramError": "Telegram test could not be sent. Review the configuration and try again.", "eyebrow": "Settings", "heading": "Connections, schedule, and privacy", "secretDescription": "Current secrets are masked. You can keep them or explicitly replace them.", "navigation": "Settings sections", "retryRemoval": "Retry removal", "homeAssistant": "Home Assistant", "homeAssistantUrl": "Home Assistant URL", "homeAssistantToken": "Home Assistant token", "ai": "AI provider", "provider": "Provider", "providerKey": "Provider key", "notifications": "Notifications", "channel": "Channel", "noNotifications": "Do not send notifications", "telegramChat": "Telegram chat", "telegramBotToken": "Telegram bot token", "sendTelegramTest": "Send Telegram test", "schedule": "Schedule", "frequency": "Frequency", "daily": "Daily", "weekly": "Weekly", "time": "Time", "timezone": "Timezone", "dayOfWeek": "Day of the week", "weekdays": ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], "enableSchedule": "Enable this schedule", "privacyRetention": "Privacy and retention", "detailLevel": "Detail level", "minimal": "Minimal", "balanced": "Balanced", "detailed": "Detailed", "retentionDays": "Retention days", "save": "Save settings", "cancel": "Discard changes", "changesDiscarded": "Unsaved changes were discarded.", "context": "Context", "contextTitle": "Notes and ignored warnings", "contextDescription": "Keep operational context with configuration to avoid duplicate panel changes.", "operatorNotes": "Operator notes", "addNote": "Add note", "note": "Note", "saveNote": "Save note", "savingNote": "Saving note…", "notesUnavailable": "Notes are unavailable in this session.", "noNotes": "No saved notes.", "ignoredWarnings": "Ignored warnings", "addIgnoredWarning": "Add ignored warning", "match": "Match", "ignoreWarning": "Ignore warning", "savingWarning": "Saving warning…", "ignoresUnavailable": "Ignored warnings are unavailable in this session.", "noIgnores": "No ignored warnings.", "noReason": "No reason recorded", "remove": "Remove", "removeIgnoredTitle": "Remove ignored warning", "removeIgnoredDescription": "The warning “{match}” will appear again in upcoming reports.", "loadNotesError": "Notes could not be loaded. Try again.", "loadIgnoresError": "Ignored warnings could not be loaded. Try again.", "configured": "Configured: {mask}", "notConfigured": "Not configured yet.", "keepCurrent": "Keep current value", "replace": "Replace with a new value", "newValue": "New value", "loadingContext": "Loading…", "validHomeAssistantUrl": "Enter a valid Home Assistant URL.", "validTime": "Enter a valid time.", "validTimezone": "Enter a valid timezone.", "validRetention": "Use between 1 and {max} retention days." },
   "report": {
     "eyebrow": "Saved report",
-    "title": "Report #{id}",
+    "title": "Report details",
+    "id": "Report ID",
     "createdAt": "Generated: {time}",
     "window": "Analysis window",
     "delivery": "Delivery",
@@ -197,7 +220,62 @@
     "observations": { "title": "Observations", "copy": "The report contains {count} informational observations." },
     "allGood": { "title": "All clear", "copy": "No issues require attention." },
     "recommendations": { "title": "Recommendations", "legacyCopy": "No structured recommendations are available for this legacy report." },
-    "batch": { "warnings": "Analysis warnings", "integrations": "Integration status", "unavailable": "Integration status is unavailable.", "none": "No integration entries were returned.", "signatures": "Signature analysis", "failure": "Report failed", "trend": "Trend: {trend}; occurrences: {count}.", "recommendation": "Recommendation:", "analysisUnavailable": "Analysis was unavailable for this signature.", "classification": { "new": "New", "recurring": "Recurring", "reactivated": "Reactivated", "latent": "Latent" } },
+    "outcomes": {
+      "title": "Outcomes",
+      "reportResult": "Report result",
+      "aiAnalysis": "AI analysis",
+      "notification": "Notification",
+      "generated": "Generated",
+      "partial": "Generated with incomplete AI analysis",
+      "failed": "Report not generated",
+      "legacy": "Imported report (older format)",
+      "analysisComplete": "{analyzed} of {total} detected problems explained by AI",
+      "analysisPartial": "{analyzed} of {total} detected problems explained by AI. {missing} problems could not be explained.",
+      "analysisFailed": "AI analysis unavailable",
+      "analysisLegacy": "This older format does not include structured AI analysis.",
+      "analysisQuiet": "There were no detected problems to explain.",
+      "notificationSent": "Sent",
+      "notificationPending": "Pending confirmation",
+      "notificationSkipped": "Not sent (skipped or not configured)",
+      "notificationFailed": "Could not send",
+      "notificationFailureCopy": "The report exists, but the notification could not be sent. The exact reason was not recorded.",
+      "notificationFailureAction": "Review the Telegram configuration and send a test from Settings."
+    },
+    "batch": {
+      "warnings": "Analysis information",
+      "warningPartial": "AI could not explain every detected problem.",
+      "warningCorrupt": "Some saved report information could not be read safely.",
+      "warningUnavailable": "AI analysis was unavailable.",
+      "warningGeneric": "The report includes additional information that needs review.",
+      "integrations": "Integration status",
+      "unavailable": "Integration status is unavailable.",
+      "none": "No integration entries were returned.",
+      "problems": "Detected problems",
+      "groupingExplanation": "Repeated messages for the same problem are grouped together so the report is easier to read.",
+      "failure": "What happened",
+      "failureInvalidAnalysis": "AI could not produce a usable explanation for some of the detected problems.",
+      "failureGeneric": "AI analysis could not be completed for the detected problems.",
+      "trend": "Trend: {trend}",
+      "occurrencesSingular": "1 occurrence",
+      "occurrencesPlural": "{count} occurrences",
+      "aiExplanation": "AI explanation",
+      "aiRecommendation": "AI recommendation",
+      "analysisUnavailable": "AI could not explain this problem.",
+      "component": "Component",
+      "technicalId": "Technical ID",
+      "operatorNotes": "Operator notes",
+      "classification": { "new": "New problem", "recurring": "Recurring problem", "reactivated": "Reactivated problem", "latent": "Latent problem" },
+      "trendValues": { "new": "new", "increasing": "increasing", "flat": "stable", "decreasing": "decreasing" }
+    },
+    "delete": {
+      "action": "Delete Report",
+      "title": "Delete Report",
+      "description": "This action cannot be undone. Only this report will be deleted; other reports and settings will be preserved.",
+      "cancel": "Cancel",
+      "confirm": "Delete Report",
+      "pending": "Deleting report…",
+      "error": "The report could not be deleted. It is still available; try again."
+    },
     "presentation": {
       "overview": { "title": "Summary" },
       "attention": { "title": "Requires attention" },
@@ -206,7 +284,7 @@
       "recommendations": { "title": "Recommendation" },
       "evidence": { "title": "Evidence" },
       "severity": { "critical": "Critical", "warning": "Warning", "info": "Information" },
-       "legacy": { "title": "Legacy format", "copy": "This report was produced by a previous version and does not contain structured per-signature AI analysis. Only a new successful v2 report can provide that analysis.", "disclosure": "Show the original report content", "protectedData": "Protected data redacted" }
+        "legacy": { "title": "Imported report (older format)", "copy": "This report was produced by a previous version and does not contain structured AI analysis for each detected problem. Only a new report can provide that analysis.", "disclosure": "Show the original report content", "protectedData": "Protected data redacted" }
     }
   }
 }

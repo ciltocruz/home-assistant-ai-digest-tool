@@ -96,7 +96,8 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
         if (!legacyReport) return null;
         const rendered = { ...legacyReport.rendered, body: redactProviderError(legacyReport.rendered.body) };
         return { ...legacyReport, source: 'legacy' as const, rendered, presentation: projectLegacyReportPresentation({ ...legacyReport, rendered }) };
-      }
+      },
+      remove: async (id) => await v2Stores.removeReport(id) || await reports.remove(id)
     },
     notes: v2Stores,
     ignores: {
@@ -136,11 +137,11 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
       signatures: v2Stores,
       persistence: v2Stores,
       provider: {
-        analyze: async (context, signal) => {
+        analyze: async (context, signal, language) => {
           const current = await settingsStore.get();
           if (current.secretRefs.aiKeyRef.startsWith('unconfigured:')) throw new Error('AI_PROVIDER_UNAVAILABLE');
           const apiKey = await secretStore.resolve(current.secretRefs.aiKeyRef);
-          return createSignatureProvider(current.aiProvider, { apiKey, httpClient: options.providerHttpClient, timeoutMs: options.haAnalysisTimeoutMs }).analyze(context, signal);
+          return createSignatureProvider(current.aiProvider, { apiKey, httpClient: options.providerHttpClient, timeoutMs: options.haAnalysisTimeoutMs }).analyze(context, signal, language);
         }
       },
       haStatus: {
@@ -331,6 +332,19 @@ class SQLiteReportStore implements ReportStore {
       rendered: { format: 'markdown', body: redactProviderError(row.rendered_markdown) },
       summary: { id: row.id, window: { from: row.window_from, to: row.window_to }, severityCounts: JSON.parse(row.severity_counts_json), createdAt: row.created_at, deliveryStatus: deliveryStatusFromPayload(row.compressed_payload) ?? 'pending', source: 'legacy' }
     };
+  }
+
+  async remove(id: string): Promise<boolean> {
+    this.db.exec('begin immediate');
+    try {
+      const removed = this.db.prepare('delete from reports where id = ?').run(id).changes === 1;
+      if (removed) this.db.prepare('delete from deliveries where digest_id = ?').run(id);
+      this.db.exec('commit');
+      return removed;
+    } catch (error) {
+      this.db.exec('rollback');
+      throw error;
+    }
   }
 
   private async cleanup(retentionDays: number): Promise<void> {

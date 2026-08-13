@@ -46,6 +46,24 @@ describe('BatchReportRun', () => {
     expect(failures).toEqual([]);
   });
 
+  it('passes the selected account language to every AI analysis and the notifier', async () => {
+    const analysisLanguages: Array<string | undefined> = [];
+    const notificationLanguages: string[] = [];
+    const run = new BatchReportRun({
+      log: { read: async () => delta },
+      signatures: { classifyAndStage: async () => plan },
+      provider: { analyze: async (_context, _signal, language) => { analysisLanguages.push(language); return { summary: 'Resumen', recommendation: 'Revisar' }; } },
+      persistence: { commit: async () => 'report-language', claimDeliveryAttempt: async () => ({ status: 'pending' as const, shouldSend: true }), updateDeliveryStatus: async () => undefined, fail: async () => undefined },
+      notifier: { notify: async (summary) => { notificationLanguages.push(summary.language); return 'sent'; } },
+      language: async () => 'es'
+    });
+
+    await run.run({ runId: 'run-language', slotId: 'slot-language' });
+
+    expect(analysisLanguages).toEqual(['es', 'es', 'es']);
+    expect(notificationLanguages).toEqual(['es']);
+  });
+
   it('records an all-provider failure as a web-only failed run without advancing the cursor', async () => {
     const providerSecret = 'AIzaSyA1B2C3D4E5F6G7H8';
     const { run, commits, failures } = harness(async () => { throw new Error(`Gemini request failed at https://example.test/generate?key=${providerSecret}`); });

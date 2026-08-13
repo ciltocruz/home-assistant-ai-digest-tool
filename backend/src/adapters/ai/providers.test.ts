@@ -285,6 +285,31 @@ describe('AI provider adapters', () => {
     expect(JSON.stringify(requests[0]?.body)).not.toContain('must-not-leak');
   });
 
+  it.each([
+    ['openai', 'es', 'Write both string values in neutral professional Spanish.'],
+    ['gemini', 'es', 'Write both string values in neutral professional Spanish.'],
+    ['openai', 'en', 'Write both string values in English.'],
+    ['gemini', 'en', 'Write both string values in English.']
+  ] as const)('instructs %s to write explanation and recommendation in selected %s without putting credentials in the prompt', async (kind, language, expectedInstruction) => {
+    const requests: HttpRequest[] = [];
+    const key = 'language-provider-secret';
+    const response = kind === 'openai'
+      ? { choices: [{ message: { content: JSON.stringify({ summary: 'Summary', recommendation: 'Recommendation' }) } }] }
+      : { candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'Summary', recommendation: 'Recommendation' }) }] } }] };
+    const provider = createSignatureProvider(kind, {
+      apiKey: key,
+      baseUrl: kind === 'openai' ? 'https://fake.openai' : 'https://fake.gemini',
+      httpClient: async (request) => { requests.push(request); return { status: 200, json: async () => response }; }
+    });
+
+    await provider.analyze({ signature: 'sig-language', component: 'mqtt', classification: 'new', occurrences: ['connection failed'] }, new AbortController().signal, language);
+
+    const prompt = JSON.stringify(requests[0]?.body);
+    expect(prompt).toContain('summary and recommendation');
+    expect(prompt).toContain(expectedInstruction);
+    expect(prompt).not.toContain(key);
+  });
+
   it('sanitizes credential-shaped content in structured signature output without losing diagnostics', async () => {
     const rawSecrets = [
       'signature-bearer-fixture',

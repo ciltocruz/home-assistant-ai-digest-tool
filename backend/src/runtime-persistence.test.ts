@@ -137,6 +137,30 @@ describe('persistent runtime services', () => {
     expect(JSON.stringify(detail)).not.toContain(HA_SECRET);
   });
 
+  it('deletes one legacy report while preserving its neighbor and runtime configuration', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-runtime-delete-legacy-'));
+    const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
+    await services.setup.complete({ haUrl: 'http://homeassistant.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET });
+    await (services.reports as unknown as ReportStore).save(report('legacy-selected', NOW));
+    await (services.reports as unknown as ReportStore).save(report('legacy-neighbor', '2026-07-12T09:00:00.000Z'));
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
+    const db = new DatabaseSync(join(dataDir, 'app.db'));
+    db.prepare('insert into deliveries(id, digest_id, target_ref, status, created_at) values (?, ?, ?, ?, ?)').run('delivery-selected', 'legacy-selected', 'ref:selected', 'failed', NOW);
+    db.prepare('insert into deliveries(id, digest_id, target_ref, status, created_at) values (?, ?, ?, ?, ?)').run('delivery-neighbor', 'legacy-neighbor', 'ref:neighbor', 'sent', NOW);
+    db.close();
+    const settingsBefore = await services.settings.get();
+
+    await expect(services.reports.remove('legacy-selected')).resolves.toBe(true);
+    await expect(services.reports.remove('legacy-selected')).resolves.toBe(false);
+
+    expect(await services.reports.get('legacy-selected')).toBeNull();
+    expect(await services.reports.get('legacy-neighbor')).not.toBeNull();
+    expect(await services.settings.get()).toEqual(settingsBefore);
+    const verificationDb = new DatabaseSync(join(dataDir, 'app.db'));
+    expect(verificationDb.prepare('select digest_id from deliveries order by digest_id').all()).toEqual([{ digest_id: 'legacy-neighbor' }]);
+    verificationDb.close();
+  });
+
   it('removes expired history on save using configured retention without changing settings', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-runtime-retention-'));
     const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
@@ -301,16 +325,19 @@ describe('persistent runtime services', () => {
     const logPath = join(dataDir, 'home-assistant.log');
     await writeFile(logPath, '2026-07-12 10:00:00 ERROR [mqtt] connection token=do-not-send\n');
     const events = { configEntries: 0, ai: 0, telegram: 0 };
+    const providerPrompts: string[] = [];
     const services = await createPersistentRuntimeServices({
       dataDir, now: () => NOW, haLogPath: logPath,
       haWebSocketFactory: () => fakeHaSocket(events),
-      providerHttpClient: async () => {
+      providerHttpClient: async (request) => {
         events.ai += 1;
+        providerPrompts.push(JSON.stringify(request.body));
         return { status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'MQTT failed', recommendation: 'Restart MQTT' }) }] } }] }) };
       },
       telegramHttpClient: async () => { events.telegram += 1; return { status: 200, json: async () => ({ ok: true }) }; },
       reportUrl: (request) => `https://digest.local/reports/${request.runId}`
     });
+    await services.auth?.createAdmin('runtime-language-password', 'es');
     await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET, telegram: { botToken: TELEGRAM_SECRET, chatId: '42' } });
     const queued = await services.digestJobs.enqueue({ kind: 'manual', triggerWindowId: 'v2:success' });
 
@@ -318,6 +345,8 @@ describe('persistent runtime services', () => {
 
     expect(queued.status).toBe('queued');
     expect(events).toEqual({ configEntries: 1, ai: 1, telegram: 1 });
+    expect(providerPrompts[0]).toContain('Write both string values in neutral professional Spanish.');
+    expect(providerPrompts[0]).not.toContain(AI_SECRET);
     await expect(services.digestJobs.get(queued.jobId)).resolves.toMatchObject({ status: 'completed', reportId: expect.stringMatching(/^v2-report:/) });
     const successfulReport = await services.reports.get((await services.digestJobs.get(queued.jobId))?.reportId ?? 'missing');
     expect(successfulReport?.summary.deliveryStatus).toBe('sent');

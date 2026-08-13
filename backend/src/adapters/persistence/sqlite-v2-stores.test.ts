@@ -721,6 +721,38 @@ describe('SQLiteV2Stores', () => {
 
     expect(detail.presentation).toMatchObject({ signatures: [{ notes: [{ id: 'valid-note', occurredAt: '2026-08-05T19:00:00.000Z', createdAt: '2026-08-05T19:00:00.000Z' }] }] });
   });
+
+  it('deletes one v2 report and its dependent rows while preserving neighboring reports and global memory', async () => {
+    const db = await openTestDatabase();
+    runMigrations(db);
+    const stores = new SQLiteV2Stores(db, 10, () => '2026-08-05T20:00:00.000Z');
+    const jobs = new SQLiteDigestJobStore(db, { now: () => new Date('2026-08-05T20:00:00.000Z') });
+    const entries = parseHomeAssistantLog(['2026-08-05 19:00:00 ERROR [homeassistant.components.demo] Failure 42']);
+    const plan = await stores.classifyAndStage(entries, '2026-08-05T20:00:00.000Z');
+    const reportIds: string[] = [];
+    for (const suffix of ['selected', 'neighbor']) {
+      reportIds.push(await stores.commit({
+        request: { runId: `delete-${suffix}`, slotId: `delete-${suffix}-slot` },
+        cursor: { dev: 1, ino: 2, size: 100, offset: 100 },
+        signatures: plan,
+        report: { status: 'reported', findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [] }
+      }));
+    }
+    await stores.add({ text: 'Preserve this note', occurredAt: '2026-08-05T19:00:00.000Z', tags: [entries[0]!.signature] });
+    await jobs.enqueue({ kind: 'manual', triggerWindowId: 'preserved-job' });
+
+    await expect(stores.removeReport(reportIds[0]!)).resolves.toBe(true);
+    await expect(stores.removeReport(reportIds[0]!)).resolves.toBe(false);
+
+    expect(await stores.getReport(reportIds[0]!)).toBeNull();
+    expect(await stores.getReport(reportIds[1]!)).not.toBeNull();
+    expect(db.prepare('select count(*) as count from v2_report_signatures where report_id = ?').get(reportIds[0]!)).toEqual({ count: 0 });
+    expect(db.prepare('select count(*) as count from v2_report_delivery_attempts where report_id = ?').get(reportIds[0]!)).toEqual({ count: 0 });
+    expect(db.prepare('select count(*) as count from v2_signatures').get()).toEqual({ count: 1 });
+    expect(db.prepare('select count(*) as count from notes').get()).toEqual({ count: 1 });
+    expect(db.prepare('select count(*) as count from digest_jobs').get()).toEqual({ count: 1 });
+    expect(db.prepare('select count(*) as count from v2_runs').get()).toEqual({ count: 2 });
+  });
 });
 
 async function openTestDatabase() {

@@ -148,14 +148,36 @@
         "info": "Info"
       },
       "deliveryStatus": {
-         "pending": "Entrega pendiente de confirmación",
-         "sent": "Enviado",
-         "failed": "Fallido",
-         "skipped": "Sin notificación"
+         "pending": "Pendiente de confirmación",
+         "sent": "Enviada",
+         "failed": "No se pudo enviar",
+         "skipped": "No enviada (omitida o no configurada)"
       },
       "source": {
-        "legacy": "Informe heredado",
+        "legacy": "Informe importado (formato anterior)",
         "v2": "Informe de IA"
+      },
+      "fields": {
+        "date": "Fecha",
+        "window": "Periodo analizado",
+        "source": "Origen",
+        "reportResult": "Resultado del informe",
+        "aiAnalysis": "Análisis de IA",
+        "notification": "Notificación"
+      },
+      "reportResult": {
+        "generated": "Generado",
+        "partial": "Generado con análisis de IA incompleto",
+        "failed": "No generado",
+        "legacy": "Informe importado"
+      },
+      "aiAnalysis": {
+        "complete": "Todos los problemas detectados recibieron una explicación",
+        "partial": "Algunos problemas detectados no pudieron explicarse",
+        "failed": "No se pudo generar el análisis de IA",
+        "quiet": "No hubo problemas detectados que explicar",
+        "legacy": "No disponible en este formato anterior",
+        "unknown": "Consulta el detalle para ver el análisis disponible"
       }
     },
     "jobLifecycle": {
@@ -181,10 +203,11 @@
   "settings": { "title": "Configuración", "signIn": "Inicie sesión para revisar y modificar la configuración.", "loading": "Cargando los ajustes guardados…", "loadError": "No se pudieron cargar los ajustes. Compruebe la sesión y vuelva a intentarlo.", "review": "Revise los campos indicados antes de guardar.", "saving": "Guardando ajustes…", "saved": "Los ajustes se guardaron correctamente.", "saveError": "No se pudieron guardar los ajustes. Compruebe los campos y vuelva a intentarlo.", "noteSaved": "La nota se guardó correctamente.", "noteError": "No se pudo guardar la nota. Revise el texto y vuelva a intentarlo.", "ignoreSaved": "El aviso se añadió a los ignorados.", "ignoreError": "No se pudo guardar el aviso ignorado. Revise el valor y vuelva a intentarlo.", "ignoreRemoved": "El aviso ignorado se quitó correctamente.", "ignoreRemoveError": "No se pudo quitar el aviso ignorado. El aviso sigue disponible; vuelva a intentarlo.", "testingTelegram": "Enviando la prueba de Telegram…", "telegramSent": "La prueba de Telegram se envió correctamente.", "telegramError": "No se pudo enviar la prueba de Telegram. Revise la configuración y vuelva a intentarlo.", "eyebrow": "Configuración", "heading": "Conexiones, horario y privacidad", "secretDescription": "Los secretos actuales se muestran solo enmascarados. Puede conservarlos o sustituirlos de forma explícita.", "navigation": "Secciones de configuración", "retryRemoval": "Reintentar eliminación", "homeAssistant": "Home Assistant", "homeAssistantUrl": "URL de Home Assistant", "homeAssistantToken": "Token de Home Assistant", "ai": "Proveedor de IA", "provider": "Proveedor", "providerKey": "Clave del proveedor", "notifications": "Notificaciones", "channel": "Canal", "noNotifications": "No enviar notificaciones", "telegramChat": "Chat de Telegram", "telegramBotToken": "Token del bot de Telegram", "sendTelegramTest": "Enviar prueba de Telegram", "schedule": "Horario", "frequency": "Frecuencia", "daily": "Diaria", "weekly": "Semanal", "time": "Hora", "timezone": "Zona horaria", "dayOfWeek": "Día de la semana", "weekdays": ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"], "enableSchedule": "Activar este horario", "privacyRetention": "Privacidad y retención", "detailLevel": "Nivel de detalle", "minimal": "Mínimo", "balanced": "Equilibrado", "detailed": "Detallado", "retentionDays": "Días de retención", "save": "Guardar ajustes", "cancel": "Cancelar cambios", "changesDiscarded": "Los cambios sin guardar se descartaron.", "context": "Contexto", "contextTitle": "Notas y avisos ignorados", "contextDescription": "Conserve el contexto operativo junto a la configuración para evitar cambios duplicados en el panel.", "operatorNotes": "Notas del operador", "addNote": "Añadir nota", "note": "Nota", "saveNote": "Guardar nota", "savingNote": "Guardando nota…", "notesUnavailable": "Las notas no están disponibles en esta sesión.", "noNotes": "No hay notas guardadas.", "ignoredWarnings": "Avisos ignorados", "addIgnoredWarning": "Añadir aviso ignorado", "match": "Coincidencia", "ignoreWarning": "Ignorar aviso", "savingWarning": "Guardando aviso…", "ignoresUnavailable": "Los avisos ignorados no están disponibles en esta sesión.", "noIgnores": "No hay avisos ignorados.", "noReason": "Sin motivo registrado", "remove": "Quitar", "removeIgnoredTitle": "Quitar aviso ignorado", "removeIgnoredDescription": "El aviso “{match}” volverá a aparecer en los próximos informes.", "loadNotesError": "No se pudieron cargar las notas. Vuelva a intentarlo.", "loadIgnoresError": "No se pudieron cargar los avisos ignorados. Vuelva a intentarlo.", "configured": "Configurado: {mask}", "notConfigured": "No configurado todavía.", "keepCurrent": "Conservar el valor actual", "replace": "Reemplazar con un valor nuevo", "newValue": "Nuevo valor", "loadingContext": "Cargando…", "validHomeAssistantUrl": "Indica una URL válida de Home Assistant.", "validTime": "Indica una hora válida.", "validTimezone": "Indica una zona horaria.", "validRetention": "Use entre 1 y {max} días de retención." },
   "report": {
     "eyebrow": "Informe guardado",
-    "title": "Informe #{id}",
+    "title": "Detalle del informe",
+    "id": "ID del informe",
     "createdAt": "Generado: {time}",
     "window": "Ventana analizada",
-    "delivery": "Entrega",
+    "delivery": "Notificación",
     "back": "Volver a informes",
     "loadingTitle": "Cargando informe",
     "loadingCopy": "Recuperando el informe guardado…",
@@ -197,7 +220,62 @@
     "observations": { "title": "Observaciones", "copy": "El informe registra {count} observaciones informativas." },
     "allGood": { "title": "Todo correcto", "copy": "Sin incidencias que requieran atención." },
     "recommendations": { "title": "Recomendaciones", "legacyCopy": "No hay recomendaciones estructuradas disponibles para este informe heredado." },
-    "batch": { "warnings": "Avisos del análisis", "integrations": "Estado de integraciones", "unavailable": "El estado de integraciones no está disponible.", "none": "No se recibieron integraciones.", "signatures": "Análisis de firmas", "failure": "El informe ha fallado", "trend": "Tendencia: {trend}; apariciones: {count}.", "recommendation": "Recomendación:", "analysisUnavailable": "El análisis no estuvo disponible para esta firma.", "classification": { "new": "Nueva", "recurring": "Recurrente", "reactivated": "Reactivada", "latent": "Latente" } },
+    "outcomes": {
+      "title": "Resultados",
+      "reportResult": "Resultado del informe",
+      "aiAnalysis": "Análisis de IA",
+      "notification": "Notificación",
+      "generated": "Generado",
+      "partial": "Generado con análisis de IA incompleto",
+      "failed": "Informe no generado",
+      "legacy": "Informe importado (formato anterior)",
+      "analysisComplete": "{analyzed} de {total} problemas detectados explicados por la IA",
+      "analysisPartial": "{analyzed} de {total} problemas detectados explicados por la IA. {missing} problemas no pudieron explicarse.",
+      "analysisFailed": "Análisis de IA no disponible",
+      "analysisLegacy": "Este formato anterior no incluye un análisis de IA estructurado.",
+      "analysisQuiet": "No hubo problemas detectados que explicar.",
+      "notificationSent": "Enviada",
+      "notificationPending": "Pendiente de confirmación",
+      "notificationSkipped": "No enviada (omitida o no configurada)",
+      "notificationFailed": "No se pudo enviar",
+      "notificationFailureCopy": "El informe existe, pero no se pudo enviar la notificación. El motivo exacto no quedó registrado.",
+      "notificationFailureAction": "Revisa la configuración de Telegram y envía una prueba desde Configuración."
+    },
+    "batch": {
+      "warnings": "Información del análisis",
+      "warningPartial": "La IA no pudo explicar todos los problemas detectados.",
+      "warningCorrupt": "Parte de la información guardada no se pudo leer de forma segura.",
+      "warningUnavailable": "El análisis de IA no estuvo disponible.",
+      "warningGeneric": "El informe incluye información adicional que requiere revisión.",
+      "integrations": "Estado de integraciones",
+      "unavailable": "El estado de integraciones no está disponible.",
+      "none": "No se recibieron integraciones.",
+      "problems": "Problemas detectados",
+      "groupingExplanation": "Los mensajes repetidos del mismo problema se agrupan para que el informe sea más fácil de leer.",
+      "failure": "Qué ocurrió",
+      "failureInvalidAnalysis": "La IA no pudo generar una explicación útil para algunos de los problemas detectados.",
+      "failureGeneric": "No se pudo completar el análisis de IA de los problemas detectados.",
+      "trend": "Tendencia: {trend}",
+      "occurrencesSingular": "1 aparición",
+      "occurrencesPlural": "{count} apariciones",
+      "aiExplanation": "Explicación de la IA",
+      "aiRecommendation": "Recomendación de la IA",
+      "analysisUnavailable": "La IA no pudo explicar este problema.",
+      "component": "Componente",
+      "technicalId": "ID técnico",
+      "operatorNotes": "Notas del operador",
+      "classification": { "new": "Problema nuevo", "recurring": "Problema recurrente", "reactivated": "Problema reactivado", "latent": "Problema latente" },
+      "trendValues": { "new": "nuevo", "increasing": "en aumento", "flat": "estable", "decreasing": "en descenso" }
+    },
+    "delete": {
+      "action": "Eliminar informe",
+      "title": "Eliminar informe",
+      "description": "Esta acción no se puede deshacer. Se eliminará solo este informe; los demás informes y la configuración se conservarán.",
+      "cancel": "Cancelar",
+      "confirm": "Eliminar informe",
+      "pending": "Eliminando informe…",
+      "error": "No se pudo eliminar el informe. Sigue disponible; vuelve a intentarlo."
+    },
     "presentation": {
       "overview": { "title": "Resumen" },
       "attention": { "title": "Requiere atención" },
@@ -206,7 +284,7 @@
       "recommendations": { "title": "Recomendación" },
       "evidence": { "title": "Evidencia" },
       "severity": { "critical": "Crítica", "warning": "Aviso", "info": "Información" },
-       "legacy": { "title": "Formato heredado", "copy": "Este informe se generó con una versión anterior y no contiene análisis de IA estructurado por firma. Solo un informe v2 nuevo y correcto puede proporcionar ese análisis.", "disclosure": "Mostrar el contenido original del informe", "protectedData": "Datos protegidos ocultos" }
+       "legacy": { "title": "Informe importado (formato anterior)", "copy": "Este informe se generó con una versión anterior y no contiene un análisis de IA estructurado por problema detectado. Solo un informe nuevo puede proporcionar ese análisis.", "disclosure": "Mostrar el contenido original del informe", "protectedData": "Datos protegidos ocultos" }
     }
   }
 }

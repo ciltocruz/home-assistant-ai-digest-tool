@@ -206,6 +206,13 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
     return row ? detailFor(row, await this.apiKey?.()) : null;
   }
 
+  async removeReport(id: string): Promise<boolean> {
+    if (id.startsWith('v2-run:')) {
+      return this.db.prepare("delete from v2_runs where id = ? and not exists (select 1 from v2_reports where v2_reports.run_id = v2_runs.id)").run(id.slice(7)).changes === 1;
+    }
+    return this.db.prepare('delete from v2_reports where id = ?').run(id).changes === 1;
+  }
+
   async add(input: NoteCreate): Promise<NoteDto> {
     const note = { id: randomUUID(), ...input, createdAt: this.now() };
     this.db.prepare('insert into notes(id, text, occurred_at, created_at, tags_json) values (?, ?, ?, ?, ?)')

@@ -21,7 +21,7 @@ export type BackendApiServices = {
   settings: { get(): Promise<EditableSettingsDto>; update(input: SettingsUpdateCommand): Promise<EditableSettingsDto>; notificationTarget?(channel: 'telegram'): Promise<string> };
   digestJobs: Pick<DigestJobStore, 'enqueue' | 'get' | 'retryFailed'>;
   digestWorker?: { wake(): void };
-  reports: { save?: ReportStore['save']; list(): Promise<DigestHistoryResponse>; get(id: string): Promise<DigestDetail | null> };
+  reports: { save?: ReportStore['save']; list(): Promise<DigestHistoryResponse>; get(id: string): Promise<DigestDetail | null>; remove(id: string): Promise<boolean> };
   notes: Pick<NoteStore, 'add' | 'listWindow'>;
   ignores: Pick<IgnoreRuleStore, 'add' | 'remove' | 'listActive'>;
   notifiers: {
@@ -223,6 +223,10 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
   app.get('/api/digests/:id', async (request, reply): Promise<DigestDetail | FastifyReply> => {
     const detail = await options.services.reports.get(String((request.params as { id: string }).id));
     return detail ? redactReportDetail({ ...detail, presentation: detail.presentation ?? (detail.source === 'legacy' ? projectLegacyReportPresentation(detail) : projectReportPresentation(detail)) }) : sendError(reply, 404, 'NOT_FOUND', 'Digest not found.', request.id);
+  });
+  app.delete('/api/digests/:id', async (request, reply) => {
+    const removed = await options.services.reports.remove(String((request.params as { id: string }).id));
+    return removed ? reply.code(204).send() : sendError(reply, 404, 'NOT_FOUND', 'Digest not found.', request.id);
   });
 
   app.post('/api/notes', async (request, reply): Promise<NoteDto | FastifyReply> => {

@@ -4,7 +4,7 @@ export function LiveFeedback({ message, error = false }: { message: string; erro
   return message ? <p className={error ? 'error-copy' : 'feedback-copy'} role={error ? 'alert' : 'status'} aria-live="polite">{message}</p> : null;
 }
 
-export function ConfirmDialog({ open, title, description, confirmLabel, onCancel, onConfirm }: { open: boolean; title: string; description: string; confirmLabel: string; onCancel(): void; onConfirm(): void }) {
+export function ConfirmDialog({ open, title, description, confirmLabel, cancelLabel = 'Cancel', destructive = false, pending = false, onCancel, onConfirm }: { open: boolean; title: string; description: string; confirmLabel: string; cancelLabel?: string; destructive?: boolean; pending?: boolean; onCancel(): void; onConfirm(): void }) {
   const dialog = useRef<HTMLDivElement>(null);
   const restoreFocus = useRef<HTMLElement | null>(null);
   useEffect(() => {
@@ -25,5 +25,5 @@ export function ConfirmDialog({ open, title, description, confirmLabel, onCancel
     return () => { document.removeEventListener('keydown', onKeyDown); queueMicrotask(() => restoreFocus.current?.focus()); };
   }, [open, onCancel]);
   if (!open) return null;
-  return <div className="dialog-backdrop" role="presentation"><div ref={dialog} className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title" aria-describedby="confirm-dialog-description"><h2 id="confirm-dialog-title">{title}</h2><p id="confirm-dialog-description">{description}</p><div className="dialog-actions"><button type="button" className="secondary-action" onClick={onCancel}>Cancelar</button><button type="button" data-dialog-confirm onClick={onConfirm}>{confirmLabel}</button></div></div></div>;
+  return <div className="dialog-backdrop" role="presentation"><div ref={dialog} className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title" aria-describedby="confirm-dialog-description"><h2 id="confirm-dialog-title">{title}</h2><p id="confirm-dialog-description">{description}</p><div className="dialog-actions"><button type="button" className="secondary-action" disabled={pending} onClick={onCancel}>{cancelLabel}</button><button type="button" className={destructive ? 'danger-action' : undefined} data-dialog-confirm disabled={pending} onClick={onConfirm}>{confirmLabel}</button></div></div></div>;
 }

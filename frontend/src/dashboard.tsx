@@ -68,7 +68,7 @@ export function Dashboard({ api, state: initialState, activeReport, refreshKey =
   </section>;
 }
 
-export function DashboardHistory({ api, state: initialState, refreshKey = 0 }: { api?: DashboardApi; state?: DashboardHistoryState; refreshKey?: number }) {
+export function DashboardHistory({ api, state: initialState, refreshKey = 0, headingLevel = 'h1' }: { api?: DashboardApi; state?: DashboardHistoryState; refreshKey?: number; headingLevel?: 'h1' | 'h2' }) {
   const [state, setState] = useState<DashboardHistoryState>(initialState ?? (api ? { status: 'loading' } : { status: 'unavailable' }));
   const [retryKey, setRetryKey] = useState(0);
 
@@ -91,10 +91,11 @@ export function DashboardHistory({ api, state: initialState, refreshKey = 0 }: {
     return () => { active = false; };
   }, [api, initialState, refreshKey, retryKey]);
 
+  const Heading = headingLevel;
   return (
     <article className="panel history-panel" aria-live="polite">
       <p className="eyebrow">{t('dashboard.history.eyebrow')}</p>
-      <h1>{t('shell.reports')}</h1>
+      <Heading>{t('shell.reports')}</Heading>
       {renderHistoryState(state, () => setRetryKey((value) => value + 1))}
     </article>
   );
@@ -125,7 +126,7 @@ function renderCurrentState(state: DashboardHistoryState, onRetry: () => void) {
 }
 
 function renderLatestReport(state: DashboardHistoryState) {
-  if (state.status === 'ready') return <ul className="history-list"><HistoryItem item={state.items[0]} /></ul>;
+  if (state.status === 'ready') return <ul className="history-list history-list--latest"><HistoryItem item={state.items[0]} variant="latest" /></ul>;
   if (state.status === 'error') return <><p>{t('dashboard.latestReport.error.copy')}</p><a className="report-link" href="/reports">{t('dashboard.latestReport.error.action')}</a></>;
   if (state.status === 'loading') return <p>{t('dashboard.latestReport.loading')}</p>;
   return <><p>{t('dashboard.latestReport.empty.copy')}</p><a className="report-link" href="/reports">{t('dashboard.latestReport.empty.action')}</a></>;
@@ -141,18 +142,29 @@ function renderHistoryPreview(state: DashboardHistoryState) {
   return <><p>{t('dashboard.historyPreview.empty.copy')}</p><a className="report-link" href="/reports">{t('dashboard.historyPreview.empty.action')}</a></>;
 }
 
-function HistoryItem({ item }: { item: DigestSummary }) {
+function HistoryItem({ item, variant = 'history' }: { item: DigestSummary; variant?: 'history' | 'latest' }) {
   const createdAt = formatDateTime(item.createdAt);
-  return <li className="history-item">
+  const source = item.source ?? 'legacy';
+  return <li className={`history-item${variant === 'latest' ? ' history-item--latest' : ''}`}>
     <a className="history-link" href={`/reports/${encodeURIComponent(item.id)}`} aria-label={t('dashboard.history.openReport').replace('{time}', createdAt)}>
-       <span>{createdAt}</span>
-       <span className="muted-copy">{analysisWindowLabel(item)}</span>
-       {item.source ? <span className={`history-source-badge history-source-badge--${item.source}`}>{sourceLabel(item.source)}</span> : null}
-       <strong>{deliveryLabel(item.deliveryStatus)}</strong>
+      <div className="history-primary">
+        <div><span className="history-field-label">{t('dashboard.history.fields.date')}</span><time dateTime={item.createdAt}>{createdAt}</time></div>
+        <span className="muted-copy">{analysisWindowLabel(item)}</span>
+      </div>
+      <dl className="history-facts">
+        <div className="history-fact history-fact--source"><dt>{t('dashboard.history.fields.source')}</dt><dd><span className={`history-source-badge history-source-badge--${source}`}>{sourceLabel(source)}</span></dd></div>
+        <div className="history-fact history-fact--report"><dt>{t('dashboard.history.fields.reportResult')}</dt><dd>{reportResultLabel(item)}</dd></div>
+        <div className="history-fact history-fact--analysis"><dt>{t('dashboard.history.fields.aiAnalysis')}</dt><dd>{aiAnalysisLabel(item)}</dd></div>
+        <div className="history-fact history-fact--notification"><dt>{t('dashboard.history.fields.notification')}</dt><dd>{deliveryLabel(item.deliveryStatus)}</dd></div>
+      </dl>
+      <div className="history-statuses" aria-label={`${t('dashboard.history.fields.reportResult')}; ${t('dashboard.history.fields.notification')}`}>
+        <span className={`outcome-badge outcome-badge--${reportResultKind(item)}`}>{reportResultLabel(item)}</span>
+        <span className={`outcome-badge outcome-badge--notification-${item.deliveryStatus}`}>{deliveryLabel(item.deliveryStatus)}</span>
+      </div>
       <div className="severity-strip" aria-label={t('dashboard.history.severityAriaLabel')}>
-        <span>{t('dashboard.history.severity.critical')} {item.severityCounts.critical}</span>
-        <span>{t('dashboard.history.severity.warning')} {item.severityCounts.warning}</span>
-        <span>{t('dashboard.history.severity.info')} {item.severityCounts.info}</span>
+        <span className="severity-chip severity-chip--critical">{t('dashboard.history.severity.critical')} {item.severityCounts.critical}</span>
+        <span className="severity-chip severity-chip--warning">{t('dashboard.history.severity.warning')} {item.severityCounts.warning}</span>
+        <span className="severity-chip severity-chip--info">{t('dashboard.history.severity.info')} {item.severityCounts.info}</span>
       </div>
     </a>
   </li>;
@@ -164,6 +176,26 @@ function summaryLabel(count: number): string {
 
 function deliveryLabel(status: DigestSummary['deliveryStatus']): string {
   return t(`dashboard.history.deliveryStatus.${status}`);
+}
+
+function reportResultKind(item: DigestSummary): 'generated' | 'partial' | 'failed' | 'legacy' {
+  if ((item.source ?? 'legacy') === 'legacy') return 'legacy';
+  if (item.runStatus === 'failed') return 'failed';
+  if (item.runStatus === 'partial') return 'partial';
+  return 'generated';
+}
+
+function reportResultLabel(item: DigestSummary): string {
+  return t(`dashboard.history.reportResult.${reportResultKind(item)}`);
+}
+
+function aiAnalysisLabel(item: DigestSummary): string {
+  if ((item.source ?? 'legacy') === 'legacy') return t('dashboard.history.aiAnalysis.legacy');
+  if (item.runStatus === 'failed') return t('dashboard.history.aiAnalysis.failed');
+  if (item.runStatus === 'partial') return t('dashboard.history.aiAnalysis.partial');
+  if (item.runStatus === 'quiet') return t('dashboard.history.aiAnalysis.quiet');
+  if (item.runStatus === 'reported') return t('dashboard.history.aiAnalysis.complete');
+  return t('dashboard.history.aiAnalysis.unknown');
 }
 
 function sourceLabel(source: NonNullable<DigestSummary['source']>): string {

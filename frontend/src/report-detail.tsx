@@ -1,26 +1,42 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { DigestDetail, ReportPresentationItem } from '@ha-digest/shared';
 import { currentLocale, t } from './i18n/index.js';
 import { redactSensitiveText } from './api-client.js';
+import { ConfirmDialog, LiveFeedback } from './feedback.js';
 
-export function ReportDetail({ report, embedded = false }: { report: DigestDetail; embedded?: boolean }) {
+export function ReportDetail({ report, embedded = false, onDelete }: { report: DigestDetail; embedded?: boolean; onDelete?: () => Promise<void> }) {
   const presentation = report.presentation;
   const SectionHeading = embedded ? 'h3' : 'h2';
   const legacyMarkdown = presentation?.mode === 'legacy_markdown' ? presentation.legacyMarkdown : report.rendered.body;
+  const source = report.source ?? report.summary.source ?? (presentation?.mode === 'batch' ? 'v2' : 'legacy');
+  const [deleteState, setDeleteState] = useState<'idle' | 'confirming' | 'pending' | 'error'>('idle');
+
+  async function deleteReport() {
+    if (!onDelete || deleteState === 'pending') return;
+    setDeleteState('pending');
+    try {
+      await onDelete();
+    } catch {
+      setDeleteState('error');
+    }
+  }
+
   return <article className="panel report-detail">
     <p className="eyebrow">{t('report.eyebrow')}</p>
-    {embedded ? <h2>{t('report.title').replace('{id}', report.id)}</h2> : <h1>{t('report.title').replace('{id}', report.id)}</h1>}
+    {embedded ? <h2>{t('report.title')}</h2> : <h1>{t('report.title')}</h1>}
     <p className="muted-copy">{t('report.createdAt').replace('{time}', formatDateTime(report.summary.createdAt))}</p>
     <dl className="report-metadata">
+      <div className="report-metadata-id"><dt>{t('report.id')}</dt><dd><code translate="no" dir="ltr">{report.id}</code></dd></div>
       <div><dt>{t('report.window')}</dt><dd>{formatDateTime(report.summary.window.from)} — {formatDateTime(report.summary.window.to)}</dd></div>
-      <div><dt>{t('report.delivery')}</dt><dd>{deliveryLabel(report.summary.deliveryStatus)}</dd></div>
+      <div><dt>{t('dashboard.history.fields.source')}</dt><dd>{t(`dashboard.history.source.${source}`)}</dd></div>
     </dl>
+    <ReportOutcomes report={report} source={source} heading={SectionHeading} />
     <section className="report-section" aria-labelledby="report-severity-title">
       <SectionHeading id="report-severity-title">{t('report.severity.title')}</SectionHeading>
       <div className="severity-strip" aria-label={t('report.severity.ariaLabel')}>
-        <span>{t('report.severity.critical')} {report.summary.severityCounts.critical}</span>
-        <span>{t('report.severity.warning')} {report.summary.severityCounts.warning}</span>
-        <span>{t('report.severity.info')} {report.summary.severityCounts.info}</span>
+        <span className="severity-chip severity-chip--critical">{t('report.severity.critical')} {report.summary.severityCounts.critical}</span>
+        <span className="severity-chip severity-chip--warning">{t('report.severity.warning')} {report.summary.severityCounts.warning}</span>
+        <span className="severity-chip severity-chip--info">{t('report.severity.info')} {report.summary.severityCounts.info}</span>
       </div>
     </section>
     {presentation?.mode === 'batch' ? <BatchPresentation heading={SectionHeading} presentation={presentation} /> : presentation?.mode === 'structured' ? <>
@@ -49,8 +65,56 @@ export function ReportDetail({ report, embedded = false }: { report: DigestDetai
          </section>
       </details>
     </>}
-    <a className="report-link" href="/reports">{t('report.back')}</a>
+    <footer className="report-actions">
+      <a className="report-link" href="/reports">{t('report.back')}</a>
+      {onDelete ? <button type="button" className="danger-action" onClick={() => setDeleteState('confirming')}>{t('report.delete.action')}</button> : null}
+    </footer>
+    <LiveFeedback message={deleteState === 'error' ? t('report.delete.error') : ''} error />
+    <ConfirmDialog
+      open={deleteState === 'confirming' || deleteState === 'pending'}
+      title={t('report.delete.title')}
+      description={t('report.delete.description')}
+      confirmLabel={deleteState === 'pending' ? t('report.delete.pending') : t('report.delete.confirm')}
+      cancelLabel={t('report.delete.cancel')}
+      destructive
+      pending={deleteState === 'pending'}
+      onCancel={() => setDeleteState('idle')}
+      onConfirm={() => void deleteReport()}
+    />
   </article>;
+}
+
+function ReportOutcomes({ report, source, heading: Heading }: { report: DigestDetail; source: 'legacy' | 'v2'; heading: 'h2' | 'h3' }) {
+  const batch = report.presentation?.mode === 'batch' ? report.presentation : undefined;
+  const status = batch?.status ?? report.summary.runStatus;
+  const total = batch?.signatures.length ?? 0;
+  const analyzed = batch?.signatures.filter((item) => item.analysis).length ?? 0;
+  const result = source === 'legacy'
+    ? t('report.outcomes.legacy')
+    : status === 'failed'
+      ? t('report.outcomes.failed')
+      : status === 'partial'
+        ? t('report.outcomes.partial')
+        : t('report.outcomes.generated');
+  const analysis = source === 'legacy'
+    ? t('report.outcomes.analysisLegacy')
+    : status === 'failed'
+      ? t('report.outcomes.analysisFailed')
+      : status === 'quiet'
+        ? t('report.outcomes.analysisQuiet')
+        : status === 'partial'
+          ? t('report.outcomes.analysisPartial').replace('{analyzed}', String(analyzed)).replace('{total}', String(total)).replace('{missing}', String(Math.max(0, total - analyzed)))
+          : t('report.outcomes.analysisComplete').replace('{analyzed}', String(analyzed)).replace('{total}', String(total));
+  const delivery = t(`report.outcomes.notification${capitalize(report.summary.deliveryStatus)}`);
+
+  return <section className="report-section report-outcomes" aria-labelledby="report-outcomes-title">
+    <Heading id="report-outcomes-title">{t('report.outcomes.title')}</Heading>
+    <dl>
+      <div><dt>{t('report.outcomes.reportResult')}</dt><dd>{result}</dd></div>
+      <div><dt>{t('report.outcomes.aiAnalysis')}</dt><dd>{analysis}</dd></div>
+      <div><dt>{t('report.outcomes.notification')}</dt><dd>{delivery}{report.summary.deliveryStatus === 'failed' ? <><span>{t('report.outcomes.notificationFailureCopy')}</span><span>{t('report.outcomes.notificationFailureAction')}</span></> : null}</dd></div>
+    </dl>
+  </section>;
 }
 
 function PresentationSection({ heading: Heading, id, title, items }: { heading: 'h2' | 'h3'; id: string; title: string; items: ReportPresentationItem[] }) {
@@ -70,11 +134,17 @@ function PresentationSection({ heading: Heading, id, title, items }: { heading: 
 }
 
 function BatchPresentation({ heading: Heading, presentation }: { heading: 'h2' | 'h3'; presentation: Extract<NonNullable<DigestDetail['presentation']>, { mode: 'batch' }> }) {
-  if (presentation.status === 'failed') return <section className="report-section" role="alert"><Heading>{t('report.batch.failure')}</Heading><p>{presentation.failure}</p></section>;
+  if (presentation.status === 'failed') return <section className="report-section" role="alert"><Heading>{t('report.batch.failure')}</Heading><p>{failureLabel(presentation.failure)}</p></section>;
   return <>
-    {presentation.warnings.length > 0 ? <section className="report-section" role="alert"><Heading>{t('report.batch.warnings')}</Heading><p>{presentation.warnings.join(', ')}</p></section> : null}
+    {presentation.warnings.length > 0 ? <section className="report-section report-analysis-note"><Heading>{t('report.batch.warnings')}</Heading><ul>{presentation.warnings.map((warning) => <li key={warning}>{warningLabel(warning)}{warning === 'AI_ANALYSIS_PARTIAL' ? null : <code translate="no" dir="ltr">{warning}</code>}</li>)}</ul></section> : null}
     <section className="report-section"><Heading>{t('report.batch.integrations')}</Heading><p>{presentation.integrationStatus?.available ? presentation.integrationStatus.integrations.map((item) => item.state ? `${item.title ?? item.domain} (${item.state})` : item.title ?? item.domain).join(', ') || t('report.batch.none') : t('report.batch.unavailable')}</p></section>
-    <section className="report-section"><Heading>{t('report.batch.signatures')}</Heading><ul className="report-presentation-list">{presentation.signatures.map((item) => <li key={item.signature} className="report-presentation-item"><p className="report-item-title">{item.component} · {t(`report.batch.classification.${item.classification}`)}</p><p>{t('report.batch.trend').replace('{trend}', item.trend).replace('{count}', String(item.occurrences))}</p>{item.analysis ? <><p>{item.analysis.summary}</p><p><strong>{t('report.batch.recommendation')}</strong> {item.analysis.recommendation}</p></> : <p>{t('report.batch.analysisUnavailable')}</p>}{item.notes?.length ? <><p><strong>{currentLocale() === 'es' ? 'Notas del operador:' : 'Operator notes:'}</strong></p><ul>{item.notes.map((note) => <li key={note.id}>{note.text}</li>)}</ul></> : null}</li>)}</ul></section>
+    <section className="report-section report-problems"><Heading>{t('report.batch.problems')}</Heading><p className="report-section-intro">{t('report.batch.groupingExplanation')}</p><ul className="report-presentation-list">{presentation.signatures.map((item) => <li key={item.signature} className="report-presentation-item">
+      <div className="report-problem-heading"><p className="report-item-title">{t(`report.batch.classification.${item.classification}`)}</p><span className={`severity-badge severity-badge--${severityForLevel(item.level)}`}>{severityLabel(severityForLevel(item.level))}</span></div>
+      <p className="report-problem-stats"><span>{t('report.batch.trend').replace('{trend}', t(`report.batch.trendValues.${item.trend}`))}</span><span>{item.occurrences === 1 ? t('report.batch.occurrencesSingular') : t('report.batch.occurrencesPlural').replace('{count}', String(item.occurrences))}</span></p>
+      {item.analysis ? <div className="report-ai-content"><div><p className="report-field-label">{t('report.batch.aiExplanation')}</p><p>{item.analysis.summary}</p></div><div><p className="report-field-label">{t('report.batch.aiRecommendation')}</p><p>{item.analysis.recommendation}</p></div></div> : <p className="muted-copy">{t('report.batch.analysisUnavailable')}</p>}
+      <details className="report-technical-detail"><summary>{t('report.batch.component')}: <span translate="no">{item.component}</span></summary><dl><div><dt>{t('report.batch.technicalId')}</dt><dd><code translate="no" dir="ltr">{item.signature}</code></dd></div></dl></details>
+      {item.notes?.length ? <div className="report-operator-notes"><p className="report-field-label">{t('report.batch.operatorNotes')}</p><ul>{item.notes.map((note) => <li key={note.id}>{note.text}</li>)}</ul></div> : null}
+    </li>)}</ul></section>
   </>;
 }
 
@@ -88,8 +158,29 @@ function formatDateTime(value: string): string {
   return new Intl.DateTimeFormat(currentLocale() === 'es' ? 'es-ES' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }).format(new Date(value));
 }
 
-function deliveryLabel(status: DigestDetail['summary']['deliveryStatus']): string {
-  return t(`dashboard.history.deliveryStatus.${status}`);
+function capitalize(value: DigestDetail['summary']['deliveryStatus']): 'Sent' | 'Failed' | 'Pending' | 'Skipped' {
+  return `${value[0]?.toUpperCase()}${value.slice(1)}` as 'Sent' | 'Failed' | 'Pending' | 'Skipped';
+}
+
+function warningLabel(code: string): string {
+  if (code === 'AI_ANALYSIS_PARTIAL') return t('report.batch.warningPartial');
+  if (code === 'AI_ANALYSIS_UNAVAILABLE') return t('report.batch.warningUnavailable');
+  if (code === 'REPORT_CORRUPT' || code === 'REPORT_PAYLOAD_INVALID' || code === 'REPORT_MISSING') return t('report.batch.warningCorrupt');
+  return t('report.batch.warningGeneric');
+}
+
+function failureLabel(message?: string): string {
+  if (message === 'invalid signature analysis'
+    || message === 'OpenAI provider returned an invalid signature analysis'
+    || message === 'Gemini provider returned an invalid signature analysis'
+    || message === 'Ollama provider returned an invalid signature analysis') {
+    return t('report.batch.failureInvalidAnalysis');
+  }
+  return t('report.batch.failureGeneric');
+}
+
+function severityForLevel(level: 'ERROR' | 'CRITICAL' | 'WARNING'): 'critical' | 'warning' {
+  return level === 'CRITICAL' ? 'critical' : 'warning';
 }
 
 function renderLegacyMarkdown(markdown: string) {

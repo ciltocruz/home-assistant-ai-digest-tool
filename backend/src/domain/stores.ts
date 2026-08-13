@@ -21,6 +21,7 @@ export interface ReportStore {
   save(report: { id: string; rendered: RenderedDigest; summary: DigestSummary }, context?: ExecutionContext): Promise<void>;
   list(): Promise<DigestSummary[]>;
   get(id: string): Promise<{ id: string; rendered: RenderedDigest; summary: DigestSummary } | null>;
+  remove(id: string): Promise<boolean>;
 }
 
 export interface NoteStore {
