@@ -17,6 +17,7 @@ export type RuntimeConfig = {
   haMaxLogLines: number;
   haMaxResponseBytes: number;
   haAnalysisTimeoutMs: number;
+  publicAppUrl?: string;
 };
 
 export function loadRuntimeConfig(environment: NodeJS.ProcessEnv): RuntimeConfig {
@@ -47,7 +48,8 @@ export function loadRuntimeConfig(environment: NodeJS.ProcessEnv): RuntimeConfig
     haMaxStates: parsePositiveInteger('HA_MAX_STATES', environment.HA_MAX_STATES, 500),
     haMaxLogLines: parsePositiveInteger('HA_MAX_LOG_LINES', environment.HA_MAX_LOG_LINES, 200),
     haMaxResponseBytes: parsePositiveInteger('HA_MAX_RESPONSE_BYTES', environment.HA_MAX_RESPONSE_BYTES, 1_000_000),
-    haAnalysisTimeoutMs: parsePositiveInteger('HA_ANALYSIS_TIMEOUT_MS', environment.HA_ANALYSIS_TIMEOUT_MS, 60_000)
+    haAnalysisTimeoutMs: parsePositiveInteger('HA_ANALYSIS_TIMEOUT_MS', environment.HA_ANALYSIS_TIMEOUT_MS, 60_000),
+    publicAppUrl: parsePublicAppUrl(environment.PUBLIC_APP_URL)
   };
 }
 
@@ -78,4 +80,15 @@ function parsePositiveInteger(name: string, value: string | undefined, fallback:
   const parsed = Number(value ?? fallback);
   if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`${name} must be a positive integer.`);
   return parsed;
+}
+
+function parsePublicAppUrl(value: string | undefined): string | undefined {
+  if (!value || value.includes('?') || value.includes('#')) return undefined;
+  try {
+    const url = new URL(value);
+    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password || url.search || url.hash || url.pathname !== '/') return undefined;
+    return url.origin;
+  } catch {
+    return undefined;
+  }
 }

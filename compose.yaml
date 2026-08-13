@@ -11,6 +11,7 @@ services:
       RUNTIME_MODE: "${RUNTIME_MODE:-local}"
       TRUST_PROXY: "${TRUST_PROXY:-false}"
       SECURE_COOKIES: "${SECURE_COOKIES:-false}"
+      PUBLIC_APP_URL: "${PUBLIC_APP_URL:-}"
       FRONTEND_DIST_DIR: /app/frontend-dist
       DATA_DIR: /data
       LOG_DIR: /data/logs

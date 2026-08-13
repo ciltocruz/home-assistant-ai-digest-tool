@@ -40,6 +40,29 @@ describe('runtime configuration', () => {
     });
     expect(() => loadRuntimeConfig(tokens({ HA_MAX_STATES: '0' }))).toThrow(/HA_MAX_STATES must be a positive integer/);
   });
+
+  it.each([
+    ['https://digest.example/', 'https://digest.example'],
+    ['http://localhost:3000/', 'http://localhost:3000']
+  ])('accepts and normalizes root HTTP(S) PUBLIC_APP_URL %s', (value, expected) => {
+    expect(loadRuntimeConfig(tokens({ PUBLIC_APP_URL: value })).publicAppUrl).toBe(expected);
+  });
+
+  it.each([
+    undefined,
+    '',
+    'not-a-url',
+    'ftp://digest.example',
+    'https://user:password@digest.example',
+    'https://digest.example/base',
+    'https://digest.example/base///',
+    'https://digest.example/path?',
+    'https://digest.example/path#',
+    'https://digest.example/path?token=private',
+    'https://digest.example/path#private'
+  ])('omits invalid or unsafe PUBLIC_APP_URL %s without failing startup', (value) => {
+    expect(loadRuntimeConfig(tokens(value === undefined ? {} : { PUBLIC_APP_URL: value })).publicAppUrl).toBeUndefined();
+  });
 });
 
 function tokens(environment: Record<string, string> = {}): NodeJS.ProcessEnv { return environment; }

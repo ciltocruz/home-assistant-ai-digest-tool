@@ -26,6 +26,7 @@ describe('Docker Compose runtime modes', () => {
     expect(compose).toContain(':/ha-logs/home-assistant.log:ro');
     expect(compose).toContain('host.docker.internal:host-gateway');
     expect(compose).toContain('HA_MAX_STATES');
+    expect(compose).toContain('PUBLIC_APP_URL: "${PUBLIC_APP_URL:-}"');
     expect(compose).toContain('logging:');
     expect(compose).toContain('driver: json-file');
     expect(compose).toContain('max-size: "10m"');
@@ -40,6 +41,18 @@ describe('Docker Compose runtime modes', () => {
     expect(environment).toContain('SECURE_COOKIES=false');
     expect(environment).toContain('HA_LOG_FILE=');
     expect(environment).toContain('HA_MAX_LOG_LINES=200');
+    expect(environment).toContain('PUBLIC_APP_URL=');
+    expect(environment).toContain('Do not include a path');
+  });
+
+  it('documents PUBLIC_APP_URL as a root application URL without path-prefix support', async () => {
+    const [readme, configuration] = await Promise.all([
+      readRepositoryFile('README.md'),
+      readRepositoryFile('docs/configuration.md')
+    ]);
+
+    expect(readme).toContain('must not include a path prefix');
+    expect(configuration).toContain('Path prefixes are not supported');
   });
 
   it('keeps application code and the HA log mount outside the writable data boundary', async () => {

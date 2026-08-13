@@ -31,6 +31,7 @@ export async function startRuntimeServer(
       haMaxLogLines: config.haMaxLogLines,
       haMaxResponseBytes: config.haMaxResponseBytes,
       haAnalysisTimeoutMs: config.haAnalysisTimeoutMs,
+      publicAppUrl: config.publicAppUrl,
       failureReporter: logger.reportApiFailure,
       digestFailureReporter: logger.reportDigestFailure,
       operationalEventReporter: logger.reportOperational

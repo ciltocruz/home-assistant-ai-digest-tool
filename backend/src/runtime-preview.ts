@@ -27,13 +27,18 @@ export type PersistentRuntimePreviewOptions = RuntimePreviewOptions & {
   haMaxLogLines?: number;
   haMaxResponseBytes?: number;
   haAnalysisTimeoutMs?: number;
+  publicAppUrl?: string;
 };
 
 export async function createPersistentRuntimePreviewApp(options: PersistentRuntimePreviewOptions): Promise<FastifyInstance> {
   return createRuntimePreviewApp({
     ...options,
-    services: await createPersistentRuntimeServices({ dataDir: options.dataDir, now: options.now, haLogPath: options.haLogsDir ? join(options.haLogsDir, 'home-assistant.log') : undefined, haMaxStates: options.haMaxStates, haMaxLogLines: options.haMaxLogLines, haMaxResponseBytes: options.haMaxResponseBytes, haAnalysisTimeoutMs: options.haAnalysisTimeoutMs, digestFailureReporter: options.digestFailureReporter, operationalEventReporter: options.operationalEventReporter })
+    services: await createPersistentRuntimeServices({ dataDir: options.dataDir, now: options.now, haLogPath: options.haLogsDir ? join(options.haLogsDir, 'home-assistant.log') : undefined, haMaxStates: options.haMaxStates, haMaxLogLines: options.haMaxLogLines, haMaxResponseBytes: options.haMaxResponseBytes, haAnalysisTimeoutMs: options.haAnalysisTimeoutMs, reportUrl: createReportUrl(options.publicAppUrl), digestFailureReporter: options.digestFailureReporter, operationalEventReporter: options.operationalEventReporter })
   });
+}
+
+export function createReportUrl(publicAppUrl: string | undefined): ((reportId: string) => string) | undefined {
+  return publicAppUrl ? (reportId) => `${publicAppUrl}/reports/${encodeURIComponent(reportId)}` : undefined;
 }
 
 type RuntimePreviewAppOptions = RuntimePreviewOptions & {

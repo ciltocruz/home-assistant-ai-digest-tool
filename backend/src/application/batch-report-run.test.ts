@@ -64,6 +64,38 @@ describe('BatchReportRun', () => {
     expect(notificationLanguages).toEqual(['es']);
   });
 
+  it('builds an optional report link from the committed report identifier', async () => {
+    const notifications: Array<{ reportUrl?: string }> = [];
+    const reportUrl = vi.fn((reportId: string) => `https://digest.example/reports/${encodeURIComponent(reportId)}`);
+    const run = new BatchReportRun({
+      log: { read: async () => delta },
+      signatures: { classifyAndStage: async () => plan },
+      provider: { analyze: async () => ({ summary: 'summary', recommendation: 'fix' }) },
+      persistence: { commit: async () => 'v2-report:committed/id', claimDeliveryAttempt: async () => ({ status: 'pending', shouldSend: true }), updateDeliveryStatus: async () => undefined, fail: async () => undefined },
+      notifier: { notify: async (summary) => { notifications.push(summary); return 'sent'; } },
+      reportUrl
+    });
+
+    await run.run({ runId: 'request-id-must-not-be-used', slotId: 'slot-report-link' });
+
+    expect(reportUrl).toHaveBeenCalledWith('v2-report:committed/id');
+    expect(notifications).toEqual([expect.objectContaining({ reportUrl: 'https://digest.example/reports/v2-report%3Acommitted%2Fid' })]);
+  });
+
+  it('keeps notification summaries valid when no report URL callback is configured', async () => {
+    const notifications: unknown[] = [];
+    const run = new BatchReportRun({
+      log: { read: async () => delta }, signatures: { classifyAndStage: async () => plan },
+      provider: { analyze: async () => ({ summary: 'summary', recommendation: 'fix' }) },
+      persistence: { commit: async () => 'v2-report:no-link', claimDeliveryAttempt: async () => ({ status: 'pending', shouldSend: true }), updateDeliveryStatus: async () => undefined, fail: async () => undefined },
+      notifier: { notify: async (summary) => { notifications.push(summary); return 'sent'; } }
+    });
+
+    await run.run({ runId: 'request-no-link', slotId: 'slot-no-link' });
+
+    expect(notifications).toEqual([expect.not.objectContaining({ reportUrl: expect.anything() })]);
+  });
+
   it('records an all-provider failure as a web-only failed run without advancing the cursor', async () => {
     const providerSecret = 'AIzaSyA1B2C3D4E5F6G7H8';
     const { run, commits, failures } = harness(async () => { throw new Error(`Gemini request failed at https://example.test/generate?key=${providerSecret}`); });
@@ -78,11 +110,11 @@ describe('BatchReportRun', () => {
     const notified: unknown[] = [];
     const commits: Parameters<BatchPersistence['commit']>[0][] = [];
     const deliveryUpdates: Array<{ reportId: string; status: string }> = [];
-    const run = new BatchReportRun({ log: { read: async () => delta }, signatures: { classifyAndStage: async () => plan }, provider: { analyze: async () => ({ summary: 'summary', recommendation: 'fix' }) }, persistence: { commit: async (value) => { commits.push(value); return 'report-id'; }, claimDeliveryAttempt: async () => ({ status: 'pending' as const, shouldSend: true }), updateDeliveryStatus: async (reportId, status) => { deliveryUpdates.push({ reportId, status }); }, fail: async () => undefined }, haStatus: { snapshot: async () => ({ available: false, integrations: [] }) }, notifier: { notify: async (summary) => { notified.push(summary); return 'sent'; } } });
+    const run = new BatchReportRun({ log: { read: async () => delta }, signatures: { classifyAndStage: async () => plan }, provider: { analyze: async () => ({ summary: 'summary', recommendation: 'fix' }) }, persistence: { commit: async (value) => { commits.push(value); return 'report-id'; }, claimDeliveryAttempt: async () => ({ status: 'pending' as const, shouldSend: true }), updateDeliveryStatus: async (reportId, status) => { deliveryUpdates.push({ reportId, status }); }, fail: async () => undefined }, haStatus: { snapshot: async () => ({ available: false }) }, notifier: { notify: async (summary) => { notified.push(summary); return 'sent'; } } });
 
     await run.run({ runId: 'run-4', slotId: 'slot-4' });
 
-    expect(commits[0]?.report.integrationStatus).toEqual({ available: false, integrations: [] });
+    expect(commits[0]?.report.integrationStatus).toEqual({ available: false });
     expect(notified).toHaveLength(1);
     expect(commits[0]?.report.deliveryStatus).toBe('sent');
     expect(deliveryUpdates).toEqual([{ reportId: 'report-id', status: 'sent' }]);
@@ -209,7 +241,7 @@ describe('BatchReportRun', () => {
       log: { read: async () => delta }, signatures: { classifyAndStage: async () => plan },
       provider: { analyze: async () => ({ summary: 'private provider content', recommendation: 'private action' }) },
       persistence: { commit: async () => 'report-events', claimDeliveryAttempt: async () => ({ status: 'pending', shouldSend: true }), updateDeliveryStatus: async () => undefined, fail: async () => undefined },
-      haStatus: { snapshot: async () => ({ available: false, integrations: [], reason: 'socket_timeout' }) },
+      haStatus: { snapshot: async () => ({ available: false, reason: 'socket_timeout' }) },
       notifier: { notify: async () => ({ status: 'sent', targetRef: 'telegram:private-chat' }) },
       eventReporter: (event) => { events.push(event); },
       clock: () => time++

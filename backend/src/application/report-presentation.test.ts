@@ -163,8 +163,9 @@ One condition needs review.
     expect(JSON.stringify(report)).toContain('API key rotation documented');
   });
 
-  it('sanitizes batch warnings and integration status arriving from another store seam', () => {
+  it('sanitizes batch warnings and aggregates legacy integration status arriving from another store seam', () => {
     const rawSecrets = ['seam-warning-token-fixture', 'seam-integration-secret-fixture'];
+    const privateIntegrationValues = ['owner@example.test', '192.0.2.10', 'https://private.example.test/account', 'Bedroom private device', 'private_service_domain'];
     const report = redactReportDetail({
       id: 'v2-seam-boundary',
       source: 'v2',
@@ -178,7 +179,18 @@ One condition needs review.
         integrationStatus: {
           available: true,
           providerControlled: rawSecrets[1],
-          integrations: [{ domain: 'mqtt', title: `MQTT Bearer ${rawSecrets[0]}`, state: `token=${rawSecrets[1]}`, opaque: 'do-not-return' }]
+          integrations: [
+            { domain: privateIntegrationValues[4], title: privateIntegrationValues[0], state: 'loaded' },
+            { domain: 'private_ip', title: privateIntegrationValues[1], state: 'not_loaded' },
+            { domain: 'private_setup', title: 'Private setup', state: 'setup_in_progress' },
+            { domain: 'private_unload', title: 'Private unload', state: 'unload_in_progress' },
+            { domain: 'private_retry', title: 'Private retry', state: 'setup_retry' },
+            { domain: 'private_url', title: privateIntegrationValues[2], state: 'setup_error', reason: 'invalid_auth' },
+            { domain: 'private_migration', title: 'Private migration', state: 'migration_error' },
+            { domain: 'private_device', title: privateIntegrationValues[3], state: 'failed_unload' },
+            { domain: 'private_future', title: `MQTT Bearer ${rawSecrets[0]}`, state: `token=${rawSecrets[1]}`, opaque: 'do-not-return' },
+            { domain: 'private_malformed', title: 'Private malformed' }
+          ]
         },
         signatures: []
       } as never
@@ -186,10 +198,20 @@ One condition needs review.
 
     expect(report.presentation).toEqual(expect.objectContaining({
       warnings: ['Bearer [REDACTED]'],
-      integrationStatus: { available: true, integrations: [{ domain: 'mqtt', title: 'MQTT Bearer [REDACTED]', state: 'token=[REDACTED]' }] }
+      integrationStatus: {
+        available: true,
+        total: 10,
+        loaded: 1,
+        notLoaded: 1,
+        inProgress: 2,
+        retrying: 1,
+        errors: 3,
+        unknown: 2
+      }
     }));
     const serialized = JSON.stringify(report);
     for (const secret of rawSecrets) expect(serialized).not.toContain(secret);
+    for (const value of privateIntegrationValues) expect(serialized).not.toContain(value);
     expect(serialized).not.toContain('providerControlled');
     expect(serialized).not.toContain('opaque');
   });

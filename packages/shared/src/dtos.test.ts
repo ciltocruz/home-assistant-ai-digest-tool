@@ -6,6 +6,7 @@ import {
   EditableSettingsDtoSchema,
   OnboardingProgressSchema,
   OnboardingStepCommandSchema,
+  projectIntegrationStatus,
   ReportPresentationV1Schema,
   RedactedSettingsDtoSchema,
   ScheduleSchema,
@@ -252,6 +253,73 @@ describe('shared DTOs', () => {
       recommendations: [{ id: 'recommendation-1', severity: 'critical', title: 'Garage door sensor', detail: 'Unavailable for 3 hours.' }],
       evidence: [{ id: 'evidence-1', title: 'Recorder window', detail: 'No gaps were reported.' }]
     })).toMatchObject({ mode: 'structured', version: 1 });
+  });
+
+  it('accepts only aggregate integration status in public report presentations', () => {
+    const presentation = ReportPresentationV1Schema.parse({
+      version: 2,
+      mode: 'batch',
+      status: 'reported',
+      warnings: [],
+      integrationStatus: {
+        available: true,
+        total: 10,
+        loaded: 1,
+        notLoaded: 1,
+        inProgress: 2,
+        retrying: 1,
+        errors: 3,
+        unknown: 2
+      },
+      signatures: []
+    });
+    const serialized = JSON.stringify(presentation);
+
+    expect(serialized).not.toContain('domain');
+    expect(serialized).not.toContain('title');
+    expect(serialized).not.toContain('identifier');
+    expect(() => ReportPresentationV1Schema.parse({
+      version: 2,
+      mode: 'batch',
+      status: 'reported',
+      warnings: [],
+      integrationStatus: {
+        available: true,
+        integrations: [{ domain: 'private_service', title: 'owner@example.test', state: 'loaded' }]
+      },
+      signatures: []
+    })).toThrow();
+  });
+
+  it('classifies every current Home Assistant config-entry state without inventing status', () => {
+    const status = projectIntegrationStatus({
+      available: true,
+      integrations: [
+        { state: 'loaded', title: 'owner@example.test' },
+        { state: 'not_loaded', domain: 'private-ip-192.0.2.10' },
+        { state: 'setup_in_progress', title: 'Bedroom private device' },
+        { state: 'unload_in_progress', title: 'https://private.example.test' },
+        { state: 'setup_retry', reason: 'private retry detail' },
+        { state: 'setup_error', reason: 'invalid_auth' },
+        { state: 'migration_error' },
+        { state: 'failed_unload' },
+        { state: 'LOADED' },
+        { state: 'future_state' },
+        { title: 'malformed without state' }
+      ]
+    });
+
+    expect(status).toEqual({
+      available: true,
+      total: 11,
+      loaded: 1,
+      notLoaded: 1,
+      inProgress: 2,
+      retrying: 1,
+      errors: 3,
+      unknown: 3
+    });
+    expect(JSON.stringify(status)).not.toMatch(/owner@example|192\.0\.2\.10|Bedroom|private\.example|private retry|invalid_auth/);
   });
 
   it('returns field-safe errors without secret values', () => {

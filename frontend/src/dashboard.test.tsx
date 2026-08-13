@@ -9,7 +9,11 @@ import { Dashboard, DashboardHistory, loadDigestHistory, type DashboardApi } fro
 import { setLocale } from './i18n/index.js';
 
 Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: true, value: true });
-beforeEach(() => setLocale('es'));
+const originalTimeZone = process.env.TZ;
+beforeEach(() => {
+  setLocale('es');
+  process.env.TZ = 'UTC';
+});
 
 const historyItem = {
   id: 'digest-1',
@@ -22,6 +26,7 @@ const historyItem = {
 const mountedRoots: Root[] = [];
 
 afterEach(() => {
+  process.env.TZ = originalTimeZone;
   for (const root of mountedRoots.splice(0)) {
     act(() => root.unmount());
   }
@@ -64,6 +69,44 @@ describe('DashboardHistory', () => {
     expect(html).toContain('Avisos 2');
     expect(html).toContain('Info 3');
     expect(html).toContain('Enviada');
+  });
+
+  test.each([
+    { locale: 'es' as const, expected: '13 ago 2026, 23:15' },
+    { locale: 'en' as const, expected: '13 Aug 2026, 23:15' }
+  ])('renders UTC report timestamps in the configured timezone for $locale', ({ locale, expected }) => {
+    setLocale(locale);
+    const html = renderToStaticMarkup(<DashboardHistory
+      timeZone="Europe/Madrid"
+      state={{ status: 'ready', items: [{ ...historyItem, createdAt: '2026-08-13T21:15:00.000Z' }] }}
+    />);
+
+    expect(html).toContain(expected);
+    expect(html).toContain('dateTime="2026-08-13T21:15:00.000Z"');
+  });
+
+  test('applies configured timezone daylight-saving rules instead of a fixed offset', () => {
+    const html = renderToStaticMarkup(<DashboardHistory
+      timeZone="Europe/Madrid"
+      state={{ status: 'ready', items: [
+        { ...historyItem, id: 'summer', createdAt: '2026-08-13T21:15:00.000Z' },
+        { ...historyItem, id: 'winter', createdAt: '2026-01-13T21:15:00.000Z' }
+      ] }}
+    />);
+
+    expect(html).toContain('13 ago 2026, 23:15');
+    expect(html).toContain('13 ene 2026, 22:15');
+  });
+
+  test('falls back to the runtime local timezone during server-safe rendering', () => {
+    const previous = process.env.TZ;
+    process.env.TZ = 'Europe/Madrid';
+    try {
+      const html = renderToStaticMarkup(<DashboardHistory state={{ status: 'ready', items: [{ ...historyItem, createdAt: '2026-08-13T21:15:00.000Z' }] }} />);
+      expect(html).toContain('13 ago 2026, 23:15');
+    } finally {
+      process.env.TZ = previous;
+    }
   });
 
   test('makes every saved report an accessible deep link', async () => {

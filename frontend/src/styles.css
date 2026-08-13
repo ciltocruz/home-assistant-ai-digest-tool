@@ -1615,6 +1615,58 @@ button, input, select, textarea { font: inherit; }
 .report-technical-detail dd { margin: 0.2rem 0 0; }
 .report-operator-notes { border-top: 1px solid var(--border-subtle); margin-top: 0.85rem; padding-top: 0.75rem; }
 .report-section-intro { color: var(--text-secondary); max-width: 65ch; }
+.integration-summary-grid {
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8.5rem), 1fr));
+  margin: 0.9rem 0 0;
+}
+.integration-summary-grid > div {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  min-width: 0;
+  padding: 0.75rem 0.85rem;
+}
+.integration-summary-grid dt {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+.integration-summary-grid dd {
+  color: var(--text-primary);
+  font-size: 1.35rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  margin: 0.3rem 0 0;
+}
+.integration-summary-grid > .integration-summary-error {
+  background: rgba(255, 77, 79, 0.08);
+  border-color: rgba(255, 77, 79, 0.28);
+}
+.integration-summary-error dt,
+.integration-summary-error dd { color: #ff7875; }
+.integration-neutral-note,
+.integration-clear {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.55;
+  margin: 0.75rem 0 0;
+  max-width: 68ch;
+}
+.integration-clear { color: var(--ha-teal); }
+.integration-attention {
+  background: rgba(255, 169, 64, 0.07);
+  border: 1px solid rgba(255, 169, 64, 0.2);
+  border-radius: var(--radius-md);
+  margin-top: 0.85rem;
+  padding: 0.8rem;
+  color: #ffc069;
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
 .report-analysis-note { background: rgba(255, 169, 64, 0.07); border-radius: var(--radius-md); padding: 1rem; }
 .report-analysis-note ul { margin-bottom: 0; padding-left: 1.2rem; }
 .report-analysis-note code { color: var(--text-muted); display: block; font-size: 0.7rem; margin-top: 0.25rem; overflow-wrap: anywhere; }
@@ -2048,6 +2100,7 @@ button.btn-legacy:disabled { opacity: 0.55; cursor: not-allowed; }
   .report-metadata,
   .report-outcomes dl,
   .report-ai-content,
+  .integration-summary-grid,
   .settings-context-grid {
     grid-template-columns: 1fr;
   }

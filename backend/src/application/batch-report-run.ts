@@ -1,7 +1,7 @@
 import type { BatchSignature, LogDelta, ParsedLogEntry, SignaturePlan } from '../domain/batch.js';
 import { parseHomeAssistantLog } from '../domain/batch.js';
 import type { DeliveryDiagnostic, DeliveryDiagnosticErrorCode, DeliveryResult, DeliveryStatus, IgnoreRuleDto, NoteDto } from '@ha-digest/shared';
-import type { IntegrationStatusSnapshot } from './integration-status.js';
+import type { IntegrationStatusFailureReason, IntegrationStatusSnapshot } from './integration-status.js';
 import { redactProviderError } from '../domain/safe-error.js';
 
 export type RunRequest = { runId: string; slotId: string; includeWarnings?: boolean };
@@ -33,7 +33,7 @@ export type BatchOperationalEvent =
   | { event: 'report_commit_completed'; reportId: string; status: 'quiet' | 'reported' | 'partial'; signatureCount: number }
   | { event: 'report_commit_failed' }
   | { event: 'ha_snapshot_completed'; integrationCount: number; durationMs: number }
-  | { event: 'ha_snapshot_failed'; reason: NonNullable<IntegrationStatusSnapshot['reason']>; durationMs: number }
+  | { event: 'ha_snapshot_failed'; reason: IntegrationStatusFailureReason; durationMs: number }
   | { event: 'telegram_delivery_started' }
   | { event: 'telegram_delivery_completed'; outcome: DeliveryStatus; errorCode?: DeliveryDiagnosticErrorCode; durationMs: number };
 
@@ -64,7 +64,7 @@ export type BatchReportRunDependencies = {
   notifier?: BatchNotifier;
   ignores?: { listActive(at: string): Promise<IgnoreRuleDto[]> };
   notes?: { listWindow(window: { from: string; to: string }): Promise<NoteDto[]> };
-  reportUrl?: (request: RunRequest) => string | undefined;
+  reportUrl?: (reportId: string) => string | undefined;
   language?: () => Promise<'en' | 'es'>;
   eventReporter?: (event: BatchOperationalEvent) => void;
   clock?: () => number;
@@ -134,7 +134,8 @@ export class BatchReportRun {
         if (!attempt.shouldSend) return { status, warnings, reportId, deliveryStatus: attempt.status };
         deliveryStarted = this.time();
         this.report({ event: 'telegram_delivery_started' });
-        const result = await this.dependencies.notifier.notify({ findings, reportUrl: this.dependencies.reportUrl?.(request), language });
+        const reportUrl = this.dependencies.reportUrl?.(reportId);
+        const result = await this.dependencies.notifier.notify({ findings, ...(reportUrl ? { reportUrl } : {}), language });
         deliveryStatus = typeof result === 'string' ? result : result.status;
         deliveryDiagnostic = typeof result === 'string' ? undefined : deliveryDiagnosticFor(result, this.dependencies.now?.() ?? new Date().toISOString());
         this.report({ event: 'telegram_delivery_completed', outcome: deliveryStatus, ...(deliveryDiagnostic ? { errorCode: deliveryDiagnostic.errorCode } : {}), durationMs: this.duration(deliveryStarted) });
@@ -157,13 +158,13 @@ export class BatchReportRun {
   private async readIntegrationStatus(): Promise<IntegrationStatusSnapshot> {
     const started = this.time();
     try {
-      const snapshot = await this.dependencies.haStatus?.snapshot() ?? { available: false, integrations: [], reason: 'connection_failed' as const };
-      if (snapshot.available) this.report({ event: 'ha_snapshot_completed', integrationCount: snapshot.integrations.length, durationMs: this.duration(started) });
+      const snapshot = await this.dependencies.haStatus?.snapshot() ?? { available: false, reason: 'connection_failed' as const };
+      if (snapshot.available) this.report({ event: 'ha_snapshot_completed', integrationCount: snapshot.total, durationMs: this.duration(started) });
       else this.report({ event: 'ha_snapshot_failed', reason: snapshot.reason ?? 'connection_failed', durationMs: this.duration(started) });
       return snapshot;
     } catch {
       this.report({ event: 'ha_snapshot_failed', reason: 'connection_failed', durationMs: this.duration(started) });
-      return { available: false, integrations: [], reason: 'connection_failed' };
+      return { available: false, reason: 'connection_failed' };
     }
   }
 

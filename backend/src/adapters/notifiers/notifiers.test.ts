@@ -190,6 +190,82 @@ describe('notifier adapters', () => {
     expect(requests[0]?.body).toMatchObject({ text: expect.stringContaining('Open report') });
     expect(JSON.stringify(requests[0]?.body)).not.toContain(TELEGRAM_BOT_TOKEN_SENTINEL);
   });
+
+  it.each([
+    {
+      label: 'English singular without a URL',
+      language: 'en' as const,
+      count: 1,
+      summary: 'MQTT failed.',
+      reportUrl: undefined,
+      expected: '*Home Assistant digest*\n1 noteworthy finding\\. MQTT failed\\.'
+    },
+    {
+      label: 'English plural without a URL',
+      language: 'en' as const,
+      count: 2,
+      summary: 'Two [sensors] failed!',
+      reportUrl: undefined,
+      expected: '*Home Assistant digest*\n2 noteworthy findings\\. Two \\[sensors\\] failed\\!'
+    },
+    {
+      label: 'Spanish singular without a URL',
+      language: 'es' as const,
+      count: 1,
+      summary: 'Falló MQTT.',
+      reportUrl: undefined,
+      expected: '*Resumen de Home Assistant*\n1 incidencia destacada\\. Falló MQTT\\.'
+    },
+    {
+      label: 'Spanish plural with a URL',
+      language: 'es' as const,
+      count: 2,
+      summary: 'Dos alertas.',
+      reportUrl: 'https://digest.test/reports/r2',
+      expected: '*Resumen de Home Assistant*\n2 incidencias destacadas\\. Dos alertas\\.\n[Abrir informe](https://digest.test/reports/r2)'
+    },
+    {
+      label: 'a URL containing a closing parenthesis and backslash',
+      language: 'en' as const,
+      count: 1,
+      summary: 'Review link',
+      reportUrl: 'https://digest.test/reports/a)b\\c',
+      expected: '*Home Assistant digest*\n1 noteworthy finding\\. Review link\n[Open report](https://digest.test/reports/a\\)b\\\\c)'
+    },
+    {
+      label: 'every dynamic MarkdownV2 reserved character and backslash',
+      language: 'en' as const,
+      count: 1,
+      summary: 'Reserved _ * [ ] ( ) ~ ` > # + - = | { } . ! \\ done',
+      reportUrl: undefined,
+      expected: '*Home Assistant digest*\n1 noteworthy finding\\. Reserved \\_ \\* \\[ \\] \\( \\) \\~ \\` \\> \\# \\+ \\- \\= \\| \\{ \\} \\. \\! \\\\ done'
+    }
+  ])('sends the exact valid MarkdownV2 payload for $label', async ({ language, count, summary, reportUrl, expected }) => {
+    const requests: HttpRequest[] = [];
+    const notifier = new TelegramNotifier({
+      httpClient: async (request) => {
+        requests.push(request);
+        return { status: 200, json: async () => ({ ok: true }) };
+      }
+    });
+    const findings = Array.from({ length: count }, (_, index) => ({
+      signature: `sig-${index}`,
+      analysis: { summary: index === 0 ? summary : 'Additional finding', recommendation: 'Review it' }
+    }));
+
+    await notifier.sendSummary(
+      { findings, ...(reportUrl ? { reportUrl } : {}), language },
+      { channel: 'telegram', label: 'Telegram', config: { botToken: TELEGRAM_BOT_TOKEN_SENTINEL, chatId: '4242' } }
+    );
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.body).toEqual({
+      chat_id: '4242',
+      text: expected,
+      parse_mode: 'MarkdownV2',
+      disable_web_page_preview: true
+    });
+  });
 });
 
 type HttpRequest = { url: string; headers?: Record<string, string>; body?: unknown; signal?: AbortSignal };

@@ -325,6 +325,7 @@ describe('persistent runtime services', () => {
     const logPath = join(dataDir, 'home-assistant.log');
     await writeFile(logPath, '2026-07-12 10:00:00 ERROR [mqtt] connection token=do-not-send\n');
     const events = { configEntries: 0, ai: 0, telegram: 0 };
+    const telegramBodies: unknown[] = [];
     const providerPrompts: string[] = [];
     const services = await createPersistentRuntimeServices({
       dataDir, now: () => NOW, haLogPath: logPath,
@@ -334,8 +335,8 @@ describe('persistent runtime services', () => {
         providerPrompts.push(JSON.stringify(request.body));
         return { status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'MQTT failed', recommendation: 'Restart MQTT' }) }] } }] }) };
       },
-      telegramHttpClient: async () => { events.telegram += 1; return { status: 200, json: async () => ({ ok: true }) }; },
-      reportUrl: (request) => `https://digest.local/reports/${request.runId}`
+      telegramHttpClient: async (request) => { events.telegram += 1; telegramBodies.push(request.body); return { status: 200, json: async () => ({ ok: true }) }; },
+      reportUrl: (reportId) => `https://digest.local/reports/${encodeURIComponent(reportId)}`
     });
     await services.auth?.createAdmin('runtime-language-password', 'es');
     await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET, telegram: { botToken: TELEGRAM_SECRET, chatId: '42' } });
@@ -348,6 +349,11 @@ describe('persistent runtime services', () => {
     expect(providerPrompts[0]).toContain('Write both string values in neutral professional Spanish.');
     expect(providerPrompts[0]).not.toContain(AI_SECRET);
     await expect(services.digestJobs.get(queued.jobId)).resolves.toMatchObject({ status: 'completed', reportId: expect.stringMatching(/^v2-report:/) });
+    const committedReportId = (await services.digestJobs.get(queued.jobId))?.reportId;
+    expect(telegramBodies).toEqual([expect.objectContaining({
+      parse_mode: 'MarkdownV2',
+      text: expect.stringContaining(`[Abrir informe](https://digest.local/reports/${encodeURIComponent(committedReportId ?? '')})`)
+    })]);
     const successfulReport = await services.reports.get((await services.digestJobs.get(queued.jobId))?.reportId ?? 'missing');
     expect(successfulReport?.summary.deliveryStatus).toBe('sent');
 

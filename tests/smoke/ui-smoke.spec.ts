@@ -137,7 +137,7 @@ test('opens report deep links, preserves browser navigation, and presents legacy
   state.history = [digestSummary('report-latest', { critical: 1, warning: 0, info: 1, createdAt: '2026-08-01T10:00:00.000Z' })];
 
   await page.goto('/reports');
-  const reportLink = page.getByRole('link', { name: 'Abrir informe del 1 ago 2026, 10:00' });
+  const reportLink = page.getByRole('link', { name: 'Abrir informe del 1 ago 2026, 12:00' });
   await expect(reportLink).toBeVisible();
   await reportLink.click();
   await expect(page).toHaveURL(/\/reports\/report-latest$/);
@@ -148,7 +148,7 @@ test('opens report deep links, preserves browser navigation, and presents legacy
 
   await page.goBack();
   await expect(page).toHaveURL(/\/reports$/);
-  await expect(page.getByRole('link', { name: 'Abrir informe del 1 ago 2026, 10:00' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Abrir informe del 1 ago 2026, 12:00' })).toBeVisible();
   await page.goto('/reports/missing-report');
   await expect(page.getByRole('heading', { name: 'Informe no encontrado' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Volver a informes' })).toHaveAttribute('href', '/reports');

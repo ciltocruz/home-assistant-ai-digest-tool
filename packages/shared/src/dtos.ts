@@ -388,9 +388,55 @@ export const V2SignaturePresentationSchema = z.object({
     tags: z.array(z.string().min(1))
   }).strict()).max(10).optional()
 }).strict();
+
+export const IntegrationStatusFailureReasonSchema = z.enum(['socket_timeout', 'auth_required_missing', 'auth_failed', 'command_rejected', 'invalid_result', 'connection_failed']);
+export const IntegrationStatusSummarySchema = z.discriminatedUnion('available', [
+  z.object({
+    available: z.literal(true),
+    total: z.number().int().min(0),
+    loaded: z.number().int().min(0),
+    notLoaded: z.number().int().min(0),
+    inProgress: z.number().int().min(0),
+    retrying: z.number().int().min(0),
+    errors: z.number().int().min(0),
+    unknown: z.number().int().min(0)
+  }).strict(),
+  z.object({
+    available: z.literal(false),
+    reason: IntegrationStatusFailureReasonSchema.optional()
+  }).strict()
+]).refine((status) => !status.available || status.loaded + status.notLoaded + status.inProgress + status.retrying + status.errors + status.unknown === status.total, { message: 'Integration status counts must equal total' });
+export type IntegrationStatusSummary = z.infer<typeof IntegrationStatusSummarySchema>;
+
+export function projectIntegrationStatus(value: unknown): IntegrationStatusSummary | undefined {
+  const current = IntegrationStatusSummarySchema.safeParse(value);
+  if (current.success) return current.data;
+  if (!value || typeof value !== 'object') return undefined;
+  const legacy = value as { available?: unknown; integrations?: unknown; reason?: unknown };
+  if (legacy.available === false) {
+    const reason = IntegrationStatusFailureReasonSchema.safeParse(legacy.reason);
+    return { available: false, ...(reason.success ? { reason: reason.data } : {}) };
+  }
+  if (legacy.available !== true || !Array.isArray(legacy.integrations)) return undefined;
+
+  const counts = legacy.integrations.reduce((total, entry) => {
+    const record = entry && typeof entry === 'object' ? entry as { state?: unknown } : {};
+    const state = typeof record.state === 'string' ? record.state : '';
+    if (state === 'loaded') total.loaded += 1;
+    else if (state === 'not_loaded') total.notLoaded += 1;
+    else if (state === 'setup_in_progress' || state === 'unload_in_progress') total.inProgress += 1;
+    else if (state === 'setup_retry') total.retrying += 1;
+    else if (state === 'setup_error' || state === 'migration_error' || state === 'failed_unload') total.errors += 1;
+    else total.unknown += 1;
+    return total;
+  }, { loaded: 0, notLoaded: 0, inProgress: 0, retrying: 0, errors: 0, unknown: 0 });
+
+  return { available: true, total: legacy.integrations.length, ...counts };
+}
+
 export const V2ReportPresentationSchema = z.object({
   version: z.literal(2), mode: z.literal('batch'), status: z.enum(['quiet', 'reported', 'partial', 'failed']),
-  warnings: z.array(z.string().min(1)), integrationStatus: z.object({ available: z.boolean(), integrations: z.array(z.object({ domain: z.string(), title: z.string().optional(), state: z.string().optional() }).strict()), reason: z.enum(['socket_timeout', 'auth_required_missing', 'auth_failed', 'command_rejected', 'invalid_result', 'connection_failed']).optional() }).strict().optional(),
+  warnings: z.array(z.string().min(1)), integrationStatus: IntegrationStatusSummarySchema.optional(),
   signatures: z.array(V2SignaturePresentationSchema), failure: z.string().min(1).optional()
 }).strict();
 

@@ -133,8 +133,9 @@ describe('account authentication boundary', () => {
     expect(response.body).toContain('API key rotation documented');
   });
 
-  it('sanitizes old v2 warning and integration fields at the HTTP detail seam', async () => {
+  it('returns only aggregate status for old v2 integration fields at the HTTP detail seam', async () => {
     const rawSecrets = ['http-old-warning-token-fixture', 'http-old-integration-secret-fixture'];
+    const privateIntegrationValues = ['owner@example.test', '192.0.2.10', 'https://private.example.test/account', 'Bedroom private device', 'private_service_domain'];
     const detail: DigestDetail = {
       id: 'v2-http-old-detail',
       source: 'v2',
@@ -148,7 +149,18 @@ describe('account authentication boundary', () => {
         integrationStatus: {
           available: true,
           providerControlled: rawSecrets[1],
-          integrations: [{ domain: 'mqtt', title: `MQTT Bearer ${rawSecrets[0]}`, state: `token=${rawSecrets[1]}`, opaque: 'do-not-return' }]
+          integrations: [
+            { domain: privateIntegrationValues[4], title: privateIntegrationValues[0], state: 'loaded' },
+            { domain: 'private_ip', title: privateIntegrationValues[1], state: 'not_loaded' },
+            { domain: 'private_setup', title: 'Private setup', state: 'setup_in_progress' },
+            { domain: 'private_unload', title: 'Private unload', state: 'unload_in_progress' },
+            { domain: 'private_retry', title: 'Private retry', state: 'setup_retry' },
+            { domain: 'private_url', title: privateIntegrationValues[2], state: 'setup_error', reason: 'invalid_auth' },
+            { domain: 'private_migration', title: 'Private migration', state: 'migration_error' },
+            { domain: 'private_device', title: privateIntegrationValues[3], state: 'failed_unload' },
+            { domain: 'private_future', title: 'Private future', state: 'future_state' },
+            { domain: 'private_malformed', title: 'Private malformed' }
+          ]
         },
         signatures: []
       } as never
@@ -165,10 +177,20 @@ describe('account authentication boundary', () => {
     expect(response.json()).toMatchObject({
       presentation: {
         warnings: ['Bearer [REDACTED]'],
-        integrationStatus: { available: true, integrations: [{ domain: 'mqtt', title: 'MQTT Bearer [REDACTED]', state: 'token=[REDACTED]' }] }
+        integrationStatus: {
+          available: true,
+          total: 10,
+          loaded: 1,
+          notLoaded: 1,
+          inProgress: 2,
+          retrying: 1,
+          errors: 3,
+          unknown: 2
+        }
       }
     });
     for (const secret of rawSecrets) expect(response.body).not.toContain(secret);
+    for (const value of privateIntegrationValues) expect(response.body).not.toContain(value);
     expect(response.body).not.toContain('providerControlled');
     expect(response.body).not.toContain('opaque');
   });

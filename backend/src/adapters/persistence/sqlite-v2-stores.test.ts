@@ -287,11 +287,12 @@ describe('SQLiteV2Stores', () => {
     });
   });
 
-  it('allowlists and redacts old v2 warnings and integration status before returning detail', async () => {
+  it('allowlists old v2 warnings and returns only aggregate integration status from persisted detail', async () => {
     const db = await openTestDatabase();
     runMigrations(db);
     const stores = new SQLiteV2Stores(db, 10, () => '2026-08-05T20:00:00.000Z');
     const rawSecrets = ['old-warning-token-fixture', 'old-integration-secret-fixture'];
+    const privateIntegrationValues = ['owner@example.test', '192.0.2.10', 'https://private.example.test/account', 'Bedroom private device', 'private_service_domain'];
     db.prepare('insert into v2_runs(id, slot_id, status, error_code, created_at) values (?, ?, ?, ?, ?)')
       .run('old-unsafe-run', 'old-unsafe-slot', 'reported', null, '2026-08-05T19:00:00.000Z');
     db.prepare('insert into v2_reports(id, run_id, status, payload_json, created_at) values (?, ?, ?, ?, ?)')
@@ -302,7 +303,18 @@ describe('SQLiteV2Stores', () => {
           integrationStatus: {
             available: true,
             providerControlled: rawSecrets[1],
-            integrations: [{ domain: 'mqtt', title: `MQTT Bearer ${rawSecrets[0]}`, state: `token=${rawSecrets[1]}`, opaque: 'do-not-return' }]
+            integrations: [
+              { domain: privateIntegrationValues[4], title: privateIntegrationValues[0], state: 'loaded' },
+              { domain: 'private_ip', title: privateIntegrationValues[1], state: 'not_loaded' },
+              { domain: 'private_setup', title: 'Private setup', state: 'setup_in_progress' },
+              { domain: 'private_unload', title: 'Private unload', state: 'unload_in_progress' },
+              { domain: 'private_retry', title: 'Private retry', state: 'setup_retry' },
+              { domain: 'private_url', title: privateIntegrationValues[2], state: 'setup_error', reason: 'invalid_auth' },
+              { domain: 'private_migration', title: 'Private migration', state: 'migration_error' },
+              { domain: 'private_device', title: privateIntegrationValues[3], state: 'failed_unload' },
+              { domain: 'private_future', title: 'Private future', state: 'future_state' },
+              { domain: 'private_malformed', title: 'Private malformed' }
+            ]
           }
         },
         signatures: []
@@ -314,11 +326,21 @@ describe('SQLiteV2Stores', () => {
       presentation: {
         mode: 'batch',
         warnings: ['Bearer [REDACTED]'],
-        integrationStatus: { available: true, integrations: [{ domain: 'mqtt', title: 'MQTT Bearer [REDACTED]', state: 'token=[REDACTED]' }] }
+        integrationStatus: {
+          available: true,
+          total: 10,
+          loaded: 1,
+          notLoaded: 1,
+          inProgress: 2,
+          retrying: 1,
+          errors: 3,
+          unknown: 2
+        }
       }
     });
     const serialized = JSON.stringify(detail);
     for (const secret of rawSecrets) expect(serialized).not.toContain(secret);
+    for (const value of privateIntegrationValues) expect(serialized).not.toContain(value);
     expect(serialized).not.toContain('providerControlled');
     expect(serialized).not.toContain('providerWarning');
     expect(serialized).not.toContain('opaque');

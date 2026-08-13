@@ -10,9 +10,10 @@ import { OnboardingFlow, createInitialOnboardingState, restoreOnboardingState, t
 import { ReportDetail } from './report-detail.js';
 import type { AppRoute } from './router.js';
 import { SettingsPanel, type SettingsApi } from './settings.js';
-import type { DigestDetail, RunDigestRequest, RunDigestResponse } from '@ha-digest/shared';
+import type { DigestDetail, EditableSettingsDto, RunDigestRequest, RunDigestResponse } from '@ha-digest/shared';
 
 type AppApi = Partial<OnboardingApi & DashboardApi & JobLifecycleApi & { getDigest(id: string): Promise<DigestDetail>; deleteDigest(id: string): Promise<void> }>;
+type TimeZoneApi = Pick<SettingsApi, 'getSettings'>;
 type SessionApi = { getSession(): Promise<{ language: 'en' | 'es' }>; getAuthStatus(): Promise<{ hasAdmin: boolean }>; register(password: string, language: 'en' | 'es'): Promise<{ language: 'en' | 'es' }>; login(password: string): Promise<{ language: 'en' | 'es' }> };
 
 type ManualDigestApi = {
@@ -47,18 +48,31 @@ export function App({ api }: { api?: AppApi } = {}) {
       const restored = progress ? restoreOnboardingState(progress) : onboardingState;
       return <OnboardingFlow key={restored.step} state={restored} api={onboardingApi} onSessionCreated={() => setSessionReady(true)} onCompleted={complete} />;
     }}
-    renderRoute={(route) => <OperationalRoute route={route} api={candidateApi} settingsApi={settingsApi} dashboardApi={dashboardApi} manualDigestApi={manualDigestApi} jobLifecycleApi={jobLifecycleApi} activeJobIds={activeJobIds} historyRevision={historyRevision} onQueued={(jobId) => setActiveJobIds(rememberActiveJob(jobId))} onCompleted={() => setHistoryRevision((revision) => revision + 1)} />}
+    renderRoute={(route) => <OperationalRoute route={route} api={candidateApi} settingsApi={settingsApi} timeZoneApi={sessionReady && hasTimeZoneApi(candidateApi) ? candidateApi : undefined} dashboardApi={dashboardApi} manualDigestApi={manualDigestApi} jobLifecycleApi={jobLifecycleApi} activeJobIds={activeJobIds} historyRevision={historyRevision} onQueued={(jobId) => setActiveJobIds(rememberActiveJob(jobId))} onCompleted={() => setHistoryRevision((revision) => revision + 1)} />}
   />;
 }
 
-function OperationalRoute({ route, api, settingsApi, dashboardApi, manualDigestApi, jobLifecycleApi, activeJobIds, historyRevision, onQueued, onCompleted }: { route: Exclude<AppRoute, { kind: 'setup' }>; api?: AppApi; settingsApi?: SettingsApi; dashboardApi?: DashboardApi; manualDigestApi?: ManualDigestApi; jobLifecycleApi?: JobLifecycleApi; activeJobIds: string[]; historyRevision: number; onQueued(jobId: string): void; onCompleted(): void }) {
-  if (route.kind === 'report') return <ReportsWorkspace api={api} reportId={route.reportId} refreshKey={historyRevision} onChanged={onCompleted} />;
+function OperationalRoute({ route, api, settingsApi, timeZoneApi, dashboardApi, manualDigestApi, jobLifecycleApi, activeJobIds, historyRevision, onQueued, onCompleted }: { route: Exclude<AppRoute, { kind: 'setup' }>; api?: AppApi; settingsApi?: SettingsApi; timeZoneApi?: TimeZoneApi; dashboardApi?: DashboardApi; manualDigestApi?: ManualDigestApi; jobLifecycleApi?: JobLifecycleApi; activeJobIds: string[]; historyRevision: number; onQueued(jobId: string): void; onCompleted(): void }) {
+  const [timeZone, setTimeZone] = useState<string>();
+  useEffect(() => {
+    if (!timeZoneApi) return;
+    let active = true;
+    void timeZoneApi.getSettings().then((settings: EditableSettingsDto) => {
+      if (active) setTimeZone(settings.schedules[0]?.timezone);
+    }).catch(() => {
+      if (active) setTimeZone(undefined);
+    });
+    return () => { active = false; };
+  }, [timeZoneApi]);
+
+  if (route.kind === 'report') return <ReportsWorkspace api={api} reportId={route.reportId} refreshKey={historyRevision} onChanged={onCompleted} timeZone={timeZone} />;
   if (route.kind === 'settings') return <SettingsPanel api={settingsApi} section={route.section} />;
-  if (route.kind === 'reports') return <ReportsWorkspace api={api} refreshKey={historyRevision} onChanged={onCompleted} />;
+  if (route.kind === 'reports') return <ReportsWorkspace api={api} refreshKey={historyRevision} onChanged={onCompleted} timeZone={timeZone} />;
 
   return <Dashboard
     api={dashboardApi}
     refreshKey={historyRevision}
+    timeZone={timeZone}
     activeReport={<ActiveReport manualDigestApi={manualDigestApi} jobLifecycleApi={jobLifecycleApi} activeJobIds={activeJobIds} onQueued={onQueued} onCompleted={onCompleted} />}
   />;
 }
@@ -74,15 +88,15 @@ function ActiveReport({ manualDigestApi, jobLifecycleApi, activeJobIds, onQueued
   return <ManualDigestCard api={manualDigestApi} onQueued={onQueued} />;
 }
 
-function ReportsWorkspace({ api, reportId, refreshKey, onChanged }: { api?: AppApi; reportId?: string; refreshKey: number; onChanged(): void }) {
+function ReportsWorkspace({ api, reportId, refreshKey, onChanged, timeZone }: { api?: AppApi; reportId?: string; refreshKey: number; onChanged(): void; timeZone?: string }) {
   const dashboardApi = hasDashboardApi(api) ? api : undefined;
   return <section className={`reports-workspace${reportId ? ' reports-workspace--selected' : ' reports-workspace--list'}`} aria-label={t('shell.reports')}>
-    {reportId ? <ReportRoute api={api} reportId={reportId} onDeleted={() => { onChanged(); window.history.pushState({}, '', '/reports'); window.dispatchEvent(new PopStateEvent('popstate')); }} /> : null}
-    <DashboardHistory api={dashboardApi} refreshKey={refreshKey} headingLevel={reportId ? 'h2' : 'h1'} />
+    {reportId ? <ReportRoute api={api} reportId={reportId} timeZone={timeZone} onDeleted={() => { onChanged(); window.history.pushState({}, '', '/reports'); window.dispatchEvent(new PopStateEvent('popstate')); }} /> : null}
+    <DashboardHistory api={dashboardApi} refreshKey={refreshKey} headingLevel={reportId ? 'h2' : 'h1'} timeZone={timeZone} />
   </section>;
 }
 
-function ReportRoute({ api, reportId, onDeleted }: { api?: { getDigest?(id: string): Promise<DigestDetail>; deleteDigest?(id: string): Promise<void> }; reportId: string; onDeleted(): void }) {
+function ReportRoute({ api, reportId, onDeleted, timeZone }: { api?: { getDigest?(id: string): Promise<DigestDetail>; deleteDigest?(id: string): Promise<void> }; reportId: string; onDeleted(): void; timeZone?: string }) {
   const [state, setState] = useState<{ status: 'loading' } | { status: 'ready'; report: DigestDetail } | { status: 'error' }>({ status: 'loading' });
   useEffect(() => {
     if (!api?.getDigest) {
@@ -97,7 +111,7 @@ function ReportRoute({ api, reportId, onDeleted }: { api?: { getDigest?(id: stri
 
   if (state.status === 'loading') return <section className="panel report-detail" aria-live="polite"><h2>{t('report.loadingTitle')}</h2><p>{t('report.loadingCopy')}</p></section>;
   if (state.status === 'error') return <section className="panel report-detail" role="alert"><h2>{t('report.errorTitle')}</h2><p>{t('report.errorCopy')}</p><a className="report-link" href="/reports">{t('report.back')}</a></section>;
-  return <ReportDetail report={state.report} onDelete={api?.deleteDigest ? async () => { await api.deleteDigest!(reportId); onDeleted(); } : undefined} />;
+  return <ReportDetail report={state.report} timeZone={timeZone} onDelete={api?.deleteDigest ? async () => { await api.deleteDigest!(reportId); onDeleted(); } : undefined} />;
 }
 
 function ManualDigestCard({ api, onQueued }: { api?: ManualDigestApi; onQueued(jobId: string): void }) {
@@ -154,6 +168,10 @@ function hasJobLifecycleApi(api: AppApi | undefined): api is AppApi & JobLifecyc
 
 function hasSettingsApi(api: AppApi | undefined): api is AppApi & SettingsApi {
   return typeof api?.getSettings === 'function' && typeof api.updateSettings === 'function';
+}
+
+function hasTimeZoneApi(api: AppApi | undefined): api is AppApi & TimeZoneApi {
+  return typeof api?.getSettings === 'function';
 }
 
 function isUnauthenticated(error: unknown): boolean {

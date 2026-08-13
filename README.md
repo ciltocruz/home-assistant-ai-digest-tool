@@ -13,7 +13,7 @@ Home Assistant AI Digest Tool is a Docker-first web application that turns Home 
 - Supports OpenAI, Gemini, and Ollama through interchangeable provider adapters. Context is redacted and bounded per signature, while every detected signature is eligible for analysis.
 - Shows partial AI failures in the report. A complete AI failure is recorded in the web UI without advancing the log cursor.
 - Queries Home Assistant integration status once per report; an unavailable API appears as unavailable without discarding the report.
-- Sends a compact linked Telegram summary only for noteworthy findings. Quiet runs and tool failures never send a Telegram message.
+- Sends a compact Telegram summary only for noteworthy findings. Add `PUBLIC_APP_URL` to include a link to the saved report; quiet runs and tool failures never send a Telegram message.
 
 ## Important operating limits
 
@@ -38,6 +38,8 @@ docker compose up --build --detach
 ```
 
 Open `http://127.0.0.1:3000`. Local mode binds only to loopback.
+
+Set `PUBLIC_APP_URL` only when the application's browser-accessible HTTP(S) origin is stable, for example `https://digest.example/`. It must not include a path prefix, credentials, a query string, or a fragment. Invalid values are ignored and Telegram summaries remain unlinked.
 
 ## Six-screen onboarding
 

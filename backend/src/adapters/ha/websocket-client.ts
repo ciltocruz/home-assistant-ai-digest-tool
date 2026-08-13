@@ -1,7 +1,8 @@
 import type { SecretStore } from '../../domain/stores.js';
-import type { IntegrationStatus, IntegrationStatusFailureReason, IntegrationStatusSnapshot } from '../../application/integration-status.js';
+import { projectIntegrationStatus } from '@ha-digest/shared';
+import type { IntegrationStatusFailureReason, IntegrationStatusSnapshot } from '../../application/integration-status.js';
 
-export type { IntegrationStatus, IntegrationStatusSnapshot } from '../../application/integration-status.js';
+export type { IntegrationStatusSnapshot } from '../../application/integration-status.js';
 
 export type HomeAssistantSocket = {
   send(data: string): void;
@@ -47,9 +48,9 @@ export class HomeAssistantWebSocketClient {
       const result = await nextMessage(socket, this.timeoutMs);
       if (result.id === 1 && result.type === 'result' && result.success === false) throw reasonError('command_rejected');
       if (result.id !== 1 || result.type !== 'result' || result.success !== true || !Array.isArray(result.result)) throw reasonError('invalid_result');
-      return { available: true, integrations: result.result.flatMap(toIntegrationStatus) };
+      return projectIntegrationStatus({ available: true, integrations: result.result })!;
     } catch (error) {
-      return { available: false, integrations: [], reason: failureReason(error) };
+      return { available: false, reason: failureReason(error) };
     } finally {
       socket?.close();
     }
@@ -96,11 +97,4 @@ function failureReason(error: unknown): IntegrationStatusFailureReason {
   return reason === 'socket_timeout' || reason === 'auth_required_missing' || reason === 'auth_failed' || reason === 'command_rejected' || reason === 'invalid_result'
     ? reason
     : 'connection_failed';
-}
-
-function toIntegrationStatus(value: unknown): IntegrationStatus[] {
-  if (!value || typeof value !== 'object') return [];
-  const entry = value as Record<string, unknown>;
-  if (typeof entry.domain !== 'string' || typeof entry.state !== 'string') return [];
-  return [{ domain: entry.domain, title: typeof entry.title === 'string' ? entry.title : entry.domain, state: entry.state }];
 }

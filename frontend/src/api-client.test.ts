@@ -156,6 +156,23 @@ describe('createApiClient', () => {
     await expect(client.getDigest('digest-1')).resolves.toMatchObject({ id: 'digest-1', rendered: { format: 'markdown' } });
   });
 
+  test('accepts only privacy-safe aggregate integration counts in report detail', async () => {
+    const detail = {
+      id: 'digest-safe-integrations',
+      source: 'v2',
+      summary: { id: 'digest-safe-integrations', window: { from: '2026-08-13T20:00:00.000Z', to: '2026-08-13T21:00:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-08-13T21:00:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'quiet' },
+      rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'quiet', warnings: [], integrationStatus: { available: true, total: 7, loaded: 1, notLoaded: 1, inProgress: 1, retrying: 1, errors: 1, unknown: 2 }, signatures: [] }
+    };
+    const client = createApiClient({ fetch: async () => jsonResponse(200, detail) });
+
+    await expect(client.getDigest('digest-safe-integrations')).resolves.toMatchObject({
+      presentation: { integrationStatus: { total: 7, inProgress: 1, retrying: 1, errors: 1, unknown: 2 } }
+    });
+    const unsafeClient = createApiClient({ fetch: async () => jsonResponse(200, { ...detail, presentation: { ...detail.presentation, integrationStatus: { available: true, integrations: [{ domain: 'private', title: 'owner@example.test', state: 'loaded' }] } } }) });
+    await expect(unsafeClient.getDigest('digest-unsafe-integrations')).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+  });
+
   test('reads durable job progress and submits a bounded retry through the safe API contract', async () => {
     const calls: string[] = [];
     const job = { id: 'job-1', status: 'failed', stage: 'failed', attempts: 1, retryCount: 0, retryAvailable: true, errorCode: 'HOME_ASSISTANT_UNAVAILABLE', errorMessage: 'No se pudieron recopilar datos de Home Assistant. Revise la conexión y el token.', createdAt: '2026-08-01T10:00:00.000Z', updatedAt: '2026-08-01T10:00:00.000Z' };

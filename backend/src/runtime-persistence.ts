@@ -17,7 +17,7 @@ import { createSignatureProvider, type ProviderHttpClient } from './adapters/ai/
 import { TelegramNotifier, type NotifierHttpClient } from './adapters/notifiers/notifiers.js';
 import { SQLiteV2Stores } from './adapters/persistence/sqlite-v2-stores.js';
 import { SQLiteAuthStore } from './adapters/persistence/sqlite-auth-store.js';
-import { BatchReportRun, type RunRequest } from './application/batch-report-run.js';
+import { BatchReportRun } from './application/batch-report-run.js';
 import { DigestWorker, type DigestWorkerFailureEvent } from './application/digest-worker.js';
 import type { RuntimeOperationalEvent } from './runtime-logging.js';
 import { SettingsService, type SecretReplacement } from './application/settings.js';
@@ -36,7 +36,7 @@ export type PersistentRuntimeOptions = {
   providerHttpClient?: ProviderHttpClient;
   telegramHttpClient?: NotifierHttpClient;
   haWebSocketFactory?: (url: string) => HomeAssistantSocket;
-  reportUrl?: (request: RunRequest) => string | undefined;
+  reportUrl?: (reportId: string) => string | undefined;
   digestFailureReporter?: (event: DigestWorkerFailureEvent) => void;
   operationalEventReporter?: (event: RuntimeOperationalEvent) => void;
 };

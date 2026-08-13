@@ -1,10 +1,11 @@
 import { useState, type ReactNode } from 'react';
-import type { DigestDetail, ReportPresentationItem } from '@ha-digest/shared';
-import { currentLocale, t } from './i18n/index.js';
+import { projectIntegrationStatus, type DigestDetail, type IntegrationStatusSummary, type ReportPresentationItem } from '@ha-digest/shared';
+import { t } from './i18n/index.js';
 import { redactSensitiveText } from './api-client.js';
 import { ConfirmDialog, LiveFeedback } from './feedback.js';
+import { formatDateTime } from './date-time.js';
 
-export function ReportDetail({ report, embedded = false, onDelete }: { report: DigestDetail; embedded?: boolean; onDelete?: () => Promise<void> }) {
+export function ReportDetail({ report, embedded = false, onDelete, timeZone }: { report: DigestDetail; embedded?: boolean; onDelete?: () => Promise<void>; timeZone?: string }) {
   const presentation = report.presentation;
   const SectionHeading = embedded ? 'h3' : 'h2';
   const legacyMarkdown = presentation?.mode === 'legacy_markdown' ? presentation.legacyMarkdown : report.rendered.body;
@@ -24,12 +25,12 @@ export function ReportDetail({ report, embedded = false, onDelete }: { report: D
   return <article className="panel report-detail">
     <p className="eyebrow">{t('report.eyebrow')}</p>
     {embedded ? <h2>{t('report.title')}</h2> : <h1>{t('report.title')}</h1>}
-    <p className="muted-copy">{t('report.createdAt').replace('{time}', formatDateTime(report.summary.createdAt))}</p>
+    <p className="muted-copy">{t('report.createdAt').replace('{time}', formatDateTime(report.summary.createdAt, timeZone))}</p>
     <dl className="report-metadata">
       <div className="report-metadata-id"><dt>{t('report.id')}</dt><dd><code translate="no" dir="ltr">{report.id}</code></dd></div>
       {source === 'v2'
-        ? <div><dt>{t('report.generatedAtLabel')}</dt><dd>{formatDateTime(report.summary.createdAt)}</dd></div>
-        : <div><dt>{t('report.window')}</dt><dd>{formatDateTime(report.summary.window.from)} — {formatDateTime(report.summary.window.to)}<span className="report-metadata-help">{t('report.windowHelp')}</span></dd></div>}
+        ? <div><dt>{t('report.generatedAtLabel')}</dt><dd>{formatDateTime(report.summary.createdAt, timeZone)}</dd></div>
+        : <div><dt>{t('report.window')}</dt><dd>{formatDateTime(report.summary.window.from, timeZone)} — {formatDateTime(report.summary.window.to, timeZone)}<span className="report-metadata-help">{t('report.windowHelp')}</span></dd></div>}
       {source === 'legacy' ? <div><dt>{t('dashboard.history.fields.format')}</dt><dd>{t('dashboard.history.source.legacy')}</dd></div> : null}
     </dl>
     <ReportOutcomes report={report} source={source} heading={SectionHeading} />
@@ -138,9 +139,10 @@ function PresentationSection({ heading: Heading, id, title, items }: { heading: 
 
 function BatchPresentation({ heading: Heading, presentation }: { heading: 'h2' | 'h3'; presentation: Extract<NonNullable<DigestDetail['presentation']>, { mode: 'batch' }> }) {
   if (presentation.status === 'failed') return <section className="report-section" role="alert"><Heading>{t('report.batch.failure')}</Heading><p>{failureLabel(presentation.failure)}</p></section>;
+  const integrationStatus = projectIntegrationStatus(presentation.integrationStatus);
   return <>
     {presentation.warnings.length > 0 ? <section className="report-section report-analysis-note"><Heading>{t('report.batch.warnings')}</Heading><ul>{presentation.warnings.map((warning) => <li key={warning}>{warningLabel(warning)}{warning === 'AI_ANALYSIS_PARTIAL' ? null : <code translate="no" dir="ltr">{warning}</code>}</li>)}</ul></section> : null}
-    <section className="report-section"><Heading>{t('report.batch.integrations')}</Heading><p>{presentation.integrationStatus?.available ? presentation.integrationStatus.integrations.map((item) => item.state ? `${item.title ?? item.domain} (${item.state})` : item.title ?? item.domain).join(', ') || t('report.batch.none') : integrationFailureCopy(presentation.integrationStatus?.reason)}</p>{!presentation.integrationStatus?.available ? <p className="muted-copy">{t('report.batch.integrationAction')}</p> : null}</section>
+    <IntegrationSummary heading={Heading} status={integrationStatus} />
     <section className="report-section report-problems"><Heading>{t('report.batch.problems')}</Heading><p className="report-section-intro">{t('report.batch.groupingExplanation')}</p><ul className="report-presentation-list">{presentation.signatures.map((item) => <li key={item.signature} className="report-presentation-item">
       <div className="report-problem-heading"><p className="report-item-title">{item.problemKind ? t(`report.batch.problemKinds.${item.problemKind}.title`) : t(`report.batch.classification.${item.classification}`)}</p><span className={`severity-badge severity-badge--${severityForLevel(item.level)}`}>{severityLabel(severityForLevel(item.level))}</span></div>
       <p className="report-problem-stats"><span>{item.occurrences === 1 ? t('report.batch.occurrencesSingular') : t('report.batch.occurrencesPlural').replace('{count}', String(item.occurrences))}</span></p>
@@ -151,14 +153,32 @@ function BatchPresentation({ heading: Heading, presentation }: { heading: 'h2' |
   </>;
 }
 
+function IntegrationSummary({ heading: Heading, status }: { heading: 'h2' | 'h3'; status?: IntegrationStatusSummary }) {
+  if (!status?.available) return <section className="report-section report-integrations"><Heading>{t('report.batch.integrations')}</Heading><p>{integrationFailureCopy(status?.reason)}</p><p className="muted-copy">{t('report.batch.integrationAction')}</p></section>;
+  return <section className="report-section report-integrations" aria-labelledby="report-integrations-title">
+    <Heading id="report-integrations-title">{t('report.batch.integrations')}</Heading>
+    <p className="report-section-intro">{t('report.batch.integrationSummary')}</p>
+    <dl className="integration-summary-grid">
+      <div><dt>{t('report.batch.integrationChecked')}</dt><dd>{status.total}</dd></div>
+      <div><dt>{t('report.batch.integrationLoaded')}</dt><dd>{status.loaded}</dd></div>
+      <div><dt>{t('report.batch.integrationNotLoaded')}</dt><dd>{status.notLoaded}</dd></div>
+      <div><dt>{t('report.batch.integrationInProgress')}</dt><dd>{status.inProgress}</dd></div>
+      <div><dt>{t('report.batch.integrationRetrying')}</dt><dd>{status.retrying}</dd></div>
+      <div className={status.errors > 0 ? 'integration-summary-error' : undefined}><dt>{t('report.batch.integrationErrors')}</dt><dd>{status.errors}</dd></div>
+      <div><dt>{t('report.batch.integrationUnknown')}</dt><dd>{status.unknown}</dd></div>
+    </dl>
+    <p className="integration-neutral-note">{t('report.batch.integrationNotLoadedHelp')}</p>
+    {status.inProgress > 0 ? <p className="integration-neutral-note">{t('report.batch.integrationInProgressHelp')}</p> : null}
+    {status.retrying > 0 ? <p className="integration-neutral-note">{t('report.batch.integrationRetryingHelp')}</p> : null}
+    {status.unknown > 0 ? <p className="integration-neutral-note">{t('report.batch.integrationUnknownHelp')}</p> : null}
+    {status.errors > 0 ? <p className="integration-attention">{t('report.batch.integrationErrorsHelp')}</p> : <p className="integration-clear">{t('report.batch.integrationClear')}</p>}
+  </section>;
+}
+
 function severityLabel(severity: NonNullable<ReportPresentationItem['severity']>): string {
   if (severity === 'critical') return t('report.presentation.severity.critical');
   if (severity === 'warning') return t('report.presentation.severity.warning');
   return t('report.presentation.severity.info');
-}
-
-function formatDateTime(value: string): string {
-  return new Intl.DateTimeFormat(currentLocale() === 'es' ? 'es-ES' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }).format(new Date(value));
 }
 
 function capitalize(value: DigestDetail['summary']['deliveryStatus']): 'Sent' | 'Failed' | 'Pending' | 'Skipped' {
@@ -186,7 +206,7 @@ function severityForLevel(level: 'ERROR' | 'CRITICAL' | 'WARNING'): 'critical' |
   return level === 'CRITICAL' ? 'critical' : 'warning';
 }
 
-function integrationFailureCopy(reason?: NonNullable<Extract<NonNullable<DigestDetail['presentation']>, { mode: 'batch' }>['integrationStatus']>['reason']): string {
+function integrationFailureCopy(reason?: Extract<IntegrationStatusSummary, { available: false }>['reason']): string {
   return reason ? t(`report.batch.integrationReasons.${reason}`) : t('report.batch.unavailable');
 }
 

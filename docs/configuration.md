@@ -37,7 +37,7 @@ ChatGPT-account login is not an authentication method for this release. Use a pr
 
 ## Telegram notifications
 
-Telegram is optional. Configure the bot token and chat ID in onboarding or Settings and use **Send Telegram test** to validate the saved target. The application sends a compact report summary with a report link only when findings are noteworthy.
+Telegram is optional. Configure the bot token and chat ID in onboarding or Settings and use **Send Telegram test** to validate the saved target. The application sends a compact summary only when findings are noteworthy. It includes a saved-report link only when `PUBLIC_APP_URL` contains the valid browser-accessible HTTP(S) origin where the application is served. Path prefixes are not supported; invalid values leave the Telegram summary unlinked without failing the report or delivery.
 
 When a run has no noteworthy findings, no Telegram message is sent. When collection, analysis, scheduling, or delivery cannot produce a trustworthy result, no Telegram message is sent either; the quiet or failed state remains visible in the web UI.
 
@@ -68,6 +68,7 @@ cp .env.example .env
 | `HA_LOG_FILE` | Host path of the single Home Assistant log file mounted read-only. |
 | `APP_PORT` / `APP_BIND_ADDRESS` | Local application binding; keep the default loopback address. |
 | `RUNTIME_MODE`, `TRUST_PROXY`, `SECURE_COOKIES` | Local or documented controlled reverse-proxy cookie mode. |
+| `PUBLIC_APP_URL` | Optional public HTTP(S) origin for Telegram report links. Paths, credentials, query strings, fragments, and non-HTTP(S) schemes are rejected. A root trailing slash is normalized. |
 | `HA_MAX_STATES`, `HA_MAX_LOG_LINES`, `HA_MAX_RESPONSE_BYTES`, `HA_ANALYSIS_TIMEOUT_MS` | Bounds for Home Assistant collection and analysis. |
 
 There are no admin or setup tokens in `.env`. Do not put Home Assistant, provider, or Telegram credentials there.

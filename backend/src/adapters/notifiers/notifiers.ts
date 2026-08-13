@@ -59,8 +59,8 @@ export class TelegramNotifier implements Notifier {
     const link = summary.reportUrl ? `\n[${spanish ? 'Abrir informe' : 'Open report'}](${escapeTelegramUrl(summary.reportUrl)})` : '';
     const count = summary.findings.length;
     return this.postMessage(target, spanish
-      ? `*Resumen de Home Assistant*\n${count} incidencia${count === 1 ? '' : 's'} destacada${count === 1 ? '' : 's'}\. ${first}${link}`
-      : `*Home Assistant digest*\n${count} noteworthy finding${count === 1 ? '' : 's'}\. ${first}${link}`, true);
+      ? `*Resumen de Home Assistant*\n${count} incidencia${count === 1 ? '' : 's'} destacada${count === 1 ? '' : 's'}\\. ${first}${link}`
+      : `*Home Assistant digest*\n${count} noteworthy finding${count === 1 ? '' : 's'}\\. ${first}${link}`, true);
   }
 
   private async postMessage(target: ResolvedTargetConfig, text: string, isMarkdown = false): Promise<DeliveryResult> {

@@ -1,4 +1,4 @@
-import { IsoDateTimeSchema, type DigestDetail, type ReportPresentationItem, type ReportPresentationV1 } from '@ha-digest/shared';
+import { IsoDateTimeSchema, projectIntegrationStatus, type DigestDetail, type ReportPresentationItem, type ReportPresentationV1 } from '@ha-digest/shared';
 import { redactProviderError } from '../domain/safe-error.js';
 
 type ReportSource = Pick<DigestDetail, 'id' | 'summary' | 'rendered'> & { source?: 'legacy' | 'v2' };
@@ -63,6 +63,7 @@ export function redactReportDetail(report: DigestDetail): DigestDetail {
     const statusIsValid = isBatchStatus(report.presentation.status);
     const summaryIsCorrupt = report.summary.warningCodes?.includes('REPORT_CORRUPT') ?? false;
     const warnings = safeWarnings(report.presentation.warnings);
+    const integrationStatus = projectIntegrationStatus(report.presentation.integrationStatus);
     if ((!statusIsValid || summaryIsCorrupt) && !warnings.includes('REPORT_CORRUPT')) warnings.push('REPORT_CORRUPT');
     return {
       ...base,
@@ -71,7 +72,7 @@ export function redactReportDetail(report: DigestDetail): DigestDetail {
         mode: 'batch',
         status: statusIsValid && !summaryIsCorrupt ? report.presentation.status : 'failed',
         warnings,
-        ...(safeIntegrationStatus(report.presentation.integrationStatus) ? { integrationStatus: safeIntegrationStatus(report.presentation.integrationStatus) } : {}),
+        ...(integrationStatus ? { integrationStatus } : {}),
         ...(typeof report.presentation.failure === 'string' ? { failure: redactProviderError(report.presentation.failure) } : {}),
         signatures: safeBatchSignatures(report.presentation.signatures)
       }
@@ -256,19 +257,6 @@ function isBatchLevel(value: unknown): value is 'ERROR' | 'CRITICAL' | 'WARNING'
 function isClassification(value: unknown): value is 'new' | 'recurring' | 'reactivated' | 'latent' { return value === 'new' || value === 'recurring' || value === 'reactivated' || value === 'latent'; }
 function isTrend(value: unknown): value is 'new' | 'increasing' | 'flat' | 'decreasing' | 'unknown' { return value === 'new' || value === 'increasing' || value === 'flat' || value === 'decreasing' || value === 'unknown'; }
 
-function safeIntegrationStatus(value: unknown): { available: boolean; integrations: Array<{ domain: string; title?: string; state?: string }>; reason?: 'socket_timeout' | 'auth_required_missing' | 'auth_failed' | 'command_rejected' | 'invalid_result' | 'connection_failed' } | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const status = value as { available?: unknown; integrations?: unknown };
-  if (typeof status.available !== 'boolean' || !Array.isArray(status.integrations)) return undefined;
-  const integrations = status.integrations.flatMap((entry) => {
-    if (!entry || typeof entry !== 'object' || typeof (entry as { domain?: unknown }).domain !== 'string') return [];
-    const integration = entry as { domain: string; title?: unknown; state?: unknown };
-    return [{ domain: redactProviderError(integration.domain), ...(typeof integration.title === 'string' ? { title: redactProviderError(integration.title) } : {}), ...(typeof integration.state === 'string' ? { state: redactProviderError(integration.state) } : {}) }];
-  });
-  const reason = typeof (status as { reason?: unknown }).reason === 'string' ? (status as { reason: string }).reason : undefined;
-  return { available: status.available, integrations, ...(isIntegrationReason(reason) ? { reason } : {}) };
-}
-
 function deliveryDiagnostic(value: unknown): DigestDetail['summary']['deliveryDiagnostic'] | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const diagnostic = value as Record<string, unknown>;
@@ -282,4 +270,3 @@ function deliveryDiagnostic(value: unknown): DigestDetail['summary']['deliveryDi
 function isDeliveryStage(value: unknown): value is 'configuration' | 'request' | 'response' { return value === 'configuration' || value === 'request' || value === 'response'; }
 function isDeliveryErrorCode(value: unknown): value is NonNullable<DigestDetail['summary']['deliveryDiagnostic']>['errorCode'] { return value === 'TELEGRAM_HTTP_400' || value === 'TELEGRAM_HTTP_401' || value === 'TELEGRAM_HTTP_403' || value === 'TELEGRAM_HTTP_404' || value === 'TELEGRAM_HTTP_409' || value === 'TELEGRAM_HTTP_429' || value === 'TELEGRAM_HTTP_5XX' || value === 'TELEGRAM_REJECTED' || value === 'TELEGRAM_INVALID_RESPONSE' || value === 'TELEGRAM_REQUEST_FAILED' || value === 'configuration_failed'; }
 function isDeliveryMessageKey(value: unknown): value is NonNullable<DigestDetail['summary']['deliveryDiagnostic']>['messageKey'] { return value === 'telegram_bad_request' || value === 'telegram_auth_failed' || value === 'telegram_forbidden' || value === 'telegram_not_found' || value === 'telegram_conflict' || value === 'telegram_rate_limited' || value === 'telegram_service_unavailable' || value === 'telegram_rejected' || value === 'telegram_invalid_response' || value === 'telegram_request_failed' || value === 'telegram_configuration_failed'; }
-function isIntegrationReason(value: unknown): value is 'socket_timeout' | 'auth_required_missing' | 'auth_failed' | 'command_rejected' | 'invalid_result' | 'connection_failed' { return value === 'socket_timeout' || value === 'auth_required_missing' || value === 'auth_failed' || value === 'command_rejected' || value === 'invalid_result' || value === 'connection_failed'; }

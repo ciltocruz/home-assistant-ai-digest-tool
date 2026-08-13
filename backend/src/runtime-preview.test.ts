@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { BackendApiServices, OperationalFailureEvent } from './http/app.js';
-import { createPersistentRuntimePreviewApp, createRuntimePreviewApp } from './runtime-preview.js';
+import { createPersistentRuntimePreviewApp, createReportUrl, createRuntimePreviewApp } from './runtime-preview.js';
 
 describe('runtime preview app', () => {
   let app: FastifyInstance | undefined;
@@ -12,6 +12,13 @@ describe('runtime preview app', () => {
   afterEach(async () => {
     await app?.close();
     app = undefined;
+  });
+
+  it('builds encoded report links from the configured public origin and committed report ID', () => {
+    const reportUrl = createReportUrl('https://digest.example');
+
+    expect(reportUrl?.('v2-report:committed/id')).toBe('https://digest.example/reports/v2-report%3Acommitted%2Fid');
+    expect(createReportUrl(undefined)).toBeUndefined();
   });
 
   it('serves built frontend assets while keeping API routes available', async () => {

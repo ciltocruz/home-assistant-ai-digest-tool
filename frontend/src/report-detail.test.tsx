@@ -65,6 +65,22 @@ describe('ReportDetail', () => {
     expect(html).not.toContain(locale === 'es' ? 'Periodo revisado' : 'Reviewed period');
   });
 
+  test.each([
+    { source: 'legacy' as const, presentation: undefined },
+    { source: 'v2' as const, presentation: { version: 2 as const, mode: 'batch' as const, status: 'quiet' as const, warnings: [], signatures: [] } }
+  ])('renders $source detail timestamps in the configured schedule timezone', ({ source, presentation }) => {
+    const html = renderToStaticMarkup(<ReportDetail timeZone="Europe/Madrid" report={{
+      id: `${source}-timezone`,
+      source,
+      summary: { id: `${source}-timezone`, window: { from: '2026-08-13T20:15:00.000Z', to: '2026-08-13T21:15:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-08-13T21:15:00.000Z', deliveryStatus: 'skipped', source, ...(source === 'v2' ? { runStatus: 'quiet' as const } : {}) },
+      rendered: { format: 'markdown', body: '# Report' },
+      ...(presentation ? { presentation } : {})
+    }} />);
+
+    expect(html).toContain('13 ago 2026, 23:15');
+    expect(html).toContain('13 ago 2026, 23:15');
+  });
+
   test('reserves reviewed-period metadata for legacy report windows', () => {
     const html = renderToStaticMarkup(<ReportDetail report={{
       id: 'v2-wide-fixture',
@@ -171,7 +187,7 @@ describe('ReportDetail', () => {
     setLocale('en');
     const html = renderToStaticMarkup(<ReportDetail report={{
       id: 'v2-report-1', summary: { id: 'v2-report-1', window: { from: '2026-08-01T09:00:00.000Z', to: '2026-08-01T10:00:00.000Z' }, severityCounts: { critical: 1, warning: 0, info: 0 }, createdAt: '2026-08-01T10:00:00.000Z', deliveryStatus: 'skipped', runStatus: 'partial', warningCodes: ['AI_ANALYSIS_PARTIAL'], signatureCounts: { new: 1, recurring: 0, reactivated: 0, latent: 0 } }, rendered: { format: 'markdown', body: '' },
-      presentation: { version: 2, mode: 'batch', status: 'partial', warnings: ['AI_ANALYSIS_PARTIAL'], integrationStatus: { available: false, integrations: [] }, signatures: [{ signature: 'sig-1', component: 'automation.garage', level: 'CRITICAL', classification: 'reactivated', trend: 'increasing', occurrences: 3, analysis: { summary: 'Garage automation has failed repeatedly.', recommendation: 'Inspect its recent traces before retrying it.' } }] }
+      presentation: { version: 2, mode: 'batch', status: 'partial', warnings: ['AI_ANALYSIS_PARTIAL'], integrationStatus: { available: false }, signatures: [{ signature: 'sig-1', component: 'automation.garage', level: 'CRITICAL', classification: 'reactivated', trend: 'increasing', occurrences: 3, analysis: { summary: 'Garage automation has failed repeatedly.', recommendation: 'Inspect its recent traces before retrying it.' } }] }
     }} />);
     expect(html).toContain('Analysis information');
     expect(html).toContain('AI could not explain every detected problem.');
@@ -266,7 +282,7 @@ describe('ReportDetail', () => {
   test('describes repeated Plex DNS resolution evidence without claiming transience or recovery', () => {
     const html = renderToStaticMarkup(<ReportDetail report={{
       id: 'plex-resolution', summary: { id: 'plex-resolution', window: { from: '2026-08-13T09:00:00.000Z', to: '2026-08-13T10:00:00.000Z' }, severityCounts: { critical: 0, warning: 1, info: 0 }, createdAt: '2026-08-13T10:00:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'reported' }, rendered: { format: 'markdown', body: '' },
-      presentation: { version: 2, mode: 'batch', status: 'reported', warnings: [], integrationStatus: { available: true, integrations: [{ domain: 'plex', state: 'loaded' }] }, signatures: [{ signature: 'plex-dns', component: 'homeassistant.components.plex', level: 'ERROR', classification: 'recurring', trend: 'unknown', occurrences: 3, problemKind: 'endpoint_resolution', analysis: { summary: 'raw model outage claim', recommendation: 'raw model action' } }] }
+      presentation: { version: 2, mode: 'batch', status: 'reported', warnings: [], integrationStatus: { available: true, total: 1, loaded: 1, notLoaded: 0, inProgress: 0, retrying: 0, errors: 0, unknown: 0 }, signatures: [{ signature: 'plex-dns', component: 'homeassistant.components.plex', level: 'ERROR', classification: 'recurring', trend: 'unknown', occurrences: 3, problemKind: 'endpoint_resolution', analysis: { summary: 'raw model outage claim', recommendation: 'raw model action' } }] }
     }} />);
 
     expect(html).toContain('Home Assistant no pudo resolver el punto de conexión de Plex en los eventos registrados.');
@@ -330,18 +346,76 @@ describe('ReportDetail', () => {
       id: 'v2-sparse-integration',
       summary: { id: 'v2-sparse-integration', window: { from: '2026-08-01T09:00:00.000Z', to: '2026-08-01T10:00:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-08-01T10:00:00.000Z', deliveryStatus: 'pending' },
       rendered: { format: 'markdown', body: '' },
-      presentation: { version: 2, mode: 'batch', status: 'reported', warnings: [], integrationStatus: { available: true, integrations: [{ domain: 'mqtt' }] }, signatures: [] }
+      presentation: { version: 2, mode: 'batch', status: 'reported', warnings: [], integrationStatus: { available: true, total: 1, loaded: 0, notLoaded: 0, inProgress: 0, retrying: 0, errors: 0, unknown: 1 }, signatures: [] }
     }} />);
 
-    expect(html).toContain('mqtt');
+    expect(html).toContain('No integration states requiring action were detected.');
     expect(html).not.toContain('undefined');
     expect(html).not.toContain('(undefined)');
+  });
+
+  test('renders compact aggregate integration status without exposing legacy private identifiers', () => {
+    const sentinels = ['owner@example.test', '192.0.2.10', 'https://private.example.test/account', 'Bedroom private device', 'private_service_domain'];
+    const html = renderToStaticMarkup(<ReportDetail report={{
+      id: 'v2-private-integrations',
+      source: 'v2',
+      summary: { id: 'v2-private-integrations', window: { from: '2026-08-13T20:15:00.000Z', to: '2026-08-13T21:15:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-08-13T21:15:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'quiet' },
+      rendered: { format: 'markdown', body: '' },
+      presentation: {
+        version: 2,
+        mode: 'batch',
+        status: 'quiet',
+        warnings: [],
+        integrationStatus: {
+          available: true,
+          integrations: [
+            { domain: sentinels[4], title: sentinels[0], state: 'loaded' },
+            { domain: 'private_ip', title: sentinels[1], state: 'not_loaded' },
+            { domain: 'private_setup', title: 'Private setup', state: 'setup_in_progress' },
+            { domain: 'private_unload', title: 'Private unload', state: 'unload_in_progress' },
+            { domain: 'private_retry', title: 'Private retry', state: 'setup_retry' },
+            { domain: 'private_url', title: sentinels[2], state: 'setup_error', reason: 'invalid_auth' },
+            { domain: 'private_migration', title: 'Private migration', state: 'migration_error' },
+            { domain: 'private_device', title: sentinels[3], state: 'failed_unload' },
+            { domain: 'private_future', title: 'Private future', state: 'future_state' },
+            { domain: 'private_malformed', title: 'Private malformed' }
+          ]
+        },
+        signatures: []
+      } as never
+    }} />);
+
+    expect(html).toContain('<dt>Comprobadas</dt><dd>10</dd>');
+    expect(html).toContain('<dt>Activas</dt><dd>1</dd>');
+    expect(html).toContain('<dt>No cargadas</dt><dd>1</dd>');
+    expect(html).toContain('<dt>En proceso</dt><dd>2</dd>');
+    expect(html).toContain('<dt>Reintentando</dt><dd>1</dd>');
+    expect(html).toContain('<dt>Con errores</dt><dd>3</dd>');
+    expect(html).toContain('<dt>Estado desconocido</dt><dd>2</dd>');
+    expect(html).toContain('Solo las integraciones con errores requieren actuar ahora.');
+    expect(html).toContain('Home Assistant volverá a intentar automáticamente');
+    expect(html).toContain('No cargada puede ser normal');
+    for (const sentinel of sentinels) expect(html).not.toContain(sentinel);
+  });
+
+  test('keeps not-loaded integrations neutral when no attention state exists', () => {
+    const html = renderToStaticMarkup(<ReportDetail report={{
+      id: 'v2-neutral-integrations', source: 'v2',
+      summary: { id: 'v2-neutral-integrations', window: { from: '2026-08-13T20:15:00.000Z', to: '2026-08-13T21:15:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-08-13T21:15:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'quiet' },
+      rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'quiet', warnings: [], integrationStatus: { available: true, total: 4, loaded: 1, notLoaded: 1, inProgress: 1, retrying: 1, errors: 0, unknown: 0 }, signatures: [] }
+    }} />);
+
+    expect(html).toContain('No se detectaron estados de integración que requieran actuar.');
+    expect(html).toContain('En proceso');
+    expect(html).toContain('Reintentando');
+    expect(html).not.toContain('requieren actuar ahora');
   });
 
   test('explains a safe integration snapshot reason without exposing connection details', () => {
     const html = renderToStaticMarkup(<ReportDetail report={{
       id: 'ha-timeout', summary: { id: 'ha-timeout', window: { from: '2026-08-13T09:00:00.000Z', to: '2026-08-13T10:00:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-08-13T10:00:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'quiet' }, rendered: { format: 'markdown', body: '' },
-      presentation: { version: 2, mode: 'batch', status: 'quiet', warnings: [], integrationStatus: { available: false, integrations: [], reason: 'socket_timeout' }, signatures: [] }
+      presentation: { version: 2, mode: 'batch', status: 'quiet', warnings: [], integrationStatus: { available: false, reason: 'socket_timeout' }, signatures: [] }
     }} />);
 
     expect(html).toContain('Home Assistant no respondió a tiempo al consultar las integraciones.');

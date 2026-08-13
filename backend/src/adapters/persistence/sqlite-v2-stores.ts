@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
-import { DeliveryDiagnosticSchema, IsoDateTimeSchema, type DeliveryDiagnostic, type DeliveryStatus, type DigestDetail, type DigestHistoryResponse, type DigestSummary, type IgnoreRuleCreate, type IgnoreRuleDto, type NoteCreate, type NoteDto } from '@ha-digest/shared';
+import { DeliveryDiagnosticSchema, IsoDateTimeSchema, projectIntegrationStatus, type DeliveryDiagnostic, type DeliveryStatus, type DigestDetail, type DigestHistoryResponse, type DigestSummary, type IgnoreRuleCreate, type IgnoreRuleDto, type IntegrationStatusSummary, type NoteCreate, type NoteDto } from '@ha-digest/shared';
 import type { BatchPersistence, CommitPlan, FailedRun, SignatureAnalysis, SignatureMemory } from '../../application/batch-report-run.js';
 import { classifySignatures, type LogCursor, type ParsedLogEntry, type SignaturePlan } from '../../domain/batch.js';
 import { redactProviderError } from '../../domain/safe-error.js';
@@ -47,12 +47,13 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
         const analysis = safeSignatureAnalysis(finding.analysis, apiKey);
         return analysis ? [{ signature: finding.signature, analysis }] : [];
       });
+      const integrationStatus = projectIntegrationStatus(plan.report.integrationStatus);
       const storedReport = {
         status: plan.report.status,
         deliveryStatus,
         findings,
         warnings: safeWarnings(plan.report.warnings, apiKey),
-        ...(safeIntegrationStatus(plan.report.integrationStatus, apiKey) ? { integrationStatus: safeIntegrationStatus(plan.report.integrationStatus, apiKey) } : {})
+        ...(integrationStatus ? { integrationStatus } : {})
       };
       this.db.prepare(
         'insert into v2_reports(id, run_id, status, payload_json, created_at) values (?, ?, ?, ?, ?)'
@@ -349,20 +350,11 @@ function safeNotes(value: unknown): Record<string, NoteDto[]> | undefined {
   }));
   return Object.keys(notes).length > 0 ? notes as Record<string, NoteDto[]> : undefined;
 }
-function safeIntegrationStatus(value: unknown, apiKey?: string): { available: boolean; integrations: Array<{ domain: string; title?: string; state?: string }>; reason?: 'socket_timeout' | 'auth_required_missing' | 'auth_failed' | 'command_rejected' | 'invalid_result' | 'connection_failed' } | undefined {
-  const status = asRecord(value);
-  if (typeof status.available !== 'boolean' || !Array.isArray(status.integrations)) return undefined;
-  const integrations = status.integrations.flatMap((entry) => {
-    const integration = asRecord(entry);
-    if (typeof integration.domain !== 'string') return [];
-    return [{ domain: redactProviderError(integration.domain, apiKey), ...(typeof integration.title === 'string' ? { title: redactProviderError(integration.title, apiKey) } : {}), ...(typeof integration.state === 'string' ? { state: redactProviderError(integration.state, apiKey) } : {}) }];
-  });
-  return { available: status.available, integrations, ...(isIntegrationReason(status.reason) ? { reason: status.reason } : {}) };
-}
-function safeReport(value: unknown, deliveryStatus: DeliveryStatus, apiKey?: string): { status: 'quiet' | 'reported' | 'partial' | 'failed'; deliveryStatus: DeliveryStatus; findings: Array<{ signature: string; analysis: SignatureAnalysis }>; warnings: string[]; integrationStatus?: { available: boolean; integrations: Array<{ domain: string; title?: string; state?: string }>; reason?: 'socket_timeout' | 'auth_required_missing' | 'auth_failed' | 'command_rejected' | 'invalid_result' | 'connection_failed' } } {
+function safeReport(value: unknown, deliveryStatus: DeliveryStatus, apiKey?: string): { status: 'quiet' | 'reported' | 'partial' | 'failed'; deliveryStatus: DeliveryStatus; findings: Array<{ signature: string; analysis: SignatureAnalysis }>; warnings: string[]; integrationStatus?: IntegrationStatusSummary } {
   const report = asRecord(value);
   const status = isRunStatus(report.status) ? report.status : 'reported';
-  return { status, deliveryStatus, findings: safeFindings(report.findings, apiKey), warnings: safeWarnings(report.warnings, apiKey), ...(safeIntegrationStatus(report.integrationStatus, apiKey) ? { integrationStatus: safeIntegrationStatus(report.integrationStatus, apiKey) } : {}) };
+  const integrationStatus = projectIntegrationStatus(report.integrationStatus);
+  return { status, deliveryStatus, findings: safeFindings(report.findings, apiKey), warnings: safeWarnings(report.warnings, apiKey), ...(integrationStatus ? { integrationStatus } : {}) };
 }
 function counts(signatures: SignaturePlan['signatures']): NonNullable<DigestSummary['signatureCounts']> {
   return signatures.reduce((total, item) => ({ ...total, [item.classification]: total[item.classification] + 1 }), { new: 0, recurring: 0, reactivated: 0, latent: 0 });
@@ -383,9 +375,10 @@ function detailFor(row: V2ReportRow, apiKey?: string): DigestDetail {
   if (!stored.valid) return invalidDetail(row);
   if (isCorruptReport(row, stored)) return invalidDetail(row, 'REPORT_CORRUPT');
   const value = stored.value; const signatures = safeSignatures(value.signatures); const analyses = new Map(safeFindings(value.report?.findings, apiKey).map((finding) => [finding.signature, finding.analysis]));
+  const integrationStatus = projectIntegrationStatus(value.report?.integrationStatus);
   return {
     id: row.id, summary: summaryFor(row, apiKey), rendered: { format: 'markdown', body: '' },
-     presentation: { version: 2, mode: 'batch', status: row.status as 'quiet' | 'reported' | 'partial' | 'failed', warnings: safeWarnings(value.report?.warnings, apiKey), ...(safeIntegrationStatus(value.report?.integrationStatus, apiKey) ? { integrationStatus: safeIntegrationStatus(value.report?.integrationStatus, apiKey) } : {}),
+     presentation: { version: 2, mode: 'batch', status: row.status as 'quiet' | 'reported' | 'partial' | 'failed', warnings: safeWarnings(value.report?.warnings, apiKey), ...(integrationStatus ? { integrationStatus } : {}),
        signatures: signatures.map((item) => ({ signature: item.signature, component: item.component, level: item.level, classification: item.classification, trend: item.trend, ...(item.problemKind ? { problemKind: item.problemKind } : {}), occurrences: item.occurrences.length, ...(analyses.has(item.signature) ? { analysis: analyses.get(item.signature) } : {}), ...(safeNotes(value.notesBySignature)?.[item.signature] ? { notes: safeNotes(value.notesBySignature)![item.signature] } : {}) })) }
   };
 }
@@ -442,10 +435,6 @@ function deliveryDiagnosticValue(value: unknown): DeliveryDiagnostic | undefined
 
 function deliveryDiagnosticForRow(row: V2ReportRow): DeliveryDiagnostic | undefined {
   return deliveryDiagnosticValue({ channel: 'telegram', stage: row.diagnostic_stage, errorCode: row.diagnostic_error_code, messageKey: row.diagnostic_message_key, recordedAt: row.diagnostic_at });
-}
-
-function isIntegrationReason(value: unknown): value is NonNullable<ReturnType<typeof safeIntegrationStatus>>['reason'] {
-  return value === 'socket_timeout' || value === 'auth_required_missing' || value === 'auth_failed' || value === 'command_rejected' || value === 'invalid_result' || value === 'connection_failed';
 }
 
 export class SQLiteScheduleStateStore {

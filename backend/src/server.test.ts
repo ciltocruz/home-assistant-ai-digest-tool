@@ -74,6 +74,23 @@ describe('runtime server startup', () => {
     expect(events).not.toContainEqual({ event: 'runtime_ready' });
   });
 
+  it('omits an unsupported public app path without failing startup or logging it', async () => {
+    const events: unknown[] = [];
+    const createApp = vi.fn(async () => ({ listen: vi.fn(async () => undefined), close: vi.fn(async () => undefined) }) as never);
+
+    await startRuntimeServer(
+      { DATA_DIR: await mkdtemp(join(tmpdir(), 'ha-digest-public-url-')), PUBLIC_APP_URL: 'https://digest.example/base/' },
+      {
+        createApp,
+        createLogger: () => ({ reportApiFailure: vi.fn(), reportDigestFailure: vi.fn(), reportStartupFailure: vi.fn(), reportOperational: (event) => { events.push(event); } }),
+        registerSignalHandler: vi.fn()
+      }
+    );
+
+    expect(createApp).toHaveBeenCalledWith(expect.objectContaining({ publicAppUrl: undefined }));
+    expect(JSON.stringify(events)).not.toContain('digest.example');
+  });
+
   it('emits a safe fatal lifecycle event when startup fails', async () => {
     const events: unknown[] = [];
     await startRuntimeServer(

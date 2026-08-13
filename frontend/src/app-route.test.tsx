@@ -94,6 +94,38 @@ describe('App report route', () => {
     expect(container.querySelector('.report-detail a[href="/reports"]')?.textContent).toBe('Volver a informes');
   });
 
+  test('uses the configured schedule timezone across report detail and history', async () => {
+    history.pushState({}, '', '/reports/report-timezone');
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push(root);
+    const getSettings = vi.fn(async () => ({
+      homeAssistant: { url: 'http://homeassistant.local:8123', token: { configured: true } },
+      ai: { provider: 'gemini' as const, key: { configured: true } },
+      notifications: { channel: 'none' as const },
+      schedules: [{ kind: 'daily' as const, enabled: true, time: '08:00', timezone: 'Europe/Madrid' }],
+      privacyLevel: 'balanced' as const,
+      retentionDays: 30
+    }));
+    const summary = { id: 'report-timezone', window: { from: '2026-08-13T20:15:00.000Z', to: '2026-08-13T21:15:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-08-13T21:15:00.000Z', deliveryStatus: 'skipped' as const };
+
+    await act(async () => {
+      root.render(<App api={{
+        getOnboarding: async () => ({ currentStep: 'first_report', completedSteps: [], draft: {}, secretMetadata: {}, completed: true }),
+        getSettings,
+        getDigest: async () => ({ id: 'report-timezone', summary, rendered: { format: 'markdown', body: '# Informe' } }),
+        listHistory: async () => [summary]
+      }} />);
+      await Promise.resolve();
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(getSettings).toHaveBeenCalled();
+    expect(container.textContent).toContain('13 ago 2026, 23:15');
+    expect(container.textContent).not.toContain('21:15');
+  });
+
   test('keeps reports selected and provides a report-list recovery path when a deep link is missing', async () => {
     history.pushState({}, '', '/reports/missing-report');
     const container = document.createElement('div');
