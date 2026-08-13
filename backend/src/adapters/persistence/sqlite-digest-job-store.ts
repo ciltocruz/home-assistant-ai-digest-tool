@@ -7,6 +7,7 @@ import type {
   EnqueueDigestJobInput,
   EnqueueResult
 } from '../../domain/jobs.js';
+import { redactProviderError } from '../../domain/safe-error.js';
 
 type Clock = { now(): Date };
 const DEFAULT_RETRY_POLICY: DigestJobRetryPolicy = {
@@ -104,7 +105,7 @@ export class SQLiteDigestJobStore implements DigestJobStore {
   }
 
   async fail(id: string, errorCode: string, errorMessage: string): Promise<void> {
-    const result = this.db.prepare('update digest_jobs set status = ?, stage = ?, attempts = attempts + 1, error_code = ?, error_message = ?, lease_until = null, updated_at = ? where id = ?').run('failed', 'failed', errorCode, errorMessage, this.nowIso(), id);
+    const result = this.db.prepare('update digest_jobs set status = ?, stage = ?, attempts = attempts + 1, error_code = ?, error_message = ?, lease_until = null, updated_at = ? where id = ?').run('failed', 'failed', errorCode, redactProviderError(errorMessage), this.nowIso(), id);
     if (result.changes !== 1) throw new Error('Digest job not found');
   }
 
@@ -138,7 +139,7 @@ export class SQLiteDigestJobStore implements DigestJobStore {
              updated_at = @now
           where id = @id`
       )
-       .run({ id, reason, attempts, availableAt, now: nowIso, status: exhausted ? 'failed' : 'queued', stage: exhausted ? 'failed' : 'queued' });
+       .run({ id, reason: redactProviderError(reason), attempts, availableAt, now: nowIso, status: exhausted ? 'failed' : 'queued', stage: exhausted ? 'failed' : 'queued' });
     if (result.changes !== 1) throw new Error('Digest job not found');
   }
 
@@ -163,9 +164,9 @@ function mapRow(row: JobRow): DigestJob {
     retryCount: row.retry_count,
     availableAt: row.available_at,
     leaseUntil: row.lease_until ?? undefined,
-    lastError: row.last_error ?? undefined,
+    lastError: row.last_error ? redactProviderError(row.last_error) : undefined,
     errorCode: row.error_code ?? undefined,
-    errorMessage: row.error_message ?? undefined,
+    errorMessage: row.error_message ? redactProviderError(row.error_message) : undefined,
     reportId: row.report_id ?? undefined,
     retryAvailable: row.status === 'failed' && row.retry_count < 1,
     createdAt: row.created_at,

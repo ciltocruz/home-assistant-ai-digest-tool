@@ -165,6 +165,26 @@ describe('SQLiteDigestJobStore', () => {
     reopenedDb.close();
     await rm(directory, { recursive: true, force: true });
   });
+
+  it('redacts provider failure details at the SQLite write boundary and on get', async () => {
+    const db = await openTestDatabase();
+    runMigrations(db);
+    const store = new SQLiteDigestJobStore(db, { now: () => new Date('2026-08-05T20:00:00.000Z') });
+    const rawFailure = 'Gemini 404: model retired; Bearer bearer-fixture token=token-fixture api_key=api-key-fixture https://provider.test/generate?token=query-token-fixture';
+    const queued = await store.enqueue({ triggerWindowId: 'manual:redaction-boundary', kind: 'manual' });
+    await store.leaseNext();
+
+    await store.fail(queued.jobId, 'AI_PROVIDER_UNAVAILABLE', rawFailure);
+
+    const persisted = db.prepare('select error_message from digest_jobs where id = ?').get(queued.jobId) as { error_message: string };
+    const loaded = await store.get(queued.jobId);
+    expect(persisted.error_message).toContain('model retired');
+    expect(loaded?.errorMessage).toContain('model retired');
+    for (const secret of ['bearer-fixture', 'token-fixture', 'api-key-fixture', 'query-token-fixture']) {
+      expect(persisted.error_message).not.toContain(secret);
+      expect(JSON.stringify(loaded)).not.toContain(secret);
+    }
+  });
 });
 
 function readJobRetryState(db: Awaited<ReturnType<typeof openTestDatabase>>, id: string) {

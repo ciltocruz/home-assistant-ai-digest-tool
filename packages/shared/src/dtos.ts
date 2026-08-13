@@ -319,6 +319,7 @@ export const DigestSummarySchema = z
     severityCounts: SeverityCountsSchema,
     createdAt: IsoDateTimeSchema,
     deliveryStatus: DeliveryStatusSchema,
+    source: z.enum(['legacy', 'v2']).optional(),
     runStatus: z.enum(['quiet', 'reported', 'partial', 'failed']).optional(),
     warningCodes: z.array(z.string().min(1)).optional(),
     signatureCounts: z.object({ new: z.number().int().min(0), recurring: z.number().int().min(0), reactivated: z.number().int().min(0), latent: z.number().int().min(0) }).strict().optional()
@@ -368,7 +369,7 @@ export const V2SignaturePresentationSchema = z.object({
 }).strict();
 export const V2ReportPresentationSchema = z.object({
   version: z.literal(2), mode: z.literal('batch'), status: z.enum(['quiet', 'reported', 'partial', 'failed']),
-  warnings: z.array(z.string().min(1)), integrationStatus: z.object({ available: z.boolean(), integrations: z.array(z.object({ domain: z.string() }).passthrough()) }).passthrough().optional(),
+  warnings: z.array(z.string().min(1)), integrationStatus: z.object({ available: z.boolean(), integrations: z.array(z.object({ domain: z.string(), title: z.string().optional(), state: z.string().optional() }).strict()) }).strict().optional(),
   signatures: z.array(V2SignaturePresentationSchema), failure: z.string().min(1).optional()
 }).strict();
 
@@ -381,6 +382,7 @@ export type ReportPresentationV1 = z.infer<typeof ReportPresentationV1Schema>;
 
 export const DigestDetailSchema = z.object({
   id: z.string().min(1),
+  source: z.enum(['legacy', 'v2']).optional(),
   summary: DigestSummarySchema,
   rendered: z.object({ format: z.literal('markdown'), body: z.string() }).strict(),
   presentation: ReportPresentationV1Schema.optional()

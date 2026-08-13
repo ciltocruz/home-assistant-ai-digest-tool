@@ -1296,6 +1296,30 @@ button, input, select, textarea { font: inherit; }
   grid-column: 1;
 }
 
+.history-source-badge {
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-pill);
+  display: inline-flex;
+  font-size: 0.7rem;
+  font-weight: 700;
+  grid-column: 1;
+  line-height: 1.2;
+  padding: 0.25rem 0.6rem;
+  width: fit-content;
+}
+
+.history-source-badge--legacy {
+  background: rgba(255, 169, 64, 0.12);
+  border-color: rgba(255, 169, 64, 0.3);
+  color: #ffc069;
+}
+
+.history-source-badge--v2 {
+  background: var(--ha-teal-dim);
+  border-color: var(--ha-teal-border);
+  color: var(--ha-teal);
+}
+
 .history-panel {
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
@@ -1441,6 +1465,23 @@ button, input, select, textarea { font: inherit; }
 .report-legacy {
   background: rgba(255, 169, 64, 0.08);
   border-color: rgba(255, 169, 64, 0.25);
+}
+
+.report-legacy-disclosure {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  margin-top: 1rem;
+  padding: 0.9rem 1rem;
+}
+
+.report-legacy-disclosure summary {
+  color: var(--text-primary);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.report-legacy-disclosure[open] summary {
+  margin-bottom: 0.9rem;
 }
 
 .report-presentation-list {

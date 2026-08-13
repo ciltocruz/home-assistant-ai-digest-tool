@@ -50,6 +50,24 @@ describe('public digest job retry seam', () => {
     });
   });
 
+  it('keeps raw provider credentials out of the real job store and authenticated API response', async () => {
+    const fixture = await createFixture();
+    const rawFailure = 'Gemini 404: model retired; Bearer bearer-fixture token=token-fixture api_key=api-key-fixture https://provider.test/generate?token=query-token-fixture';
+    const jobId = await seedFailedJob(fixture.jobs, rawFailure, 'manual:redaction-api');
+    app = createApp({ services: fixture.services, auth: { sessionTtlMs: 60_000 } });
+    const session = await register(app);
+
+    const response = await app.inject({ method: 'GET', url: `/api/digests/jobs/${jobId}`, headers: { cookie: session.cookie } });
+    const stored = await fixture.jobs.get(jobId);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ errorCode: 'AI_PROVIDER_UNAVAILABLE', errorMessage: expect.stringContaining('model retired') });
+    for (const secret of ['bearer-fixture', 'token-fixture', 'api-key-fixture', 'query-token-fixture']) {
+      expect(JSON.stringify(stored)).not.toContain(secret);
+      expect(JSON.stringify(response.json())).not.toContain(secret);
+    }
+  });
+
   it('keeps one CSRF token valid across duplicate session bootstrap and lets that tab retry the job', async () => {
     const fixture = await createFixture();
     const jobId = await seedFailedJob(fixture.jobs, 'Gemini 404: initial provider failure.');
@@ -126,8 +144,8 @@ async function createFixture() {
   return { jobs, services, wake };
 }
 
-async function seedFailedJob(jobs: SQLiteDigestJobStore, errorMessage: string): Promise<string> {
-  const queued = await jobs.enqueue({ kind: 'manual', triggerWindowId: `manual:${errorMessage}` });
+async function seedFailedJob(jobs: SQLiteDigestJobStore, errorMessage: string, triggerWindowId = `manual:${errorMessage}`): Promise<string> {
+  const queued = await jobs.enqueue({ kind: 'manual', triggerWindowId });
   await jobs.leaseNext();
   await jobs.fail(queued.jobId, 'AI_PROVIDER_UNAVAILABLE', errorMessage);
   return queued.jobId;

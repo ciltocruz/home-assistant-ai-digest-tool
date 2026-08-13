@@ -3,6 +3,7 @@ import { mkdtemp, readFile, unlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { gzipSync, gunzipSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import { DigestDetailSchema, DigestHistoryResponseSchema } from '@ha-digest/shared';
 import { runMigrations } from './adapters/persistence/migrations.js';
@@ -68,7 +69,8 @@ describe('persistent runtime services', () => {
         window: { from: '2026-07-12T08:00:00.000Z', to: '2026-07-12T09:00:00.000Z' },
         severityCounts: { critical: 1, warning: 2, info: 3 },
         createdAt: '2026-07-12T09:01:00.000Z',
-        deliveryStatus: 'sent'
+        deliveryStatus: 'sent',
+        source: 'legacy'
       }
     });
     await (first.reports as unknown as ReportStore).save({
@@ -79,7 +81,8 @@ describe('persistent runtime services', () => {
         window: { from: '2026-07-12T07:00:00.000Z', to: '2026-07-12T08:00:00.000Z' },
         severityCounts: { critical: 0, warning: 1, info: 4 },
         createdAt: '2026-07-12T08:01:00.000Z',
-        deliveryStatus: 'pending'
+        deliveryStatus: 'pending',
+        source: 'legacy'
       }
     });
 
@@ -96,14 +99,16 @@ describe('persistent runtime services', () => {
         window: { from: '2026-07-12T08:00:00.000Z', to: '2026-07-12T09:00:00.000Z' },
         severityCounts: { critical: 1, warning: 2, info: 3 },
         createdAt: '2026-07-12T09:01:00.000Z',
-        deliveryStatus: 'sent'
+        deliveryStatus: 'sent',
+        source: 'legacy'
       },
       {
         id: 'digest-earlier',
         window: { from: '2026-07-12T07:00:00.000Z', to: '2026-07-12T08:00:00.000Z' },
         severityCounts: { critical: 0, warning: 1, info: 4 },
         createdAt: '2026-07-12T08:01:00.000Z',
-        deliveryStatus: 'pending'
+        deliveryStatus: 'pending',
+        source: 'legacy'
       }
     ]);
   });
@@ -223,7 +228,8 @@ describe('persistent runtime services', () => {
         window: { from: '2026-07-12T08:00:00.000Z', to: '2026-07-12T09:00:00.000Z' },
         severityCounts: { critical: 0, warning: 2, info: 1 },
         createdAt: '2026-07-12T09:01:00.000Z',
-        deliveryStatus: 'sent'
+        deliveryStatus: 'sent',
+        source: 'legacy'
       }
     });
 
@@ -245,7 +251,8 @@ describe('persistent runtime services', () => {
         window: { from: '2026-07-12T08:00:00.000Z', to: '2026-07-12T09:00:00.000Z' },
         severityCounts: { critical: 0, warning: 2, info: 1 },
         createdAt: '2026-07-12T09:01:00.000Z',
-        deliveryStatus: 'sent'
+        deliveryStatus: 'sent',
+        source: 'legacy'
       }
     ]);
   });
@@ -312,6 +319,8 @@ describe('persistent runtime services', () => {
     expect(queued.status).toBe('queued');
     expect(events).toEqual({ configEntries: 1, ai: 1, telegram: 1 });
     await expect(services.digestJobs.get(queued.jobId)).resolves.toMatchObject({ status: 'completed', reportId: expect.stringMatching(/^v2-report:/) });
+    const successfulReport = await services.reports.get((await services.digestJobs.get(queued.jobId))?.reportId ?? 'missing');
+    expect(successfulReport?.summary.deliveryStatus).toBe('sent');
 
     await (services.reports as unknown as ReportStore).save({
       id: 'legacy-report',
@@ -363,15 +372,85 @@ describe('persistent runtime services', () => {
 
       expect(history).toHaveLength(3);
       expect(history.map((item) => item.id)).toEqual(expect.arrayContaining(['legacy-invalid', 'v2-report:successful-v2', 'v2-run:failed-v2']));
+      expect(history.find((item) => item.id === 'legacy-invalid')).toMatchObject({ source: 'legacy' });
       expect(history.find((item) => item.id === 'legacy-invalid')?.window).toEqual({
         from: '2026-07-31T21:46:10.470Z',
         to: '2026-07-31T21:46:10.471Z'
       });
-      expect(history.find((item) => item.id === 'v2-report:successful-v2')).toMatchObject({ runStatus: 'reported' });
-      expect(history.find((item) => item.id === 'v2-run:failed-v2')).toMatchObject({ runStatus: 'failed', warningCodes: ['REPORT_MISSING'] });
+      expect(history.find((item) => item.id === 'v2-report:successful-v2')).toMatchObject({ runStatus: 'reported', source: 'v2' });
+      expect(history.find((item) => item.id === 'v2-run:failed-v2')).toMatchObject({ runStatus: 'failed', source: 'v2', warningCodes: ['REPORT_MISSING'] });
     } finally {
       await services.close?.();
     }
+  });
+
+  it('normalizes an invalid legacy delivery status before history and detail projection', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-legacy-status-'));
+    const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
+    await (services.reports as unknown as ReportStore).save({
+      id: 'legacy-invalid-delivery',
+      rendered: { format: 'markdown', body: '# Legacy report' },
+      summary: {
+        id: 'legacy-invalid-delivery',
+        window: { from: '2026-07-12T09:00:00.000Z', to: '2026-07-12T09:01:00.000Z' },
+        severityCounts: { critical: 0, warning: 0, info: 1 },
+        createdAt: NOW,
+        deliveryStatus: 'pending'
+      }
+    });
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
+    const connection = new DatabaseSync(join(dataDir, 'app.db'));
+    connection.prepare('update reports set compressed_payload = ? where id = ?').run(gzipSync(JSON.stringify({ summary: { deliveryStatus: 'corrupt-delivery' } })), 'legacy-invalid-delivery');
+    connection.close();
+
+    const history = DigestHistoryResponseSchema.parse(await services.reports.list());
+    const detail = DigestDetailSchema.parse(await services.reports.get('legacy-invalid-delivery'));
+
+    expect(history.find((item) => item.id === 'legacy-invalid-delivery')?.deliveryStatus).toBe('pending');
+    expect(detail.summary.deliveryStatus).toBe('pending');
+    await services.close?.();
+  });
+
+  it('sanitizes v2 payload, service detail, and API presentation with the configured provider key', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-v2-api-boundary-'));
+    const initial = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
+    const configuredKey = 'opaque-runtime-provider-key-fixture';
+    await initial.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: configuredKey });
+    await initial.close?.();
+
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
+    const db = new DatabaseSync(join(dataDir, 'app.db'));
+    runMigrations(db);
+    const [entry] = parseHomeAssistantLog(['2026-07-12 10:00:00 ERROR [mqtt] connection failed']);
+    if (!entry) throw new Error('Expected a parsed test entry.');
+    db.prepare(`insert into v2_signatures(signature, component, level, normalized_message, first_seen_at, last_seen_at, total_count, previous_period_count)
+      values (?, ?, ?, ?, ?, ?, ?, ?)`).run(entry.signature, entry.component, entry.level, entry.normalizedMessage, entry.at, entry.at, 1, 0);
+    db.prepare('insert into v2_runs(id, slot_id, status, error_code, created_at) values (?, ?, ?, ?, ?)')
+      .run('api-boundary-run', 'api-boundary-slot', 'reported', null, NOW);
+    db.prepare('insert into v2_reports(id, run_id, status, payload_json, created_at) values (?, ?, ?, ?, ?)')
+      .run('v2-report:api-boundary-run', 'api-boundary-run', 'reported', JSON.stringify({
+        report: {
+          status: 'reported',
+          warnings: [],
+          findings: [{ signature: entry.signature, analysis: { summary: `Summary ${configuredKey}`, recommendation: `Recommendation ${configuredKey}` }, providerControlled: configuredKey }]
+        },
+        signatures: [{ signature: entry.signature, component: entry.component, level: entry.level, normalizedMessage: entry.normalizedMessage, classification: 'new', trend: 'new', occurrences: [entry] }]
+      }), NOW);
+    db.close();
+
+    const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
+    const detail = await services.reports.get('v2-report:api-boundary-run');
+    const app = createApp({ services, auth: authOptions(), now: () => NOW });
+    const response = await authenticatedGet(app, '/api/digests/v2-report:api-boundary-run');
+
+    expect(JSON.stringify(detail)).not.toContain(configuredKey);
+    expect(JSON.stringify(detail)).not.toContain('providerControlled');
+    expect(response.statusCode).toBe(200);
+    expect(JSON.stringify(response.json())).not.toContain(configuredKey);
+    expect(JSON.stringify(response.json())).not.toContain('providerControlled');
+    DigestDetailSchema.parse(response.json());
+    await app.close();
+    await services.close?.();
   });
 
   it('applies the configured warning toggle to real queued batch runs while preserving the default exclusion', async () => {
@@ -393,7 +472,7 @@ describe('persistent runtime services', () => {
     await expect(services.digestJobs.get(excluded.jobId)).resolves.toMatchObject({ status: 'completed', reportId: expect.stringMatching(/^v2-report:/) });
     expect(events.ai).toBe(0);
     const excludedJob = await services.digestJobs.get(excluded.jobId);
-    await expect(services.reports.get(excludedJob?.reportId ?? 'missing')).resolves.toMatchObject({ presentation: { mode: 'batch', signatures: [] } });
+    await expect(services.reports.get(excludedJob?.reportId ?? 'missing')).resolves.toMatchObject({ summary: { deliveryStatus: 'skipped' }, presentation: { mode: 'batch', signatures: [] } });
 
     const current = await services.settings.get();
     await services.settings.update({ ...settingsUpdate(current, current.retentionDays), includeWarnings: true });
@@ -450,9 +529,10 @@ describe('persistent runtime services', () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-v2-no-fallback-'));
     const logPath = join(dataDir, 'home-assistant.log');
     await writeFile(logPath, '2026-07-12 10:00:00 ERROR [mqtt] connection failed\n');
-    const providerMessage = 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent.';
+    const rawProviderMessage = "models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. token=AIzaSyA1B2C3D4E5F6G7H8";
+    const safeProviderMessage = 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. token=[REDACTED]';
     const failures: Array<{ errorCode: string; errorMessage: string }> = [];
-    const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW, haLogPath: logPath, digestFailureReporter: (event) => failures.push(event), providerHttpClient: async () => ({ status: 404, json: async () => ({ error: { message: providerMessage } }) }) });
+     const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW, haLogPath: logPath, digestFailureReporter: (event) => failures.push(event), providerHttpClient: async () => ({ status: 404, json: async () => ({ error: { message: rawProviderMessage } }) }) });
     await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET });
     const queued = await services.digestJobs.enqueue({ kind: 'manual', triggerWindowId: 'v2:no-fallback' });
 
@@ -462,18 +542,80 @@ describe('persistent runtime services', () => {
     expect(stored).toMatchObject({ status: 'failed', errorCode: 'AI_PROVIDER_UNAVAILABLE' });
     expect(stored?.errorMessage).toContain('Gemini 404');
     expect(stored?.errorMessage).toContain("model 'gemini-flash-latest'");
-    expect(stored?.errorMessage).toContain(providerMessage);
+    expect(stored?.errorMessage).toContain(safeProviderMessage);
+    expect(stored?.errorMessage).not.toContain(rawProviderMessage);
     expect(stored?.errorMessage).toContain('model retired');
     expect(stored?.errorMessage).not.toContain(AI_SECRET);
     expect(failures).toEqual([expect.objectContaining({ errorCode: 'AI_PROVIDER_UNAVAILABLE', errorMessage: stored?.errorMessage })]);
 
     const app = createApp({ services, auth: authOptions() });
     const response = await authenticatedGet(app, `/api/digests/jobs/${queued.jobId}`);
+    const failedReport = DigestDetailSchema.parse(await services.reports.get(`v2-run:${queued.jobId}`));
+    expect(failedReport.presentation).toMatchObject({ mode: 'batch', status: 'failed', failure: expect.stringContaining(safeProviderMessage) });
+    expect(JSON.stringify(failedReport)).not.toContain(rawProviderMessage);
+    const detailResponse = await authenticatedGet(app, `/api/digests/v2-run:${queued.jobId}`);
+    expect(detailResponse.statusCode).toBe(200);
+    expect(detailResponse.json()).toMatchObject({ presentation: { failure: expect.stringContaining(safeProviderMessage) } });
+    expect(JSON.stringify(detailResponse.json())).not.toContain(rawProviderMessage);
     await app.close();
     await services.close?.();
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ errorMessage: stored?.errorMessage });
     expect(JSON.stringify(response.json())).not.toContain(AI_SECRET);
+  });
+
+  it('records failed Telegram delivery after committing the v2 report', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-v2-delivery-failure-'));
+    const logPath = join(dataDir, 'home-assistant.log');
+    await writeFile(logPath, '2026-07-12 10:00:00 ERROR [mqtt] connection failed\n');
+    const services = await createPersistentRuntimeServices({
+      dataDir,
+      now: () => NOW,
+      haLogPath: logPath,
+      providerHttpClient: async () => ({ status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'MQTT failed', recommendation: 'Restart MQTT' }) }] } }] }) }),
+      telegramHttpClient: async () => ({ status: 500, json: async () => ({ ok: false }) })
+    });
+    await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET, telegram: { botToken: TELEGRAM_SECRET, chatId: '42' } });
+    const queued = await services.digestJobs.enqueue({ kind: 'manual', triggerWindowId: 'v2:delivery-failure' });
+
+    await (services.digestWorker as unknown as { runOnce(): Promise<void> }).runOnce();
+
+    const job = await services.digestJobs.get(queued.jobId);
+    const report = await services.reports.get(job?.reportId ?? 'missing');
+    expect(job).toMatchObject({ status: 'completed', reportId: expect.stringMatching(/^v2-report:/) });
+    expect(report?.summary.deliveryStatus).toBe('failed');
+  });
+
+  it('projects old stored Markdown as legacy and redacts it at service and API boundaries', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-legacy-boundary-'));
+    const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
+    const rawSecrets = ['legacy-bearer-fixture', 'legacy-token-fixture', 'legacy-api-key-fixture', 'legacy-query-token-fixture'];
+    const body = `# Home Assistant Digest\n\n**Severity:** warning\n\nReview model retired classification.\n\n## Attention items\n\n- **Provider failure** (warning): Bearer ${rawSecrets[0]} token=${rawSecrets[1]} api-key: ${rawSecrets[2]} https://provider.test/run?token=${rawSecrets[3]}`;
+    await (services.reports as unknown as ReportStore).save({
+      id: 'legacy-unsafe',
+      rendered: { format: 'markdown', body },
+      summary: { id: 'legacy-unsafe', window: { from: '2026-07-12T09:00:00.000Z', to: NOW }, severityCounts: { critical: 0, warning: 1, info: 0 }, createdAt: NOW, deliveryStatus: 'pending' }
+    });
+
+    const detail = await services.reports.get('legacy-unsafe');
+    expect(detail).toMatchObject({ source: 'legacy', presentation: { version: 1, mode: 'legacy_markdown' } });
+    expect(JSON.stringify(detail)).toContain('model retired');
+    for (const secret of rawSecrets) expect(JSON.stringify(detail)).not.toContain(secret);
+
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
+    const db = new DatabaseSync(join(dataDir, 'app.db'));
+    const stored = db.prepare('select rendered_markdown, compressed_payload from reports where id = ?').get('legacy-unsafe') as { rendered_markdown: string; compressed_payload: Buffer };
+    const persistedDetail = `${stored.rendered_markdown}\n${gunzipSync(stored.compressed_payload).toString('utf8')}`;
+    for (const secret of rawSecrets) expect(persistedDetail).not.toContain(secret);
+    db.close();
+
+    const app = createApp({ services, auth: authOptions(), now: () => NOW });
+    const response = await authenticatedGet(app, '/api/digests/legacy-unsafe');
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ source: 'legacy', presentation: { version: 1, mode: 'legacy_markdown' } });
+    for (const secret of rawSecrets) expect(JSON.stringify(response.json())).not.toContain(secret);
+    await app.close();
+    await services.close?.();
   });
 });
 

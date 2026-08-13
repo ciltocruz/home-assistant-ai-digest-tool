@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import type { DigestSummary, MaskedSettings, RedactedSettingsDto, SetupValidationRequest } from '@ha-digest/shared';
+import { DeliveryStatusSchema, type DigestSummary, type MaskedSettings, type RedactedSettingsDto, type SetupValidationRequest } from '@ha-digest/shared';
 import { runMigrations } from './adapters/persistence/migrations.js';
 import { SQLiteDigestJobStore } from './adapters/persistence/sqlite-digest-job-store.js';
 import { SQLiteSecretStore } from './adapters/persistence/sqlite-secret-store.js';
@@ -20,6 +20,8 @@ import { SQLiteAuthStore } from './adapters/persistence/sqlite-auth-store.js';
 import { BatchReportRun, type RunRequest } from './application/batch-report-run.js';
 import { DigestWorker, type DigestWorkerFailureEvent } from './application/digest-worker.js';
 import { SettingsService, type SecretReplacement } from './application/settings.js';
+import { projectLegacyReportPresentation } from './application/report-presentation.js';
+import { redactProviderError } from './domain/safe-error.js';
 
 export type PersistentRuntimeOptions = {
   dataDir?: string;
@@ -57,7 +59,11 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
   const reports = new SQLiteReportStore(db, () => settingsStore.get(), now, options.maxStoredReports ?? DEFAULT_MAX_STORED_REPORTS);
 
   const digestJobs = new SQLiteDigestJobStore(db, clock);
-  const v2Stores = new SQLiteV2Stores(db, 10, now);
+  const v2Stores = new SQLiteV2Stores(db, 10, now, async () => {
+    const current = await settingsStore.get();
+    if (current.secretRefs.aiKeyRef.startsWith('unconfigured:')) return undefined;
+    return secretStore.resolve(current.secretRefs.aiKeyRef);
+  });
   let worker: DigestWorker | undefined;
   const services: BackendApiServices = {
     close: async () => { await worker?.stop(); db.close(); },
@@ -83,7 +89,14 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
     reports: {
       save: reports.save.bind(reports),
       list: async () => [...await v2Stores.listReports(), ...await reports.list()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-      get: async (id) => await v2Stores.getReport(id) ?? await reports.get(id)
+      get: async (id) => {
+        const v2Report = await v2Stores.getReport(id);
+        if (v2Report) return { ...v2Report, source: 'v2' as const };
+        const legacyReport = await reports.get(id);
+        if (!legacyReport) return null;
+        const rendered = { ...legacyReport.rendered, body: redactProviderError(legacyReport.rendered.body) };
+        return { ...legacyReport, source: 'legacy' as const, rendered, presentation: projectLegacyReportPresentation({ ...legacyReport, rendered }) };
+      }
     },
     notes: v2Stores,
     ignores: {
@@ -142,11 +155,12 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
         notify: async (summary) => {
           const current = await settingsStore.get();
           const targetRef = current.secretRefs.notifierRefs?.telegram;
-          if (!targetRef || targetRef.startsWith('unconfigured:')) return;
+          if (!targetRef || targetRef.startsWith('unconfigured:')) return 'skipped' as const;
           try {
             const creds = JSON.parse(await secretStore.resolve(targetRef)) as { botToken: string; chatId: string };
-            await new TelegramNotifier({ now, httpClient: options.telegramHttpClient }).sendSummary(summary, { channel: 'telegram', label: `Telegram ${creds.chatId}`, config: creds });
-          } catch { /* Notification configuration and delivery failures never fail a committed v2 run. */ }
+            const result = await new TelegramNotifier({ now, httpClient: options.telegramHttpClient }).sendSummary(summary, { channel: 'telegram', label: `Telegram ${creds.chatId}`, config: creds });
+            return result.status;
+          } catch { return 'failed' as const; /* Notification configuration and delivery failures never fail a committed v2 run. */ }
         }
       },
       reportUrl: options.reportUrl,
@@ -270,19 +284,20 @@ class SQLiteReportStore implements ReportStore {
 
   async save(report: Parameters<ReportStore['save']>[0], context?: ExecutionContext): Promise<void> {
     context?.checkpoint();
+    const safeReport = { ...report, rendered: { ...report.rendered, body: redactProviderError(report.rendered.body) } };
     this.db
       .prepare(
         `insert into reports(id, window_from, window_to, severity_counts_json, rendered_markdown, compressed_payload, created_at)
          values (@id, @windowFrom, @windowTo, @severityCounts, @renderedMarkdown, @compressedPayload, @createdAt)`
       )
       .run({
-        id: report.id,
-        windowFrom: report.summary.window.from,
-        windowTo: report.summary.window.to,
-        severityCounts: JSON.stringify(report.summary.severityCounts),
-        renderedMarkdown: report.rendered.body,
-        compressedPayload: gzipSync(JSON.stringify(report)),
-        createdAt: report.summary.createdAt
+        id: safeReport.id,
+        windowFrom: safeReport.summary.window.from,
+        windowTo: safeReport.summary.window.to,
+        severityCounts: JSON.stringify(safeReport.summary.severityCounts),
+        renderedMarkdown: safeReport.rendered.body,
+        compressedPayload: gzipSync(JSON.stringify(safeReport)),
+        createdAt: safeReport.summary.createdAt
       });
     await this.cleanup((await this.settings()).retentionDays);
   }
@@ -301,7 +316,8 @@ class SQLiteReportStore implements ReportStore {
       window: { from: row.window_from, to: row.window_to },
       severityCounts: JSON.parse(row.severity_counts_json) as DigestSummary['severityCounts'],
       createdAt: row.created_at,
-      deliveryStatus: deliveryStatusFromPayload(row.compressed_payload) ?? 'pending'
+      deliveryStatus: deliveryStatusFromPayload(row.compressed_payload) ?? 'pending',
+      source: 'legacy' as const
     }));
   }
 
@@ -312,8 +328,8 @@ class SQLiteReportStore implements ReportStore {
     if (!row) return null;
     return {
       id: row.id,
-      rendered: { format: 'markdown', body: row.rendered_markdown },
-      summary: { id: row.id, window: { from: row.window_from, to: row.window_to }, severityCounts: JSON.parse(row.severity_counts_json), createdAt: row.created_at, deliveryStatus: deliveryStatusFromPayload(row.compressed_payload) ?? 'pending' }
+      rendered: { format: 'markdown', body: redactProviderError(row.rendered_markdown) },
+      summary: { id: row.id, window: { from: row.window_from, to: row.window_to }, severityCounts: JSON.parse(row.severity_counts_json), createdAt: row.created_at, deliveryStatus: deliveryStatusFromPayload(row.compressed_payload) ?? 'pending', source: 'legacy' }
     };
   }
 
@@ -334,7 +350,8 @@ function deliveryStatusFromPayload(payload: Buffer | null): DigestSummary['deliv
   if (!payload) return null;
   try {
     const parsed = JSON.parse(gunzipSync(payload).toString('utf8')) as { summary?: { deliveryStatus?: DigestSummary['deliveryStatus'] } };
-    return parsed.summary?.deliveryStatus ?? null;
+    const status = DeliveryStatusSchema.safeParse(parsed.summary?.deliveryStatus);
+    return status.success ? status.data : null;
   } catch {
     return null;
   }

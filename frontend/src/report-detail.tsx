@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { DigestDetail, ReportPresentationItem } from '@ha-digest/shared';
 import { currentLocale, t } from './i18n/index.js';
+import { redactSensitiveText } from './api-client.js';
 
 export function ReportDetail({ report, embedded = false }: { report: DigestDetail; embedded?: boolean }) {
   const presentation = report.presentation;
@@ -41,9 +42,12 @@ export function ReportDetail({ report, embedded = false }: { report: DigestDetai
         <SectionHeading id="report-legacy-title">{t('report.presentation.legacy.title')}</SectionHeading>
         <p>{t('report.presentation.legacy.copy')}</p>
       </section>
-      <section className="report-content" aria-label={t('report.contentAriaLabel')}>
-        {renderLegacyMarkdown(legacyMarkdown)}
-      </section>
+      <details className="report-legacy-disclosure">
+         <summary>{t('report.presentation.legacy.disclosure')}</summary>
+         <section className="report-content" aria-label={t('report.contentAriaLabel')}>
+           {renderLegacyMarkdown(compactLegacyRedactions(redactSensitiveText(legacyMarkdown)))}
+         </section>
+      </details>
     </>}
     <a className="report-link" href="/reports">{t('report.back')}</a>
   </article>;
@@ -69,7 +73,7 @@ function BatchPresentation({ heading: Heading, presentation }: { heading: 'h2' |
   if (presentation.status === 'failed') return <section className="report-section" role="alert"><Heading>{t('report.batch.failure')}</Heading><p>{presentation.failure}</p></section>;
   return <>
     {presentation.warnings.length > 0 ? <section className="report-section" role="alert"><Heading>{t('report.batch.warnings')}</Heading><p>{presentation.warnings.join(', ')}</p></section> : null}
-    <section className="report-section"><Heading>{t('report.batch.integrations')}</Heading><p>{presentation.integrationStatus?.available ? presentation.integrationStatus.integrations.map((item) => `${item.title} (${item.state})`).join(', ') || t('report.batch.none') : t('report.batch.unavailable')}</p></section>
+    <section className="report-section"><Heading>{t('report.batch.integrations')}</Heading><p>{presentation.integrationStatus?.available ? presentation.integrationStatus.integrations.map((item) => item.state ? `${item.title ?? item.domain} (${item.state})` : item.title ?? item.domain).join(', ') || t('report.batch.none') : t('report.batch.unavailable')}</p></section>
     <section className="report-section"><Heading>{t('report.batch.signatures')}</Heading><ul className="report-presentation-list">{presentation.signatures.map((item) => <li key={item.signature} className="report-presentation-item"><p className="report-item-title">{item.component} · {t(`report.batch.classification.${item.classification}`)}</p><p>{t('report.batch.trend').replace('{trend}', item.trend).replace('{count}', String(item.occurrences))}</p>{item.analysis ? <><p>{item.analysis.summary}</p><p><strong>{t('report.batch.recommendation')}</strong> {item.analysis.recommendation}</p></> : <p>{t('report.batch.analysisUnavailable')}</p>}{item.notes?.length ? <><p><strong>{currentLocale() === 'es' ? 'Notas del operador:' : 'Operator notes:'}</strong></p><ul>{item.notes.map((note) => <li key={note.id}>{note.text}</li>)}</ul></> : null}</li>)}</ul></section>
   </>;
 }
@@ -124,4 +128,11 @@ function renderLegacyMarkdown(markdown: string) {
   flushParagraph();
   flushList();
   return blocks.length > 0 ? blocks : <p>{t('report.emptyContent')}</p>;
+}
+
+function compactLegacyRedactions(markdown: string): string {
+  const placeholder = t('report.presentation.legacy.protectedData');
+  const withPlaceholders = markdown.replace(/(?:\[redacted\]|\bredacted\b)/gi, placeholder);
+  const escapedPlaceholder = placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return withPlaceholders.replace(new RegExp(`(?:${escapedPlaceholder})(?:\\s+${escapedPlaceholder})+`, 'g'), placeholder);
 }

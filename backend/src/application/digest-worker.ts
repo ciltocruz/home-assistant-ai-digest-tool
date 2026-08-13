@@ -1,5 +1,6 @@
 import type { DigestJobStore } from '../domain/jobs.js';
 import type { DigestJob } from '../domain/jobs.js';
+import { redactProviderError } from '../domain/safe-error.js';
 
 type WorkerJobs = Pick<DigestJobStore, 'leaseNext' | 'setStage' | 'complete' | 'fail'>;
 type WorkerAnalysis = { runWithStages(onStage: (stage: Exclude<DigestJob['stage'], 'queued' | 'completed' | 'failed'>) => void | Promise<void>, job?: DigestJob): Promise<{ status: 'completed'; reportId: string }> };
@@ -66,7 +67,7 @@ function safeFailure(error: unknown): { code: string; message: string } {
 
 function detailedFailureMessage(rawMessage: string, code: string, fallback: string): string {
   const detail = rawMessage.slice(code.length).replace(/^:\s*/, '').trim();
-  return redactFailure(detail || fallback);
+  return redactProviderError(detail || fallback);
 }
 
 function failureStage(code: string): DigestWorkerFailureEvent['stage'] {
@@ -74,12 +75,4 @@ function failureStage(code: string): DigestWorkerFailureEvent['stage'] {
   if (code === 'HOME_ASSISTANT_UNAVAILABLE') return 'source';
   if (code === 'REPORT_STORAGE_UNAVAILABLE') return 'storage';
   return 'processing';
-}
-
-function redactFailure(value: string): string {
-  return value
-    .replace(/\bBearer\s+[^\s'"<>,);]+/gi, 'Bearer [REDACTED]')
-    .replace(/([?&](?:key|api[_-]?key|token|access[_-]?token|password|secret)=)[^&#\s]+/gi, '$1[REDACTED]')
-    .replace(/(\b(?:key|api[_-]?key|access[_-]?token|password|secret)\s*[:=]\s*)[^\s,;}]+/gi, '$1[REDACTED]')
-    .replace(/\b(?:AIza|sk-|ghp_)[A-Za-z0-9_:-]{8,}\b/g, '[REDACTED]');
 }

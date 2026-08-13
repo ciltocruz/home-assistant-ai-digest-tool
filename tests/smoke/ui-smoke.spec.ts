@@ -179,6 +179,13 @@ test('renders structured and legacy reports', async ({ page }) => {
 
   await page.goto('/reports/report-legacy');
   await expect(page.getByRole('heading', { name: 'Formato heredado' })).toBeVisible();
+  await expect(page.getByText('Este informe se generó con una versión anterior y no contiene análisis de IA estructurado por firma.')).toBeVisible();
+  const legacyDisclosure = page.locator('details.report-legacy-disclosure');
+  await expect(legacyDisclosure).toHaveCount(1);
+  expect(await legacyDisclosure.getAttribute('open')).toBeNull();
+  await legacyDisclosure.locator('summary').click();
+  await expect(legacyDisclosure).toContainText('Datos protegidos ocultos');
+  await expect(legacyDisclosure.locator('script')).toHaveCount(0);
   await expect(page.locator('pre')).toHaveCount(0);
 });
 
@@ -248,12 +255,34 @@ test('confirms ignore removal and passes keyboard flow', async ({ page }) => {
   await expect(page.getByText('sensor.ruidoso')).toHaveCount(0);
 });
 
+test('shows only the selected settings section and follows section navigation', async ({ page }) => {
+  const state = await mockRuntimeApi(page);
+  state.onboardingCompleted = true;
+
+  await page.goto('/settings');
+  await expect(page.locator('#settings-connection')).toBeVisible();
+  await expect(page.locator('#settings-ai')).toHaveCount(0);
+  await expect(page.locator('#settings-context')).toHaveCount(0);
+
+  await page.getByRole('link', { name: 'Proveedor de IA', exact: true }).click();
+  await expect(page).toHaveURL(/\/settings\?section=ai$/);
+  await expect(page.locator('#settings-ai')).toBeVisible();
+  await expect(page.locator('#settings-connection')).toHaveCount(0);
+  await expect(page.locator('#settings-context')).toHaveCount(0);
+
+  await page.getByRole('link', { name: 'Contexto', exact: true }).click();
+  await expect(page).toHaveURL(/\/settings\?section=context$/);
+  await expect(page.locator('#settings-context')).toBeVisible();
+  await expect(page.locator('.settings-form')).toHaveCount(0);
+  await expect(page.locator('#settings-ai')).toHaveCount(0);
+});
+
 test('rotates settings secrets without preloading or reflecting their raw values', async ({ page }) => {
   const state = await mockRuntimeApi(page);
   state.onboardingCompleted = true;
   const replacement = 'SMOKE_REPLACEMENT_AI_KEY';
 
-  await page.goto('/settings');
+  await page.goto('/settings?section=ai');
   const panel = page.locator('.settings-panel');
   await expect(panel.getByText('••••AI')).toBeVisible();
   await expect(panel.locator('input[name="aiKey"]')).toHaveCount(0);
@@ -272,7 +301,7 @@ test('persists onboarding, settings, and the queued-to-report lifecycle across b
   await completeOnboarding(page);
   await expect(page.getByRole('navigation', { name: 'Navegación principal' })).toBeVisible();
 
-  await page.goto('/settings');
+  await page.goto('/settings?section=privacy');
   const settingsPanel = page.locator('.settings-panel');
   await settingsPanel.getByLabel('Días de retención').fill('45');
   await settingsPanel.getByRole('button', { name: 'Guardar ajustes' }).click();
@@ -375,7 +404,10 @@ async function mockRuntimeApi(page: Page): Promise<MockState> {
     if (url.pathname.startsWith('/api/digests/') && url.pathname !== '/api/digests/history' && request.method() === 'GET') {
       const id = url.pathname.split('/').at(-1) ?? 'unknown';
       if (id === 'missing-report') return json(route, { code: 'NOT_FOUND', message: 'Report missing.', requestId: 'smoke' }, 404);
-      return json(route, { id, summary: { id, window: { from: '2026-07-13T23:59:59.999Z', to: SMOKE_CREATED_AT }, severityCounts: { critical: 0, warning: 1, info: 0 }, createdAt: SMOKE_CREATED_AT, deliveryStatus: 'pending' }, rendered: { format: 'markdown', body: `# Digest ${id}` }, ...(state.reportPresentations[id] ? { presentation: state.reportPresentations[id] } : {}) });
+      const body = id === 'report-legacy'
+        ? '# Legacy report\n\nredacted [REDACTED] REDACTED\n\n<script>no execute</script>'
+        : `# Digest ${id}`;
+      return json(route, { id, summary: { id, window: { from: '2026-07-13T23:59:59.999Z', to: SMOKE_CREATED_AT }, severityCounts: { critical: 0, warning: 1, info: 0 }, createdAt: SMOKE_CREATED_AT, deliveryStatus: 'pending' }, rendered: { format: 'markdown', body }, ...(state.reportPresentations[id] ? { presentation: state.reportPresentations[id] } : {}) });
     }
     if (url.pathname === '/api/digests/history' && request.method() === 'GET') {
       if (state.historyFailure) return json(route, { code: 'HISTORY_FAILED', message: 'History unavailable.', requestId: 'smoke' }, 503);

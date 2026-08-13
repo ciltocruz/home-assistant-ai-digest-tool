@@ -1,6 +1,6 @@
 import fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import {
-  DigestWindowSchema, EditableSettingsDtoSchema, IgnoreRuleCreateSchema, NoteCreateSchema, NotifierTestRequestSchema, OnboardingProgressSchema, OnboardingStepCommandSchema, SettingsUpdateCommandSchema,
+  DigestHistoryResponseSchema, DigestWindowSchema, EditableSettingsDtoSchema, IgnoreRuleCreateSchema, NoteCreateSchema, NotifierTestRequestSchema, OnboardingProgressSchema, OnboardingStepCommandSchema, SettingsUpdateCommandSchema,
   RunDigestRequestSchema, SendDigestRequestSchema,
   type DeliveryResult, type DigestDetail, type DigestHistoryResponse, type IgnoreRuleCreate, type IgnoreRuleDto, type MaskedSettings,
   type DigestJobStatus, type EditableSettingsDto, type NoteDto, type NotifierTestRequest, type OnboardingProgress, type OnboardingStepCommand, type RunDigestRequest, type RunDigestResponse, type SettingsUpdateCommand,
@@ -8,7 +8,8 @@ import {
 } from '@ha-digest/shared';
 import type { DigestJobStore } from '../domain/jobs.js';
 import type { IgnoreRuleStore, NoteStore, ReportStore } from '../domain/stores.js';
-import { projectReportPresentation } from '../application/report-presentation.js';
+import { projectLegacyReportPresentation, projectReportPresentation, redactReportDetail } from '../application/report-presentation.js';
+import { redactProviderError } from '../domain/safe-error.js';
 
 export type BackendApiServices = {
   health?: { check(): Promise<{ ok: true } | { ok: false; reason: string }> };
@@ -218,12 +219,10 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     if (job.status === 'queued') options.services.digestWorker?.wake();
     return reply.code(202).send(presentJob(job));
   });
-  app.get('/api/digests/history', async (): Promise<DigestHistoryResponse> => options.services.reports.list());
+  app.get('/api/digests/history', async (): Promise<DigestHistoryResponse> => DigestHistoryResponseSchema.parse(await options.services.reports.list()));
   app.get('/api/digests/:id', async (request, reply): Promise<DigestDetail | FastifyReply> => {
     const detail = await options.services.reports.get(String((request.params as { id: string }).id));
-    return detail
-      ? { ...detail, presentation: detail.presentation ?? projectReportPresentation(detail) }
-      : sendError(reply, 404, 'NOT_FOUND', 'Digest not found.', request.id);
+    return detail ? redactReportDetail({ ...detail, presentation: detail.presentation ?? (detail.source === 'legacy' ? projectLegacyReportPresentation(detail) : projectReportPresentation(detail)) }) : sendError(reply, 404, 'NOT_FOUND', 'Digest not found.', request.id);
   });
 
   app.post('/api/notes', async (request, reply): Promise<NoteDto | FastifyReply> => {
@@ -306,7 +305,7 @@ function buildTriggerWindowId(request: RunDigestRequest, fallback: string): stri
 
 function presentJob(job: Awaited<ReturnType<DigestJobStore['get']>> extends infer T ? NonNullable<T> : never): DigestJobStatus {
   const { id, status, stage, attempts, retryCount, retryAvailable, reportId, errorCode, errorMessage, createdAt, updatedAt } = job;
-  return { id, status, stage, attempts, retryCount, retryAvailable, ...(reportId ? { reportId } : {}), ...(errorCode ? { errorCode } : {}), ...(errorMessage ? { errorMessage } : {}), createdAt, updatedAt };
+  return { id, status, stage, attempts, retryCount, retryAvailable, ...(reportId ? { reportId } : {}), ...(errorCode ? { errorCode } : {}), ...(errorMessage ? { errorMessage: redactProviderError(errorMessage) } : {}), createdAt, updatedAt };
 }
 
 function isPublicRoute(request: FastifyRequest): boolean {

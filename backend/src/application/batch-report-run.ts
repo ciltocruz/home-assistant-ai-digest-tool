@@ -1,7 +1,8 @@
 import type { BatchSignature, LogDelta, ParsedLogEntry, SignaturePlan } from '../domain/batch.js';
 import { parseHomeAssistantLog } from '../domain/batch.js';
-import type { IgnoreRuleDto, NoteDto } from '@ha-digest/shared';
+import type { DeliveryStatus, IgnoreRuleDto, NoteDto } from '@ha-digest/shared';
 import type { IntegrationStatusSnapshot } from './integration-status.js';
+import { redactProviderError } from '../domain/safe-error.js';
 
 export type RunRequest = { runId: string; slotId: string; includeWarnings?: boolean };
 export type SignatureAnalysis = { summary: string; recommendation: string };
@@ -17,10 +18,13 @@ export interface SignatureMemory { classifyAndStage(entries: ParsedLogEntry[], a
 export interface SignatureProvider { analyze(context: BoundedSignatureContext, signal: AbortSignal): Promise<SignatureAnalysis>; }
 export interface BatchPersistence {
   commit(plan: CommitPlan): Promise<string>;
+  getDeliveryStatus?(reportId: string): Promise<DeliveryStatus | null>;
+  claimDeliveryAttempt(reportId: string): Promise<{ status: DeliveryStatus; shouldSend: boolean }>;
+  updateDeliveryStatus(reportId: string, status: DeliveryStatus): Promise<void>;
   fail(run: FailedRun): Promise<void>;
 }
 export interface HAStatusPort { snapshot(): Promise<IntegrationStatusSnapshot>; }
-export interface BatchNotifier { notify(summary: { findings: Array<{ signature: string; analysis: SignatureAnalysis }>; reportUrl?: string; language: 'en' | 'es' }): Promise<void>; }
+export interface BatchNotifier { notify(summary: { findings: Array<{ signature: string; analysis: SignatureAnalysis }>; reportUrl?: string; language: 'en' | 'es' }): Promise<DeliveryStatus>; }
 
 export type DeferredProviderAuth = { readonly status: 'deferred' };
 export type CommitPlan = {
@@ -29,11 +33,11 @@ export type CommitPlan = {
   signatures: SignaturePlan;
   reportedSignatures?: SignaturePlan['signatures'];
   notesBySignature?: Record<string, NoteDto[]>;
-  report: { status: 'quiet' | 'reported' | 'partial'; findings: Array<{ signature: string; analysis: SignatureAnalysis }>; warnings: string[]; integrationStatus?: IntegrationStatusSnapshot };
+  report: { status: 'quiet' | 'reported' | 'partial'; deliveryStatus?: DeliveryStatus; findings: Array<{ signature: string; analysis: SignatureAnalysis }>; warnings: string[]; integrationStatus?: IntegrationStatusSnapshot };
 };
 export type FailedRun = { request: RunRequest; code: 'AI_ANALYSIS_UNAVAILABLE'; errorMessage: string };
 export type RunOutcome =
-  | { status: 'quiet' | 'reported' | 'partial'; warnings: string[]; reportId: string }
+  | { status: 'quiet' | 'reported' | 'partial'; warnings: string[]; reportId: string; deliveryStatus?: DeliveryStatus }
   | { status: 'failed'; code: 'AI_ANALYSIS_UNAVAILABLE'; errorMessage: string };
 
 export type BatchReportRunDependencies = {
@@ -71,7 +75,7 @@ export class BatchReportRun {
     const notesBySignature = notesForSignatures(reportedSignatures, notes);
     const integrationStatus = await this.readIntegrationStatus();
     if (reportedSignatures.length === 0) {
-      const reportId = await this.dependencies.persistence.commit({ request, cursor: delta.cursor, signatures: plan, reportedSignatures, notesBySignature, report: { status: 'quiet', findings: [], warnings: [], integrationStatus } });
+      const reportId = await this.dependencies.persistence.commit({ request, cursor: delta.cursor, signatures: plan, reportedSignatures, notesBySignature, report: { status: 'quiet', deliveryStatus: 'skipped', findings: [], warnings: [], integrationStatus } });
       return { status: 'quiet', warnings: [], reportId };
     }
 
@@ -90,10 +94,29 @@ export class BatchReportRun {
     }
     const warnings = findings.length === analyses.length ? [] : ['AI_ANALYSIS_PARTIAL'];
     const status = warnings.length ? 'partial' : 'reported';
-    const reportId = await this.dependencies.persistence.commit({ request, cursor: delta.cursor, signatures: plan, reportedSignatures, notesBySignature, report: { status, findings, warnings, integrationStatus } });
+    const report: CommitPlan['report'] = { status, deliveryStatus: 'pending', findings, warnings, integrationStatus };
+    const reportId = await this.dependencies.persistence.commit({ request, cursor: delta.cursor, signatures: plan, reportedSignatures, notesBySignature, report });
+    if (await this.dependencies.persistence.getDeliveryStatus?.(reportId) === 'sent') {
+      return { status, warnings, reportId, deliveryStatus: 'sent' };
+    }
+    let deliveryStatus: DeliveryStatus = 'skipped';
     try {
-      await this.dependencies.notifier?.notify({ findings, reportUrl: this.dependencies.reportUrl?.(request), language: await this.dependencies.language?.() ?? 'en' });
-    } catch { /* A notifier failure must not turn a committed report into a failed run. */ }
+      if (this.dependencies.notifier) {
+        const attempt = await this.dependencies.persistence.claimDeliveryAttempt(reportId);
+        if (!attempt.shouldSend) return { status, warnings, reportId, deliveryStatus: attempt.status };
+        deliveryStatus = await this.dependencies.notifier.notify({ findings, reportUrl: this.dependencies.reportUrl?.(request), language: await this.dependencies.language?.() ?? 'en' });
+      }
+    } catch {
+      // An exception leaves external delivery unknown; pending prevents an automatic duplicate.
+      deliveryStatus = 'pending';
+    }
+    report.deliveryStatus = deliveryStatus;
+    try {
+      await this.dependencies.persistence.updateDeliveryStatus(reportId, deliveryStatus);
+    } catch {
+      // The notification outcome is known; do not make a committed run retryable because its status write failed.
+      return { status, warnings: [...warnings, 'DELIVERY_STATUS_PERSISTENCE_FAILED'], reportId, deliveryStatus };
+    }
     return { status, warnings, reportId };
   }
 
@@ -132,19 +155,10 @@ function notesForSignatures(signatures: BatchSignature[], notes: NoteDto[]): Rec
 }
 
 function redact(value: string): string {
-  return value
-    .replace(/\bBearer\s+[-._~+/=A-Za-z0-9]+\b/gi, 'Bearer [REDACTED]')
-    .replace(/\b(token|api[_-]?key|password|secret)(\s*[:=]\s*)[^\s&]+/gi, (_match, key, separator) => `${key}${separator}[REDACTED]`);
+  return redactProviderError(value);
 }
 
 function firstProviderFailureMessage(errors: unknown[]): string {
   const detail = errors.find((error): error is Error => error instanceof Error && error.message.length > 0)?.message;
-  return redactProviderFailure(detail ?? 'The AI provider failed without an error message.');
-}
-
-function redactProviderFailure(value: string): string {
-  return value
-    .replace(/\bBearer\s+[^\s'"<>,);]+/gi, 'Bearer [REDACTED]')
-    .replace(/([?&](?:key|api[_-]?key|token|access[_-]?token|password|secret)=)[^&#\s]+/gi, '$1[REDACTED]')
-    .replace(/\b(?:AIza|sk-|ghp_)[A-Za-z0-9_:-]{8,}\b/g, '[REDACTED]');
+  return redactProviderError(detail ?? 'The AI provider failed without an error message.');
 }

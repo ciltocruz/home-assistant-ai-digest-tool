@@ -23,17 +23,40 @@ describe('ReportDetail', () => {
     expect(html).not.toContain('<pre>');
   });
 
-  test('keeps legacy Markdown readable without interpreting it as HTML', () => {
+  test('keeps legacy Markdown behind a collapsed disclosure and protects repeated markers', () => {
+    setLocale('es');
     const html = renderToStaticMarkup(<ReportDetail report={{
       id: 'report-legacy',
       summary: { id: 'report-legacy', window: { from: '2026-08-01T09:00:00.000Z', to: '2026-08-01T10:00:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-08-01T10:00:00.000Z', deliveryStatus: 'skipped' },
-      rendered: { format: 'markdown', body: '# Informe heredado\n\n- Sensor estable\n- <script>no ejecutar</script>' }
+       rendered: { format: 'markdown', body: '# Informe heredado\n\n- Sensor estable\n- redacted [REDACTED] REDACTED\n- <script>no ejecutar</script>' }
     }} />);
 
     expect(html).toContain('<h2>Informe heredado</h2>');
     expect(html).toContain('<li>Sensor estable</li>');
+    expect(html).toContain('<details');
+    expect(html).not.toContain('<details open');
+    expect(html).toContain('Este informe se generó con una versión anterior y no contiene análisis de IA estructurado por firma.');
+    expect(html).toContain('Solo un informe v2 nuevo y correcto puede proporcionar ese análisis.');
+    expect(html).toContain('Mostrar el contenido original del informe');
+    expect(html.match(/Datos protegidos ocultos/g)).toHaveLength(1);
     expect(html).toContain('&lt;script&gt;no ejecutar&lt;/script&gt;');
     expect(html).toContain('Formato heredado');
+    expect(html).not.toContain('<script>');
+  });
+
+  test.each([
+    { locale: 'en' as const, skipped: 'No notification sent', pending: 'Delivery pending confirmation' },
+    { locale: 'es' as const, skipped: 'Sin notificación', pending: 'Entrega pendiente de confirmación' }
+  ])('uses honest $locale delivery labels', ({ locale, skipped, pending }) => {
+    setLocale(locale);
+    const report = (deliveryStatus: 'pending' | 'skipped') => renderToStaticMarkup(<ReportDetail report={{
+      id: `delivery-${deliveryStatus}`,
+      summary: { id: `delivery-${deliveryStatus}`, window: { from: '2026-08-01T09:00:00.000Z', to: '2026-08-01T10:00:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-08-01T10:00:00.000Z', deliveryStatus },
+      rendered: { format: 'markdown', body: '# Report' }
+    }} />);
+
+    expect(report('skipped')).toContain(skipped);
+    expect(report('pending')).toContain(pending);
   });
 
   test('renders the versioned presentation in a clear, severity-led hierarchy', () => {
@@ -73,6 +96,20 @@ describe('ReportDetail', () => {
 
     expect(html).toContain('Formato heredado');
     expect(html).toContain('&lt;script&gt;no ejecutar&lt;/script&gt;');
+    expect(html).not.toContain('<script>');
+  });
+
+  test('redacts credential-shaped values from legacy detail at the UI boundary', () => {
+    const rawSecrets = ['ui-bearer-fixture', 'ui-token-fixture', 'ui-api-key-fixture', 'ui-access-token-fixture', 'ui-password-fixture', 'ui-secret-fixture', 'ui-query-token-fixture'];
+    const html = renderToStaticMarkup(<ReportDetail report={{
+      id: 'report-unsafe-legacy',
+      summary: { id: 'report-unsafe-legacy', window: { from: '2026-08-01T09:00:00.000Z', to: '2026-08-01T10:00:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-08-01T10:00:00.000Z', deliveryStatus: 'skipped' },
+      rendered: { format: 'markdown', body: '# Legacy report' },
+       presentation: { version: 1, mode: 'legacy_markdown', legacyMarkdown: `# Legacy report\n\nModel retired; Bearer ${rawSecrets[0]} token=${rawSecrets[1]} api-key: ${rawSecrets[2]} access_token=${rawSecrets[3]} password=${rawSecrets[4]} secret: ${rawSecrets[5]} https://provider.test/run?token=${rawSecrets[6]}` }
+    }} />);
+
+    expect(html).toContain('Model retired');
+    for (const secret of rawSecrets) expect(html).not.toContain(secret);
     expect(html).not.toContain('<script>');
   });
 
@@ -116,5 +153,19 @@ describe('ReportDetail', () => {
     }} />);
 
     expect(html).toContain('Operator already checked this device.');
+  });
+
+  test('renders sparse integration fields without undefined placeholders', () => {
+    setLocale('en');
+    const html = renderToStaticMarkup(<ReportDetail report={{
+      id: 'v2-sparse-integration',
+      summary: { id: 'v2-sparse-integration', window: { from: '2026-08-01T09:00:00.000Z', to: '2026-08-01T10:00:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-08-01T10:00:00.000Z', deliveryStatus: 'pending' },
+      rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'reported', warnings: [], integrationStatus: { available: true, integrations: [{ domain: 'mqtt' }] }, signatures: [] }
+    }} />);
+
+    expect(html).toContain('mqtt');
+    expect(html).not.toContain('undefined');
+    expect(html).not.toContain('(undefined)');
   });
 });

@@ -17,10 +17,10 @@ describe('SQLite migrations', () => {
       .map((row) => (row as { name: string }).name);
 
     expect(tables).toEqual(
-      expect.arrayContaining(['admin_accounts', 'auth_sessions', 'deliveries', 'digest_jobs', 'ignore_rules', 'login_attempts', 'notes', 'onboarding_state', 'reports', 'schedule_state', 'secrets', 'settings', 'v2_log_cursor', 'v2_reports', 'v2_runs', 'v2_signatures'])
+      expect.arrayContaining(['admin_accounts', 'auth_sessions', 'deliveries', 'digest_jobs', 'ignore_rules', 'login_attempts', 'notes', 'onboarding_state', 'reports', 'schedule_state', 'secrets', 'settings', 'v2_log_cursor', 'v2_reports', 'v2_report_delivery_attempts', 'v2_runs', 'v2_signatures'])
     );
-    expect(db.prepare('select version from schema_migrations').all().map((row) => ({ ...(row as { version: number }) }))).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }
+      expect(db.prepare('select version from schema_migrations').all().map((row) => ({ ...(row as { version: number }) }))).toEqual([
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }
     ]);
   });
 
@@ -44,7 +44,7 @@ describe('SQLite migrations', () => {
     runMigrations(db);
 
     expect(db.prepare('select version from schema_migrations').all().map((row) => ({ ...(row as { version: number }) }))).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }
     ]);
   });
 
@@ -71,6 +71,77 @@ describe('SQLite migrations', () => {
     runMigrations(db);
 
     expect(db.prepare('select stage, retry_count, report_id from digest_jobs where id = ?').get('legacy-job')).toEqual({ stage: 'completed', retry_count: 0, report_id: null });
+  });
+
+  it('adds the v2 failure message column to an existing run table without changing its data', async () => {
+    const db = await openTestDatabase();
+    db.exec(`create table v2_runs (
+      id text primary key, slot_id text not null unique, status text not null, error_code text, created_at text not null
+    )`);
+    db.prepare('insert into v2_runs(id, slot_id, status, error_code, created_at) values (?, ?, ?, ?, ?)')
+      .run('legacy-run', 'legacy-slot', 'failed', 'AI_ANALYSIS_UNAVAILABLE', '2026-08-01T00:00:00.000Z');
+
+    runMigrations(db);
+
+    expect((db.prepare('pragma table_info(v2_runs)').all() as Array<{ name: string }>).map((column) => column.name)).toContain('error_message');
+    const firstRun = db.prepare('select id, slot_id, status, error_code, error_message, created_at from v2_runs where id = ?').get('legacy-run');
+    expect(firstRun).toEqual({ id: 'legacy-run', slot_id: 'legacy-slot', status: 'failed', error_code: 'AI_ANALYSIS_UNAVAILABLE', error_message: null, created_at: '2026-08-01T00:00:00.000Z' });
+
+    runMigrations(db);
+
+    expect((db.prepare('pragma table_info(v2_runs)').all() as Array<{ name: string }>).filter((column) => column.name === 'error_message')).toHaveLength(1);
+    expect(db.prepare('select id, slot_id, status, error_code, error_message, created_at from v2_runs where id = ?').get('legacy-run')).toEqual(firstRun);
+  });
+
+  it('backfills one safe, idempotent delivery attempt for every pre-v9 v2 report', async () => {
+    const db = await openTestDatabase();
+    db.exec(`
+      create table v2_runs (
+        id text primary key, slot_id text not null unique, status text not null,
+        error_code text, created_at text not null
+      );
+      create table v2_reports (
+        id text primary key, run_id text not null unique, status text not null,
+        payload_json text not null, created_at text not null
+      );
+    `);
+    const reports = [
+      ['sent-run', 'sent'],
+      ['failed-run', 'failed'],
+      ['pending-run', 'pending'],
+      ['unknown-run', undefined],
+      ['quiet-run', 'skipped']
+    ] as const;
+    for (const [runId, deliveryStatus] of reports) {
+      db.prepare('insert into v2_runs(id, slot_id, status, created_at) values (?, ?, ?, ?)')
+        .run(runId, `slot-${runId}`, runId === 'quiet-run' ? 'quiet' : 'reported', '2026-08-05T19:00:00.000Z');
+      db.prepare('insert into v2_reports(id, run_id, status, payload_json, created_at) values (?, ?, ?, ?, ?)')
+        .run(`v2-report:${runId}`, runId, runId === 'quiet-run' ? 'quiet' : 'reported', JSON.stringify({ report: { status: runId === 'quiet-run' ? 'quiet' : 'reported', ...(deliveryStatus ? { deliveryStatus } : {}) } }), '2026-08-05T19:00:00.000Z');
+    }
+
+    runMigrations(db);
+
+    expect(db.prepare('select report_id, status from v2_report_delivery_attempts order by report_id').all()).toEqual([
+      { report_id: 'v2-report:failed-run', status: 'failed' },
+      { report_id: 'v2-report:pending-run', status: 'pending' },
+      { report_id: 'v2-report:quiet-run', status: 'skipped' },
+      { report_id: 'v2-report:sent-run', status: 'sent' },
+      { report_id: 'v2-report:unknown-run', status: 'pending' }
+    ]);
+    expect(db.prepare('select id, delivery_status from v2_runs order by id').all()).toEqual([
+      { id: 'failed-run', delivery_status: 'failed' },
+      { id: 'pending-run', delivery_status: 'pending' },
+      { id: 'quiet-run', delivery_status: 'skipped' },
+      { id: 'sent-run', delivery_status: 'sent' },
+      { id: 'unknown-run', delivery_status: 'pending' }
+    ]);
+    const firstState = db.prepare('select report_id, status, created_at, updated_at from v2_report_delivery_attempts order by report_id').all();
+    const firstRunState = db.prepare('select id, delivery_status from v2_runs order by id').all();
+
+    runMigrations(db);
+
+    expect(db.prepare('select report_id, status, created_at, updated_at from v2_report_delivery_attempts order by report_id').all()).toEqual(firstState);
+    expect(db.prepare('select id, delivery_status from v2_runs order by id').all()).toEqual(firstRunState);
   });
 
   it('repairs only an orphaned completed v2 job and makes it retryable once', async () => {

@@ -50,7 +50,7 @@ describe('SettingsPanel', () => {
       homeAssistant: { ...command.homeAssistant, token: { configured: true, mask: '••••HA' } },
       ai: { ...command.ai, key: { configured: true, mask: '••••AI' } }
     }));
-    const { container } = await mount({ getSettings: async () => ({ ...settings(), includeWarnings: false }), updateSettings });
+    const { container } = await mount({ getSettings: async () => ({ ...settings(), includeWarnings: false }), updateSettings }, 'privacy');
     const includeWarnings = container.querySelector<HTMLInputElement>('input[name="includeWarnings"]');
     const form = container.querySelector('form');
     if (!includeWarnings || !form) throw new Error('Expected warning inclusion control.');
@@ -66,7 +66,7 @@ describe('SettingsPanel', () => {
     const { container } = await mount({
       getSettings: async () => settings(),
       updateSettings: async () => { throw new Error(`Server rejected ${replacement}`); }
-    });
+    }, 'ai');
     const replace = container.querySelector<HTMLInputElement>('input[value="replace-ai-key"]');
     const form = container.querySelector('form');
     if (!replace || !form) throw new Error('Expected AI replacement controls.');
@@ -86,9 +86,26 @@ describe('SettingsPanel', () => {
     expect(container.textContent).not.toContain(replacement);
   });
 
-  it('uses URL-backed sections and keeps notes, ignores, and notifier actions in Settings', async () => {
+  it('renders only the selected settings section and keeps Save available', async () => {
+    const testCurrentNotifier = vi.fn(async () => ({ status: 'success' as const, message: 'Test sent', checkedAt: '2026-08-01T10:00:00.000Z' }));
+    const { container } = await mount({
+      getSettings: async () => ({ ...settings(), notifications: { channel: 'telegram' as const, chatId: '123456', botToken: { configured: true as const, mask: '••••TELEGRAM' } } }),
+      updateSettings: async () => settings(),
+      testCurrentNotifier
+    }, 'notifications');
+
+    expect(container.querySelector('#settings-notifications')).not.toBeNull();
+    expect(container.querySelector('#settings-connection')).toBeNull();
+    expect(container.querySelector('#settings-ai')).toBeNull();
+    expect(container.querySelector('#settings-schedule')).toBeNull();
+    expect(container.querySelector('#settings-privacy')).toBeNull();
+    expect(container.querySelector('#settings-context')).toBeNull();
+    expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Save settings')).toBe(true);
+    expect(container.textContent).toContain('Send Telegram test');
+  });
+
+  it('keeps Context actions in the selected section without irrelevant settings controls', async () => {
     const removeIgnore = vi.fn(async () => undefined);
-    const testCurrentNotifier = vi.fn(async () => ({ status: 'success' as const, message: 'Prueba enviada', checkedAt: '2026-08-01T10:00:00.000Z' }));
     const { container } = await mount({
       getSettings: async () => ({ ...settings(), notifications: { channel: 'telegram' as const, chatId: '123456', botToken: { configured: true as const, mask: '••••TELEGRAM' } } }),
       updateSettings: async () => settings(),
@@ -96,14 +113,19 @@ describe('SettingsPanel', () => {
       addNote: async (input: { text: string; occurredAt: string; tags: string[] }) => ({ id: 'note-2', ...input, createdAt: '2026-08-01T10:00:00.000Z' }),
       listIgnores: async () => [{ id: 'ignore-1', match: 'sensor.ruidoso', type: 'entity' as const, createdAt: '2026-08-01T10:00:00.000Z' }],
       addIgnore: async (input: { match: string; type: 'entity' }) => ({ id: 'ignore-2', ...input, createdAt: '2026-08-01T10:00:00.000Z' }),
-      removeIgnore,
-      testCurrentNotifier
-    });
+      removeIgnore
+    }, 'context');
 
     expect(container.querySelector('a[href="/settings?section=context"]')?.textContent).toBe('Context');
     expect(container.textContent).toContain('Operator notes');
     expect(container.textContent).toContain('sensor.ruidoso');
-    expect(container.textContent).toContain('Send Telegram test');
+    expect(container.querySelector('#settings-context')).not.toBeNull();
+    expect(container.querySelector('.settings-form')).toBeNull();
+    expect(container.querySelector('#settings-connection')).toBeNull();
+    expect(container.querySelector('#settings-ai')).toBeNull();
+    expect(container.querySelector('#settings-notifications')).toBeNull();
+    expect(container.querySelector('input[name="haUrl"]')).toBeNull();
+    expect(container.textContent).not.toContain('Save settings');
 
     const remove = container.querySelector<HTMLButtonElement>('[data-testid="remove-ignore-ignore-1"]');
     if (!remove) throw new Error('Expected ignore removal action.');
@@ -146,7 +168,7 @@ describe('SettingsPanel', () => {
       updateSettings: async () => settings(),
       listIgnores: async () => [{ id: 'ignore-1', match: 'sensor.ruidoso', type: 'entity' as const, createdAt: '2026-08-01T10:00:00.000Z' }],
       removeIgnore: async () => { throw new Error('persistence failed'); }
-    });
+    }, 'context');
     const remove = container.querySelector<HTMLButtonElement>('[data-testid="remove-ignore-ignore-1"]');
     if (!remove) throw new Error('Expected ignore removal action.');
     await act(async () => remove.click());
@@ -164,22 +186,23 @@ describe('SettingsPanel', () => {
     setLocale('es');
     const { container } = await mount({
       getSettings: async () => settings(), updateSettings: async () => settings(),
-      listNotes: async () => [{ id: 'note-1', text: 'Reinicio', occurredAt: '2026-08-01T10:00:00.000Z', createdAt: '2026-08-01T10:00:00.000Z', tags: [] }]
-    });
+      listNotes: async () => [{ id: 'note-1', text: 'Reinicio', occurredAt: '2026-08-01T10:00:00.000Z', createdAt: '2026-08-01T10:00:00.000Z', tags: [] }],
+      addNote: async (input: { text: string; occurredAt: string; tags: string[] }) => ({ id: 'note-2', ...input, createdAt: '2026-08-01T10:00:00.000Z' })
+    }, 'context');
 
     expect(container.textContent).toContain('Configuración');
-    expect(container.textContent).toContain('Guardar ajustes');
+    expect(container.textContent).toContain('Guardar nota');
     expect(container.textContent).toContain('Notas del operador');
     expect(container.textContent).toContain('1 ago');
   });
 });
 
-async function mount(api: SettingsApi) {
+async function mount(api: SettingsApi, section?: string) {
   const container = document.createElement('div');
   document.body.append(container);
   const root = createRoot(container);
   roots.push(root);
-  await act(async () => root.render(<SettingsPanel api={api} />));
+  await act(async () => root.render(<SettingsPanel api={api} section={section} />));
   await act(async () => undefined);
   return { container };
 }

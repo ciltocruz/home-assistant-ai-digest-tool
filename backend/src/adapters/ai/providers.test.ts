@@ -285,6 +285,107 @@ describe('AI provider adapters', () => {
     expect(JSON.stringify(requests[0]?.body)).not.toContain('must-not-leak');
   });
 
+  it('sanitizes credential-shaped content in structured signature output without losing diagnostics', async () => {
+    const rawSecrets = [
+      'signature-bearer-fixture',
+      'signature-token-fixture',
+      'signature-api-key-fixture',
+      'signature-query-token-fixture',
+      '123456:ABCdefGHIjklMNOpqr',
+      '987654:ZYXwvUTSrqponMLK'
+    ];
+    const provider = createSignatureProvider('ollama', {
+      apiKey: 'unused',
+      httpClient: async () => ({
+        status: 200,
+        json: async () => ({ message: { content: JSON.stringify({
+          summary: `Incident context: Bearer ${rawSecrets[0]} token=${rawSecrets[1]} api_key=${rawSecrets[2]} https://provider.test/?token=${rawSecrets[3]} botToken=${rawSecrets[4]}. Token budget remains available.`,
+          recommendation: `Restart the integration after checking bot_token: ${rawSecrets[5]}. Keep the API key rotation documented.`
+        }) } })
+      })
+    });
+
+    const result = await provider.analyze({ signature: 'sig', component: 'mqtt', classification: 'new', occurrences: [] }, new AbortController().signal);
+
+    expect(result.summary).toContain('Incident context');
+    expect(result.summary).toContain('Token budget remains available');
+    expect(result.recommendation).toContain('Restart the integration');
+    expect(result.recommendation).toContain('API key rotation documented');
+    for (const secret of rawSecrets) expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  it('redacts the configured key and credential-shaped values from every provider output path', async () => {
+    const configuredKey = 'opaque-configured-key-9f3d7c2a';
+    const rawSecrets = [configuredKey, 'opaque-bearer-fixture', 'opaque-token-fixture', '123456:ABCdefGHIjklMNOpqr'];
+    const output = `Provider output ${configuredKey}; Bearer ${rawSecrets[1]} token=${rawSecrets[2]} Telegram bot ${rawSecrets[3]}`;
+    const openAi = new OpenAIProvider({
+      apiKey: configuredKey,
+      httpClient: async () => ({
+        status: 200,
+        json: async () => ({ choices: [{ message: { content: JSON.stringify({
+          severity: 'warning', summary: output,
+          attentionItems: [{ title: output, severity: 'warning', detail: output }]
+        }) } }] })
+      })
+    });
+    const signature = createSignatureProvider('ollama', {
+      apiKey: configuredKey,
+      httpClient: async () => ({ status: 200, json: async () => ({ message: { content: JSON.stringify({ summary: output, recommendation: output }) } }) })
+    });
+    const gemini = new GeminiProvider({
+      apiKey: configuredKey,
+      httpClient: async () => ({
+        status: 200,
+        json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({
+          severity: 'warning', summary: output,
+          attentionItems: [{ title: output, severity: 'warning', detail: output }]
+        }) }] } }] })
+      })
+    });
+
+    const digest = await openAi.generate(input);
+    const geminiDigest = await gemini.generate(input);
+    const analysis = await signature.analyze({ signature: 'sig', component: 'mqtt', classification: 'new', occurrences: [] }, new AbortController().signal);
+
+    for (const value of [digest, geminiDigest, analysis]) {
+      for (const secret of rawSecrets) expect(JSON.stringify(value)).not.toContain(secret);
+    }
+  });
+
+  it('allowlists public provider output fields while sanitizing configured keys in analysis text', async () => {
+    const configuredKey = 'opaque-configured-key-allowlist-fixture';
+    const leakedText = `Provider output ${configuredKey}`;
+    const openAi = new OpenAIProvider({
+      apiKey: configuredKey,
+      httpClient: async () => ({
+        status: 200,
+        json: async () => ({ choices: [{ message: { content: JSON.stringify({
+          severity: 'warning',
+          summary: leakedText,
+          attentionItems: [{ title: leakedText, severity: 'warning', detail: leakedText, providerControlled: configuredKey }],
+          providerControlled: configuredKey
+        }) } }] })
+      })
+    });
+    const signature = createSignatureProvider('ollama', {
+      apiKey: configuredKey,
+      httpClient: async () => ({
+        status: 200,
+        json: async () => ({ message: { content: JSON.stringify({ summary: leakedText, recommendation: leakedText, providerControlled: configuredKey }) } })
+      })
+    });
+
+    await expect(openAi.generate(input)).resolves.toEqual({
+      severity: 'warning',
+      summary: 'Provider output [REDACTED]',
+      attentionItems: [{ title: 'Provider output [REDACTED]', severity: 'warning', detail: 'Provider output [REDACTED]' }]
+    });
+    await expect(signature.analyze({ signature: 'sig', component: 'mqtt', classification: 'new', occurrences: [] }, new AbortController().signal)).resolves.toEqual({
+      summary: 'Provider output [REDACTED]',
+      recommendation: 'Provider output [REDACTED]'
+    });
+  });
+
   it('returns safe Ollama HTTP and malformed-response failures', async () => {
     const statusFailure = createSignatureProvider('ollama', { apiKey: 'unused', httpClient: async () => ({ status: 500, json: async () => ({ secret: 'ollama-secret' }) }) });
     const malformed = createSignatureProvider('ollama', { apiKey: 'unused', httpClient: async () => ({ status: 200, json: async () => ({ message: { content: 'not-json ollama-secret' } }) }) });

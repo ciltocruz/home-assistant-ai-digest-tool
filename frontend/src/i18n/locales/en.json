@@ -148,10 +148,14 @@
         "info": "Info"
       },
       "deliveryStatus": {
-        "pending": "Pending",
-        "sent": "Sent",
-        "failed": "Failed",
-        "skipped": "Skipped"
+         "pending": "Delivery pending confirmation",
+         "sent": "Sent",
+         "failed": "Failed",
+         "skipped": "No notification sent"
+      },
+      "source": {
+        "legacy": "Legacy report",
+        "v2": "AI report"
       }
     },
     "jobLifecycle": {
@@ -202,7 +206,7 @@
       "recommendations": { "title": "Recommendation" },
       "evidence": { "title": "Evidence" },
       "severity": { "critical": "Critical", "warning": "Warning", "info": "Information" },
-      "legacy": { "title": "Legacy format", "copy": "This report has no structured data. The original content is shown safely." }
+       "legacy": { "title": "Legacy format", "copy": "This report was produced by a previous version and does not contain structured per-signature AI analysis. Only a new successful v2 report can provide that analysis.", "disclosure": "Show the original report content", "protectedData": "Protected data redacted" }
     }
   }
 }

@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { OperationalFailureEvent } from './http/app.js';
+import { redactProviderError } from './domain/safe-error.js';
 
 export type RuntimeLogSink = {
   ensureDir(path: string): void;
@@ -81,7 +82,7 @@ export function createRuntimeLogger(options: RuntimeFailureLoggerOptions = {}): 
       write({ event: 'runtime_api_failure', ...event });
     },
     reportDigestFailure(event) {
-      write({ event: 'runtime_digest_failure', ...event, errorMessage: redactRuntimeMessage(event.errorMessage) });
+      write({ event: 'runtime_digest_failure', ...event, errorMessage: redactProviderError(event.errorMessage) });
     },
     reportStartupFailure(event) {
       write(event);
@@ -99,12 +100,4 @@ function boundedLogLine(entry: object, maxBytes: number): string {
 
   const fallback = `${JSON.stringify({ level: 'error', event: 'runtime_log_entry_truncated' })}\n`;
   return Buffer.byteLength(fallback, 'utf8') <= maxBytes ? fallback : '\n';
-}
-
-function redactRuntimeMessage(value: string): string {
-  return value
-    .replace(/\bBearer\s+[^\s'"<>,);]+/gi, 'Bearer [REDACTED]')
-    .replace(/([?&](?:key|api[_-]?key|token|access[_-]?token|password|secret)=)[^&#\s]+/gi, '$1[REDACTED]')
-    .replace(/(\b(?:key|api[_-]?key|access[_-]?token|password|secret)\s*[:=]\s*)[^\s,;}]+/gi, '$1[REDACTED]')
-    .replace(/\b(?:AIza|sk-|ghp_)[A-Za-z0-9_:-]{8,}\b/g, '[REDACTED]');
 }

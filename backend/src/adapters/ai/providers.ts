@@ -1,4 +1,5 @@
 import type { AIProvider, RedactedDigestInput, StructuredDigest } from '../../domain/providers.js';
+import { redactProviderError } from '../../domain/safe-error.js';
 import { combineAbortSignals, type ExecutionContext } from '../../domain/execution.js';
 import type { BoundedSignatureContext, SignatureAnalysis, SignatureProvider } from '../../application/batch-report-run.js';
 
@@ -70,7 +71,7 @@ abstract class SignatureHttpProvider implements SignatureProvider {
   async analyze(context: BoundedSignatureContext, signal: AbortSignal): Promise<SignatureAnalysis> {
     const response = await requestProvider(this.name, this.model, this.timeoutMs, signal, (requestSignal) => this.request(context, requestSignal), undefined, this.options.apiKey);
     try {
-      return parseSignatureAnalysis(this.content(await response.json()), this.name);
+      return parseSignatureAnalysis(this.content(await response.json()), this.name, this.options.apiKey);
     } catch (error) {
       throw providerFailure(this.name, this.model, response.status, errorDetail(error), 'other', this.options.apiKey);
     }
@@ -208,7 +209,7 @@ export class OpenAIProvider implements AIProvider {
     context?.checkpoint();
     try {
       const payload = await response.json();
-      return parseStructuredDigest(extractOpenAIContent(payload), 'OpenAI');
+      return parseStructuredDigest(extractOpenAIContent(payload), 'OpenAI', this.options.apiKey);
     } catch (error) {
       throw providerFailure('OpenAI', this.model, response.status, errorDetail(error), 'other', this.options.apiKey);
     }
@@ -256,7 +257,7 @@ export class GeminiProvider implements AIProvider {
     context?.checkpoint();
     try {
       const payload = await response.json();
-      return parseStructuredDigest(extractGeminiContent(payload), 'Gemini');
+      return parseStructuredDigest(extractGeminiContent(payload), 'Gemini', this.options.apiKey);
     } catch (error) {
       throw providerFailure('Gemini', this.model, response.status, errorDetail(error), 'other', this.options.apiKey);
     }
@@ -367,29 +368,6 @@ function errorDetail(error: unknown): string {
   }
 }
 
-function redactProviderError(value: string, apiKey?: string): string {
-  const redacted = apiKey ? value.split(apiKey).join('[REDACTED]') : value;
-  return redacted
-    .replace(/\bBearer\s+[^\s'"<>,);]+/gi, 'Bearer [REDACTED]')
-    .replace(/([?&](?:key|api[_-]?key|token|access[_-]?token|password|secret)=)[^&#\s]+/gi, '$1[REDACTED]')
-    .replace(/(\b(?:api[_-]?key|access[_-]?token|password|secret)\s*[:=]\s*)[^\s,;}]+/gi, '$1[REDACTED]')
-    .replace(/\b(?:AIza|sk-|ghp_)[A-Za-z0-9_:-]{8,}\b/g, '[REDACTED]')
-    .replace(/https?:\/\/[^\s'"<>]+/gi, redactUrl)
-    .replace(/\b[A-Za-z0-9_-]*secret[A-Za-z0-9_:-]*\b/gi, '[REDACTED]');
-}
-
-function redactUrl(value: string): string {
-  try {
-    const url = new URL(value);
-    for (const key of [...url.searchParams.keys()]) {
-      if (/key|token|password|secret|auth/i.test(key)) url.searchParams.set(key, '[REDACTED]');
-    }
-    return url.toString();
-  } catch {
-    return '[REDACTED_URL]';
-  }
-}
-
 function providerInstructions(): string {
   return [
     'You summarize Home Assistant incidents from redacted incident context.',
@@ -432,21 +410,29 @@ function extractGeminiContent(payload: unknown): string {
   return text;
 }
 
-function parseStructuredDigest(content: string, provider: string): StructuredDigest {
+function parseStructuredDigest(content: string, provider: string, apiKey?: string): StructuredDigest {
   try {
     const parsed: unknown = JSON.parse(content);
     if (!isStructuredDigest(parsed)) throw new Error('invalid digest shape');
-    return parsed;
+    return {
+      severity: parsed.severity,
+      summary: redactProviderError(parsed.summary, apiKey),
+      attentionItems: parsed.attentionItems.map((item) => ({
+        title: redactProviderError(item.title, apiKey),
+        severity: item.severity,
+        detail: redactProviderError(item.detail, apiKey)
+      }))
+    };
   } catch {
     throw new Error(`${provider} provider returned an invalid digest`);
   }
 }
 
-function parseSignatureAnalysis(content: string, provider: string): SignatureAnalysis {
+function parseSignatureAnalysis(content: string, provider: string, apiKey?: string): SignatureAnalysis {
   try {
     const value = asRecord(JSON.parse(content));
     if (typeof value.summary !== 'string' || typeof value.recommendation !== 'string') throw new Error('invalid analysis');
-    return { summary: value.summary, recommendation: value.recommendation };
+    return { summary: redactProviderError(value.summary, apiKey), recommendation: redactProviderError(value.recommendation, apiKey) };
   } catch {
     throw new Error(`${provider} provider returned an invalid signature analysis`);
   }

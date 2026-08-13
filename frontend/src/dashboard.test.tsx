@@ -80,6 +80,21 @@ describe('DashboardHistory', () => {
     expect(html).toContain('Ventana analizada: 10 jul 2026, 09:00 — 10 jul 2026, 10:00');
   });
 
+  test.each([
+    { locale: 'en' as const, source: 'legacy' as const, sourceLabel: 'Legacy report', deliveryLabel: 'Sent' },
+    { locale: 'en' as const, source: 'v2' as const, sourceLabel: 'AI report', deliveryLabel: 'Sent' },
+    { locale: 'es' as const, source: 'legacy' as const, sourceLabel: 'Informe heredado', deliveryLabel: 'Enviado' },
+    { locale: 'es' as const, source: 'v2' as const, sourceLabel: 'Informe de IA', deliveryLabel: 'Enviado' }
+  ])('shows the $source source label separately from delivery in $locale history', async ({ locale, source, sourceLabel, deliveryLabel }) => {
+    setLocale(locale);
+    const state = await loadDigestHistory(fakeDashboardApi([{ ...historyItem, source }]));
+    const html = renderToStaticMarkup(<DashboardHistory state={state} />);
+
+    expect(html).toContain(sourceLabel);
+    expect(html).toContain(deliveryLabel);
+    expect(html).toContain('history-source-badge');
+  });
+
   test('mounted production path loads empty history through api prop', async () => {
     const request = deferred<Awaited<ReturnType<DashboardApi['listHistory']>>>();
     const api = { listHistory: vi.fn(() => request.promise) };

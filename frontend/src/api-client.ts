@@ -161,6 +161,8 @@ function redactFieldErrors(fieldErrors: Record<string, string[]> | undefined): R
 export function redactSensitiveText(value: string): string {
   return value
     .replace(BEARER_TOKEN_PATTERN, 'Bearer [redacted]')
+    .replace(QUERY_SECRET_PATTERN, '$1[redacted]')
+    .replace(ASSIGNMENT_SECRET_PATTERN, '$1[redacted]')
     .replace(BASE64URL_JSON_TOKEN_PATTERN, '[redacted]')
     .replace(/[A-Za-z0-9_-]*secret[A-Za-z0-9_:-]*/gi, '[redacted]')
     .replace(/\b\d{6,}:[A-Za-z0-9_-]+\b/g, '[redacted]')
@@ -169,3 +171,5 @@ export function redactSensitiveText(value: string): string {
 
 const BEARER_TOKEN_PATTERN = /\bBearer\s+[^\s'"<>,);]+/gi;
 const BASE64URL_JSON_TOKEN_PATTERN = /\beyJ[A-Za-z0-9_-]{24,}\b/g;
+const QUERY_SECRET_PATTERN = /([?&](?:key|api[_-]?key|token|access[_-]?token|refresh[_-]?token|auth[_-]?token|password|secret)=)[^&#\s]+/gi;
+const ASSIGNMENT_SECRET_PATTERN = /(\b(?:key|token|api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|client[_-]?secret|password|secret|authorization)\s*[:=]\s*)[^\s&;,}<>"']+/gi;

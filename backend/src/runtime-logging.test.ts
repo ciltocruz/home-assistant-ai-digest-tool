@@ -46,6 +46,24 @@ describe('runtime failure logger', () => {
     expect(log).not.toContain('super-secret');
   });
 
+  it('uses the shared redactor for quoted and Telegram-shaped provider failures', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-runtime-shared-redactor-'));
+    const logger = createRuntimeLogger({ dataDir, now: () => '2026-07-15T10:00:00.000Z' });
+    const telegramToken = '123456:ABCdefGHIjklMNOpqr';
+
+    logger.reportDigestFailure({
+      jobId: 'job-quoted',
+      stage: 'provider',
+      errorCode: 'AI_PROVIDER_UNAVAILABLE',
+      errorMessage: `provider response {"apiKey":"runtime-json-secret"} Telegram bot ${telegramToken}`
+    });
+
+    const log = await readFile(join(dataDir, 'logs', 'runtime.log'), 'utf8');
+
+    expect(log).not.toContain('runtime-json-secret');
+    expect(log).not.toContain(telegramToken);
+  });
+
   it('falls back to stderr when persistent logging fails without leaking sensitive error details', async () => {
     const stderrMessages: string[] = [];
     const failingSink: RuntimeLogSink = {

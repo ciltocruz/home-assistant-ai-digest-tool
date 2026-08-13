@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-const MIGRATION_VERSION = 7;
+const MIGRATION_VERSION = 10;
 
 export function runMigrations(db: DatabaseSync): void {
   db.exec('pragma foreign_keys = on');
@@ -122,6 +122,9 @@ function applyMigrations(db: DatabaseSync): void {
   `);
   addDigestJobColumns(db);
   addV2BatchTables(db);
+  addV2RunColumns(db);
+  backfillV2DeliveryAttempts(db);
+  backfillV2RunDeliveryStatuses(db);
   repairOrphanedCompletedV2Jobs(db);
   repairLegacyReportWindows(db);
   addAuthenticationTables(db);
@@ -130,8 +133,11 @@ function applyMigrations(db: DatabaseSync): void {
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(3);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(4);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(5);
-  db.prepare('insert or ignore into schema_migrations(version) values (?)').run(6);
-  db.prepare('insert or ignore into schema_migrations(version) values (?)').run(MIGRATION_VERSION);
+   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(6);
+   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(7);
+   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(8);
+   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(9);
+   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(MIGRATION_VERSION);
   db.prepare(
     `insert or ignore into onboarding_state(singleton, current_step, completed_steps_json, draft_json, secret_refs_json, secret_metadata_json, completed, updated_at)
      select 1,
@@ -246,6 +252,8 @@ function addV2BatchTables(db: DatabaseSync): void {
       slot_id text not null unique,
       status text not null,
       error_code text,
+      error_message text,
+      delivery_status text,
       created_at text not null
     );
 
@@ -265,6 +273,13 @@ function addV2BatchTables(db: DatabaseSync): void {
       primary key(report_id, signature)
     );
 
+    create table if not exists v2_report_delivery_attempts (
+      report_id text primary key references v2_reports(id) on delete cascade,
+      status text not null,
+      created_at text not null,
+      updated_at text not null
+    );
+
     create table if not exists schedule_state (
       schedule_id text primary key,
       first_run_enqueued_at text,
@@ -273,4 +288,46 @@ function addV2BatchTables(db: DatabaseSync): void {
     );
 
   `);
+}
+
+function addV2RunColumns(db: DatabaseSync): void {
+  const columns = new Set((db.prepare('pragma table_info(v2_runs)').all() as Array<{ name: string }>).map((column) => column.name));
+  if (!columns.has('error_message')) db.exec('alter table v2_runs add column error_message text');
+  if (!columns.has('delivery_status')) db.exec('alter table v2_runs add column delivery_status text');
+}
+
+function backfillV2DeliveryAttempts(db: DatabaseSync): void {
+  const reports = db.prepare('select id, payload_json from v2_reports').all() as Array<{ id: string; payload_json: string }>;
+  const insert = db.prepare('insert or ignore into v2_report_delivery_attempts(report_id, status, created_at, updated_at) values (?, ?, ?, ?)');
+  const now = new Date().toISOString();
+  for (const report of reports) {
+    let deliveryStatus: string | undefined;
+    try {
+      const parsed = JSON.parse(report.payload_json) as { report?: { deliveryStatus?: unknown } };
+      deliveryStatus = parsed.report?.deliveryStatus === 'sent' || parsed.report?.deliveryStatus === 'failed' || parsed.report?.deliveryStatus === 'pending' || parsed.report?.deliveryStatus === 'skipped'
+        ? parsed.report.deliveryStatus
+        : undefined;
+    } catch {
+      deliveryStatus = undefined;
+    }
+    insert.run(report.id, deliveryStatus ?? 'pending', now, now);
+  }
+}
+
+function backfillV2RunDeliveryStatuses(db: DatabaseSync): void {
+  const rows = db.prepare(`
+    select v2_reports.run_id as run_id, v2_report_delivery_attempts.status as status
+      from v2_reports
+      join v2_report_delivery_attempts on v2_report_delivery_attempts.report_id = v2_reports.id
+     where exists (
+       select 1 from v2_runs
+        where v2_runs.id = v2_reports.run_id
+          and v2_runs.delivery_status is null
+     )
+  `).all() as Array<{ run_id: string; status: string }>;
+  const update = db.prepare('update v2_runs set delivery_status = ? where id = ? and delivery_status is null');
+  for (const row of rows) {
+    const status = row.status === 'ready' ? 'pending' : row.status;
+    if (status === 'pending' || status === 'sent' || status === 'failed' || status === 'skipped') update.run(status, row.run_id);
+  }
 }

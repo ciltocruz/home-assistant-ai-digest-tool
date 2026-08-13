@@ -145,9 +145,10 @@ function HistoryItem({ item }: { item: DigestSummary }) {
   const createdAt = formatDateTime(item.createdAt);
   return <li className="history-item">
     <a className="history-link" href={`/reports/${encodeURIComponent(item.id)}`} aria-label={t('dashboard.history.openReport').replace('{time}', createdAt)}>
-      <span>{createdAt}</span>
-      <span className="muted-copy">{analysisWindowLabel(item)}</span>
-      <strong>{deliveryLabel(item.deliveryStatus)}</strong>
+       <span>{createdAt}</span>
+       <span className="muted-copy">{analysisWindowLabel(item)}</span>
+       {item.source ? <span className={`history-source-badge history-source-badge--${item.source}`}>{sourceLabel(item.source)}</span> : null}
+       <strong>{deliveryLabel(item.deliveryStatus)}</strong>
       <div className="severity-strip" aria-label={t('dashboard.history.severityAriaLabel')}>
         <span>{t('dashboard.history.severity.critical')} {item.severityCounts.critical}</span>
         <span>{t('dashboard.history.severity.warning')} {item.severityCounts.warning}</span>
@@ -163,6 +164,10 @@ function summaryLabel(count: number): string {
 
 function deliveryLabel(status: DigestSummary['deliveryStatus']): string {
   return t(`dashboard.history.deliveryStatus.${status}`);
+}
+
+function sourceLabel(source: NonNullable<DigestSummary['source']>): string {
+  return t(`dashboard.history.source.${source}`);
 }
 
 function analysisWindowLabel(item: DigestSummary): string {

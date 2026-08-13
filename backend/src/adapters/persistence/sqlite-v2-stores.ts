@@ -1,12 +1,13 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
-import type { DigestDetail, DigestHistoryResponse, DigestSummary, IgnoreRuleCreate, IgnoreRuleDto, NoteCreate, NoteDto } from '@ha-digest/shared';
-import type { BatchPersistence, CommitPlan, FailedRun, SignatureMemory } from '../../application/batch-report-run.js';
+import { IsoDateTimeSchema, type DeliveryStatus, type DigestDetail, type DigestHistoryResponse, type DigestSummary, type IgnoreRuleCreate, type IgnoreRuleDto, type NoteCreate, type NoteDto } from '@ha-digest/shared';
+import type { BatchPersistence, CommitPlan, FailedRun, SignatureAnalysis, SignatureMemory } from '../../application/batch-report-run.js';
 import { classifySignatures, type LogCursor, type ParsedLogEntry, type SignaturePlan } from '../../domain/batch.js';
+import { redactProviderError } from '../../domain/safe-error.js';
 import type { NoteStore } from '../../domain/stores.js';
 
 export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteStore {
-  constructor(private readonly db: DatabaseSync, private readonly reportRetention = 10, private readonly now: () => string = () => new Date().toISOString()) {}
+  constructor(private readonly db: DatabaseSync, private readonly reportRetention = 10, private readonly now: () => string = () => new Date().toISOString(), private readonly apiKey?: () => Promise<string | undefined>) {}
 
   async classifyAndStage(entries: ParsedLogEntry[], at: string): Promise<SignaturePlan> {
     const known = this.db.prepare(
@@ -16,6 +17,7 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
   }
 
   async commit(plan: CommitPlan): Promise<string> {
+    const apiKey = await this.apiKey?.();
     let reportId = `v2-report:${plan.request.runId}`;
     this.transaction(() => {
       const existingRun = this.findRun(plan.request.runId, plan.request.slotId);
@@ -24,24 +26,45 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
       const existingReport = this.findReportForRun(runId);
       if (existingReport) {
         if (existingRun?.status === 'failed') {
-          this.db.prepare('update v2_runs set status = ?, error_code = null where id = ?').run(existingReport.status, runId);
+          this.db.prepare('update v2_runs set status = ?, error_code = null, error_message = null where id = ?').run(existingReport.status, runId);
         }
         return;
       }
+      const previousDeliveryStatus = existingRun ? deliveryStatusValue(existingRun.deliveryStatus) : null;
+      const deliveryStatus = previousDeliveryStatus ?? plan.report.deliveryStatus ?? (plan.report.status === 'quiet' ? 'skipped' : 'pending');
       if (existingRun) {
-        this.db.prepare('update v2_runs set status = ?, error_code = null where id = ?').run(plan.report.status, runId);
+        this.db.prepare('update v2_runs set status = ?, error_code = null, error_message = null, delivery_status = ? where id = ?')
+          .run(plan.report.status, deliveryStatus, runId);
       } else {
-        this.insertRun(runId, plan.request.slotId, plan.report.status, null);
+        this.insertRun(runId, plan.request.slotId, plan.report.status, null, null, deliveryStatus);
       }
       this.saveCursor(plan.cursor);
       for (const signature of [...plan.signatures.baselineEntries, ...plan.signatures.signatures.flatMap((item) => item.occurrences)]) {
         this.upsertSignature(signature);
       }
       const createdAt = this.now();
+      const findings = plan.report.findings.flatMap((finding) => {
+        const analysis = safeSignatureAnalysis(finding.analysis, apiKey);
+        return analysis ? [{ signature: finding.signature, analysis }] : [];
+      });
+      const storedReport = {
+        status: plan.report.status,
+        deliveryStatus,
+        findings,
+        warnings: safeWarnings(plan.report.warnings, apiKey),
+        ...(safeIntegrationStatus(plan.report.integrationStatus, apiKey) ? { integrationStatus: safeIntegrationStatus(plan.report.integrationStatus, apiKey) } : {})
+      };
       this.db.prepare(
         'insert into v2_reports(id, run_id, status, payload_json, created_at) values (?, ?, ?, ?, ?)'
-       ).run(reportId, runId, plan.report.status, JSON.stringify({ report: plan.report, signatures: plan.reportedSignatures ?? plan.signatures.signatures, notesBySignature: plan.notesBySignature ?? {} }), createdAt);
-      for (const finding of plan.report.findings) {
+      ).run(reportId, runId, plan.report.status, JSON.stringify({ report: storedReport, signatures: safeSignatures(plan.reportedSignatures ?? plan.signatures.signatures), notesBySignature: safeNotes(plan.notesBySignature) ?? {} }), createdAt);
+      if (plan.report.status !== 'quiet') {
+        const attemptStatus = existingRun
+          ? existingRun.status === 'failed' && !previousDeliveryStatus ? 'ready' : previousDeliveryStatus ?? 'pending'
+          : 'ready';
+        this.db.prepare('insert into v2_report_delivery_attempts(report_id, status, created_at, updated_at) values (?, ?, ?, ?)')
+          .run(reportId, attemptStatus, createdAt, createdAt);
+      }
+      for (const finding of findings) {
         this.db.prepare(
           'insert into v2_report_signatures(report_id, signature, summary, recommendation) values (?, ?, ?, ?)'
         ).run(reportId, finding.signature, finding.analysis.summary, finding.analysis.recommendation);
@@ -51,11 +74,114 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
     return reportId;
   }
 
+  async updateDeliveryStatus(reportId: string, status: DeliveryStatus): Promise<void> {
+    const apiKey = await this.apiKey?.();
+    this.transaction(() => {
+      const row = this.db.prepare('select payload_json, status, (select status from v2_runs where id = v2_reports.run_id) as run_status from v2_reports where id = ?').get(reportId) as V2ReportRow | undefined;
+      if (!row) return;
+      const stored = payload(row);
+      if (!stored.valid || isCorruptReport(row, stored)) {
+        this.db.prepare('update v2_report_delivery_attempts set status = ?, updated_at = ? where report_id = ?').run('pending', this.now(), reportId);
+        this.db.prepare('update v2_runs set delivery_status = ? where id = (select run_id from v2_reports where id = ?)').run('pending', reportId);
+        return;
+      }
+      const storedReport = safeReport(stored.value.report, status, apiKey);
+      this.db.prepare('update v2_reports set payload_json = ? where id = ?')
+        .run(JSON.stringify({ report: storedReport, signatures: safeSignatures(stored.value.signatures), notesBySignature: safeNotes(stored.value.notesBySignature) ?? {} }), reportId);
+      this.db.prepare('update v2_report_delivery_attempts set status = ?, updated_at = ? where report_id = ?')
+        .run(status, this.now(), reportId);
+      this.db.prepare('update v2_runs set delivery_status = ? where id = (select run_id from v2_reports where id = ?)')
+        .run(status, reportId);
+    });
+  }
+
+  async claimDeliveryAttempt(reportId: string): Promise<{ status: DeliveryStatus; shouldSend: boolean }> {
+    this.db.exec('begin immediate');
+    try {
+      const existing = this.db.prepare('select status from v2_report_delivery_attempts where report_id = ?').get(reportId) as { status: string } | undefined;
+      const report = this.db.prepare('select id, payload_json, status, created_at, (select status from v2_runs where id = v2_reports.run_id) as run_status, (select delivery_status from v2_runs where id = v2_reports.run_id) as run_delivery_status from v2_reports where id = ?').get(reportId) as V2ReportRow | undefined;
+      if (!report) {
+        this.db.exec('commit');
+        return { status: 'skipped', shouldSend: false };
+      }
+      const runDeliveryStatus = deliveryStatusValue(report.run_delivery_status);
+      if (runDeliveryStatus === 'sent' || runDeliveryStatus === 'skipped') {
+        if (existing) {
+          this.db.prepare('update v2_report_delivery_attempts set status = ?, updated_at = ? where report_id = ?').run(runDeliveryStatus, this.now(), reportId);
+        } else {
+          this.db.prepare('insert into v2_report_delivery_attempts(report_id, status, created_at, updated_at) values (?, ?, ?, ?)').run(reportId, runDeliveryStatus, this.now(), this.now());
+        }
+        this.db.exec('commit');
+        return { status: runDeliveryStatus, shouldSend: false };
+      }
+      const stored = payload(report);
+      if (!stored.valid || isCorruptReport(report, stored)) {
+        if (existing) {
+          this.db.prepare('update v2_report_delivery_attempts set status = ?, updated_at = ? where report_id = ?')
+            .run('pending', this.now(), reportId);
+        } else {
+          this.db.prepare('insert into v2_report_delivery_attempts(report_id, status, created_at, updated_at) values (?, ?, ?, ?)')
+            .run(reportId, 'pending', this.now(), this.now());
+        }
+        this.db.exec('commit');
+        return { status: 'pending', shouldSend: false };
+      }
+      if (!existing) {
+        const storedStatus = deliveryStatusValue(stored.value.report?.deliveryStatus);
+        const status = storedStatus === 'sent' ? 'sent' : 'pending';
+        this.db.prepare('insert into v2_report_delivery_attempts(report_id, status, created_at, updated_at) values (?, ?, ?, ?)')
+          .run(reportId, status, this.now(), this.now());
+        this.db.exec('commit');
+        return { status: storedStatus === 'sent' ? 'sent' : storedStatus === 'skipped' ? 'skipped' : 'pending', shouldSend: false };
+      }
+      const attemptStatus = deliveryAttemptStatus(existing.status);
+      if (attemptStatus === 'ready' || attemptStatus === 'failed') {
+        this.db.prepare('update v2_report_delivery_attempts set status = ?, updated_at = ? where report_id = ?')
+          .run('pending', this.now(), reportId);
+        this.db.exec('commit');
+        return { status: 'pending', shouldSend: true };
+      }
+      if (!attemptStatus) {
+        this.db.prepare('update v2_report_delivery_attempts set status = ?, updated_at = ? where report_id = ?')
+          .run('pending', this.now(), reportId);
+        this.db.exec('commit');
+        return { status: 'pending', shouldSend: false };
+      }
+      this.db.exec('commit');
+      return { status: attemptStatus, shouldSend: false };
+    } catch (error) {
+      this.db.exec('rollback');
+      throw error;
+    }
+  }
+
+  async getDeliveryStatus(reportId: string): Promise<DeliveryStatus | null> {
+    const row = this.db.prepare('select payload_json, status, created_at, (select status from v2_runs where id = v2_reports.run_id) as run_status, (select delivery_status from v2_runs where id = v2_reports.run_id) as run_delivery_status from v2_reports where id = ?').get(reportId) as V2ReportRow | undefined;
+    if (!row) return null;
+    const runDeliveryStatus = deliveryStatusValue(row.run_delivery_status);
+    if (runDeliveryStatus === 'sent' || runDeliveryStatus === 'skipped') return runDeliveryStatus;
+    const stored = payload(row);
+    if (!stored.valid || isCorruptReport(row, stored)) return 'pending';
+    const attempt = this.db.prepare('select status from v2_report_delivery_attempts where report_id = ?').get(reportId) as { status: string } | undefined;
+    if (attempt) {
+      const attemptStatus = deliveryAttemptStatus(attempt.status);
+      return attemptStatus === 'ready' || !attemptStatus ? 'pending' : attemptStatus;
+    }
+    return deliveryStatusValue(stored.value.report?.deliveryStatus);
+  }
+
   async fail(run: FailedRun): Promise<void> {
     this.transaction(() => {
-      if (!this.findRun(run.request.runId, run.request.slotId)) {
-        this.insertRun(run.request.runId, run.request.slotId, 'failed', run.code);
+      const safeErrorMessage = redactProviderError(run.errorMessage);
+      const existingRun = this.findRun(run.request.runId, run.request.slotId);
+      if (existingRun) {
+        if (existingRun.status === 'failed') {
+          this.db.prepare('update v2_runs set status = ?, error_code = ?, error_message = ? where id = ?')
+            .run('failed', run.code, safeErrorMessage, existingRun.id);
+        }
+        return;
       }
+      this.insertRun(run.request.runId, run.request.slotId, 'failed', run.code, safeErrorMessage);
     });
   }
 
@@ -65,18 +191,19 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
   }
 
   async listReports(): Promise<DigestHistoryResponse> {
-    const reports = this.db.prepare('select id, status, payload_json, created_at from v2_reports order by created_at desc').all() as V2ReportRow[];
-    const failures = this.db.prepare("select id, error_code, created_at from v2_runs where status = 'failed' order by created_at desc").all() as FailedRunRow[];
-    return [...reports.map((row) => summaryFor(row)), ...failures.map((row) => failedSummary(row))].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const reports = this.db.prepare('select id, status, payload_json, created_at, (select status from v2_runs where id = v2_reports.run_id) as run_status from v2_reports order by created_at desc').all() as V2ReportRow[];
+    const failures = this.db.prepare("select id, status, error_code, error_message, created_at from v2_runs where (status = 'failed' or status not in ('quiet', 'reported', 'partial')) and not exists (select 1 from v2_reports where v2_reports.run_id = v2_runs.id) order by created_at desc").all() as FailedRunRow[];
+    const apiKey = await this.apiKey?.();
+    return [...reports.map((row) => summaryFor(row, apiKey)), ...failures.map((row) => failedSummary(row))].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
   async getReport(id: string): Promise<DigestDetail | null> {
     if (id.startsWith('v2-run:')) {
-      const run = this.db.prepare("select id, error_code, created_at from v2_runs where id = ? and status = 'failed'").get(id.slice(7)) as FailedRunRow | undefined;
+      const run = this.db.prepare("select id, status, error_code, error_message, created_at from v2_runs where id = ? and (status = 'failed' or status not in ('quiet', 'reported', 'partial'))").get(id.slice(7)) as FailedRunRow | undefined;
       return run ? failedDetail(run) : null;
     }
-    const row = this.db.prepare('select id, status, payload_json, created_at from v2_reports where id = ?').get(id) as V2ReportRow | undefined;
-    return row ? detailFor(row) : null;
+    const row = this.db.prepare('select id, status, payload_json, created_at, (select status from v2_runs where id = v2_reports.run_id) as run_status from v2_reports where id = ?').get(id) as V2ReportRow | undefined;
+    return row ? detailFor(row, await this.apiKey?.()) : null;
   }
 
   async add(input: NoteCreate): Promise<NoteDto> {
@@ -111,17 +238,17 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
     return rows.map((row) => ({ id: row.id, match: row.match, ...(row.type ? { type: row.type } : {}), ...(row.reason ? { reason: row.reason } : {}), ...(row.expires_at ? { expiresAt: row.expires_at } : {}), createdAt: row.created_at }));
   }
 
-  private findRun(id: string, slotId: string): { id: string; status: string } | undefined {
-    return this.db.prepare('select id, status from v2_runs where id = ? or slot_id = ?').get(id, slotId) as { id: string; status: string } | undefined;
+  private findRun(id: string, slotId: string): { id: string; status: string; deliveryStatus: string | null } | undefined {
+    return this.db.prepare('select id, status, delivery_status as deliveryStatus from v2_runs where id = ? or slot_id = ?').get(id, slotId) as { id: string; status: string; deliveryStatus: string | null } | undefined;
   }
 
   private findReportForRun(runId: string): { id: string; status: 'quiet' | 'reported' | 'partial' } | undefined {
     return this.db.prepare('select id, status from v2_reports where run_id = ?').get(runId) as { id: string; status: 'quiet' | 'reported' | 'partial' } | undefined;
   }
 
-  private insertRun(id: string, slotId: string, status: string, errorCode: string | null): void {
-    this.db.prepare('insert into v2_runs(id, slot_id, status, error_code, created_at) values (?, ?, ?, ?, ?)')
-      .run(id, slotId, status, errorCode, this.now());
+  private insertRun(id: string, slotId: string, status: string, errorCode: string | null, errorMessage: string | null, deliveryStatus: DeliveryStatus | null = null): void {
+    this.db.prepare('insert into v2_runs(id, slot_id, status, error_code, error_message, delivery_status, created_at) values (?, ?, ?, ?, ?, ?, ?)')
+      .run(id, slotId, status, errorCode, errorMessage, deliveryStatus, this.now());
   }
 
   private saveCursor(cursor: LogCursor): void {
@@ -159,38 +286,136 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
   }
 }
 
-type V2ReportRow = { id: string; status: 'quiet' | 'reported' | 'partial'; payload_json: string; created_at: string };
-type FailedRunRow = { id: string; error_code: string | null; created_at: string };
-type V2Payload = { report: CommitPlan['report']; signatures: SignaturePlan['signatures']; notesBySignature?: Record<string, NoteDto[]> };
-function payload(row: V2ReportRow): V2Payload { return JSON.parse(row.payload_json) as V2Payload; }
+type V2ReportRow = { id: string; status: string; run_status?: string | null; run_delivery_status?: string | null; payload_json: string; created_at: string };
+type FailedRunRow = { id: string; status: string; error_code: string | null; error_message: string | null; created_at: string };
+type V2Payload = { report?: Partial<CommitPlan['report']>; signatures?: unknown; notesBySignature?: unknown };
+function safeSignatureAnalysis(value: unknown, apiKey?: string): SignatureAnalysis | null {
+  const analysis = asRecord(value);
+  if (typeof analysis.summary !== 'string' || analysis.summary.trim().length === 0 || typeof analysis.recommendation !== 'string' || analysis.recommendation.trim().length === 0) return null;
+  return { summary: redactProviderError(analysis.summary, apiKey), recommendation: redactProviderError(analysis.recommendation, apiKey) };
+}
+function payload(row: Pick<V2ReportRow, 'payload_json'>): { value: V2Payload; valid: boolean } {
+  try {
+    const parsed = JSON.parse(row.payload_json);
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return { value: {}, valid: false };
+    return { value: asRecord(parsed) as V2Payload, valid: true };
+  } catch {
+    return { value: {}, valid: false };
+  }
+}
+function safeSignatures(value: unknown): SignaturePlan['signatures'] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const signature = asRecord(item);
+    if (typeof signature.signature !== 'string' || signature.signature.trim().length === 0 || typeof signature.component !== 'string' || signature.component.trim().length === 0 || !isLevel(signature.level) || !isClassification(signature.classification) || !isTrend(signature.trend) || !Array.isArray(signature.occurrences)) return [];
+    const occurrences = signature.occurrences.flatMap((item) => { const occurrence = safeOccurrence(item); return occurrence ? [occurrence] : []; });
+    return occurrences.length > 0 ? [{ signature: signature.signature, component: signature.component, level: signature.level, normalizedMessage: typeof signature.normalizedMessage === 'string' ? signature.normalizedMessage : '', classification: signature.classification, trend: signature.trend, occurrences }] : [];
+  });
+}
+function safeFindings(value: unknown, apiKey?: string): Array<{ signature: string; analysis: SignatureAnalysis }> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => { const finding = asRecord(item); const analysis = safeSignatureAnalysis(finding.analysis, apiKey); return typeof finding.signature === 'string' && finding.signature.trim().length > 0 && analysis ? [{ signature: finding.signature, analysis }] : []; });
+}
+function safeWarnings(value: unknown, apiKey?: string): string[] { return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.length > 0).map((item) => redactProviderError(item, apiKey)) : []; }
+function safeNotes(value: unknown): Record<string, NoteDto[]> | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const notes = Object.fromEntries(Object.entries(value).flatMap(([signature, entries]) => {
+    if (!Array.isArray(entries)) return [];
+    const safeEntries = entries.flatMap((entry) => {
+      const note = asRecord(entry);
+       const occurredAt = safeIsoDate(note.occurredAt);
+       const createdAt = safeIsoDate(note.createdAt);
+       if (typeof note.id !== 'string' || !note.id || typeof note.text !== 'string' || !note.text || !occurredAt || !createdAt || !Array.isArray(note.tags) || !note.tags.every((tag) => typeof tag === 'string' && tag.length > 0)) return [];
+       return [{ id: note.id, text: note.text, occurredAt, createdAt, tags: note.tags }];
+    });
+    return safeEntries.length > 0 ? [[signature, safeEntries]] : [];
+  }));
+  return Object.keys(notes).length > 0 ? notes as Record<string, NoteDto[]> : undefined;
+}
+function safeIntegrationStatus(value: unknown, apiKey?: string): { available: boolean; integrations: Array<{ domain: string; title?: string; state?: string }> } | undefined {
+  const status = asRecord(value);
+  if (typeof status.available !== 'boolean' || !Array.isArray(status.integrations)) return undefined;
+  const integrations = status.integrations.flatMap((entry) => {
+    const integration = asRecord(entry);
+    if (typeof integration.domain !== 'string') return [];
+    return [{ domain: redactProviderError(integration.domain, apiKey), ...(typeof integration.title === 'string' ? { title: redactProviderError(integration.title, apiKey) } : {}), ...(typeof integration.state === 'string' ? { state: redactProviderError(integration.state, apiKey) } : {}) }];
+  });
+  return { available: status.available, integrations };
+}
+function safeReport(value: unknown, deliveryStatus: DeliveryStatus, apiKey?: string): { status: 'quiet' | 'reported' | 'partial' | 'failed'; deliveryStatus: DeliveryStatus; findings: Array<{ signature: string; analysis: SignatureAnalysis }>; warnings: string[]; integrationStatus?: { available: boolean; integrations: Array<{ domain: string; title?: string; state?: string }> } } {
+  const report = asRecord(value);
+  const status = isRunStatus(report.status) ? report.status : 'reported';
+  return { status, deliveryStatus, findings: safeFindings(report.findings, apiKey), warnings: safeWarnings(report.warnings, apiKey), ...(safeIntegrationStatus(report.integrationStatus, apiKey) ? { integrationStatus: safeIntegrationStatus(report.integrationStatus, apiKey) } : {}) };
+}
 function counts(signatures: SignaturePlan['signatures']): NonNullable<DigestSummary['signatureCounts']> {
   return signatures.reduce((total, item) => ({ ...total, [item.classification]: total[item.classification] + 1 }), { new: 0, recurring: 0, reactivated: 0, latent: 0 });
 }
 function severity(signatures: SignaturePlan['signatures']) {
   return signatures.reduce((total, item) => ({ ...total, critical: total.critical + Number(item.level === 'CRITICAL'), warning: total.warning + Number(item.level === 'ERROR' || item.level === 'WARNING') }), { critical: 0, warning: 0, info: 0 });
 }
-function summaryFor(row: V2ReportRow): DigestSummary {
-  const value = payload(row);
-  return { id: row.id, window: pointInTimeWindow(row.created_at), severityCounts: severity(value.signatures), createdAt: row.created_at, deliveryStatus: 'skipped', runStatus: row.status, warningCodes: value.report.warnings, signatureCounts: counts(value.signatures) };
+function summaryFor(row: V2ReportRow, apiKey?: string): DigestSummary {
+  const stored = payload(row);
+  if (!stored.valid) return invalidSummary(row);
+  if (isCorruptReport(row, stored)) return invalidSummary(row, 'REPORT_CORRUPT');
+  const signatures = safeSignatures(stored.value.signatures);
+  const createdAt = safeTimestamp(row.created_at);
+  return { id: row.id, window: pointInTimeWindow(createdAt), severityCounts: severity(signatures), createdAt, deliveryStatus: deliveryStatusValue(stored.value.report?.deliveryStatus) ?? 'pending', source: 'v2', runStatus: row.status as 'quiet' | 'reported' | 'partial' | 'failed', warningCodes: safeWarnings(stored.value.report?.warnings, apiKey), signatureCounts: counts(signatures) };
 }
-function detailFor(row: V2ReportRow): DigestDetail {
-  const value = payload(row); const analyses = new Map(value.report.findings.map((finding) => [finding.signature, finding.analysis]));
+function detailFor(row: V2ReportRow, apiKey?: string): DigestDetail {
+  const stored = payload(row);
+  if (!stored.valid) return invalidDetail(row);
+  if (isCorruptReport(row, stored)) return invalidDetail(row, 'REPORT_CORRUPT');
+  const value = stored.value; const signatures = safeSignatures(value.signatures); const analyses = new Map(safeFindings(value.report?.findings, apiKey).map((finding) => [finding.signature, finding.analysis]));
   return {
-    id: row.id, summary: summaryFor(row), rendered: { format: 'markdown', body: '' },
-    presentation: { version: 2, mode: 'batch', status: row.status, warnings: value.report.warnings, integrationStatus: value.report.integrationStatus,
-      signatures: value.signatures.map((item) => ({ signature: item.signature, component: item.component, level: item.level, classification: item.classification, trend: item.trend, occurrences: item.occurrences.length, ...(analyses.has(item.signature) ? { analysis: analyses.get(item.signature) } : {}), ...(value.notesBySignature?.[item.signature] ? { notes: value.notesBySignature[item.signature] } : {}) })) }
+    id: row.id, summary: summaryFor(row, apiKey), rendered: { format: 'markdown', body: '' },
+     presentation: { version: 2, mode: 'batch', status: row.status as 'quiet' | 'reported' | 'partial' | 'failed', warnings: safeWarnings(value.report?.warnings, apiKey), ...(safeIntegrationStatus(value.report?.integrationStatus, apiKey) ? { integrationStatus: safeIntegrationStatus(value.report?.integrationStatus, apiKey) } : {}),
+      signatures: signatures.map((item) => ({ signature: item.signature, component: item.component, level: item.level, classification: item.classification, trend: item.trend, occurrences: item.occurrences.length, ...(analyses.has(item.signature) ? { analysis: analyses.get(item.signature) } : {}), ...(safeNotes(value.notesBySignature)?.[item.signature] ? { notes: safeNotes(value.notesBySignature)![item.signature] } : {}) })) }
   };
 }
+function invalidSummary(row: V2ReportRow, warning = 'REPORT_PAYLOAD_INVALID'): DigestSummary {
+  const createdAt = safeTimestamp(row.created_at);
+  return { id: row.id, window: pointInTimeWindow(createdAt), severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt, deliveryStatus: 'pending', source: 'v2', runStatus: 'failed', warningCodes: [warning], signatureCounts: counts([]) };
+}
+function invalidDetail(row: V2ReportRow, warning = 'REPORT_PAYLOAD_INVALID'): DigestDetail {
+  return { id: row.id, summary: invalidSummary(row, warning), rendered: { format: 'markdown', body: '' }, presentation: { version: 2, mode: 'batch', status: 'failed', warnings: [warning], signatures: [], failure: 'The persisted report payload is invalid.' } };
+}
 function failedSummary(row: FailedRunRow): DigestSummary {
-  return { id: `v2-run:${row.id}`, window: pointInTimeWindow(row.created_at), severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: row.created_at, deliveryStatus: 'skipped', runStatus: 'failed', warningCodes: row.error_code ? [row.error_code] : [] };
+  const createdAt = safeTimestamp(row.created_at);
+  const warningCodes = isRunStatus(row.status) ? (row.error_code ? [row.error_code] : []) : ['REPORT_CORRUPT'];
+  return { id: `v2-run:${row.id}`, window: pointInTimeWindow(createdAt), severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt, deliveryStatus: 'skipped', source: 'v2', runStatus: 'failed', warningCodes };
 }
 function failedDetail(row: FailedRunRow): DigestDetail {
   const summary = failedSummary(row);
-  return { id: summary.id, summary, rendered: { format: 'markdown', body: '' }, presentation: { version: 2, mode: 'batch', status: 'failed', warnings: summary.warningCodes ?? [], signatures: [], failure: row.error_code ?? 'REPORT_FAILED' } };
+  return { id: summary.id, summary, rendered: { format: 'markdown', body: '' }, presentation: { version: 2, mode: 'batch', status: 'failed', warnings: summary.warningCodes ?? [], signatures: [], failure: redactProviderError(row.error_message ?? row.error_code ?? 'REPORT_FAILED') } };
 }
 
-function pointInTimeWindow(createdAt: string): { from: string; to: string } {
-  return { from: new Date(Date.parse(createdAt) - 1).toISOString(), to: createdAt };
+function pointInTimeWindow(createdAt: unknown): { from: string; to: string } {
+  const to = safeTimestamp(createdAt);
+  return { from: new Date(Date.parse(to) - 1).toISOString(), to };
+}
+
+function asRecord(value: unknown): Record<string, unknown> { return value !== null && typeof value === 'object' ? value as Record<string, unknown> : {}; }
+function deliveryStatusValue(value: unknown): DeliveryStatus | null { return value === 'pending' || value === 'sent' || value === 'failed' || value === 'skipped' ? value : null; }
+function isRunStatus(value: unknown): value is 'quiet' | 'reported' | 'partial' | 'failed' { return value === 'quiet' || value === 'reported' || value === 'partial' || value === 'failed'; }
+function isCorruptReport(row: V2ReportRow, stored: { value: V2Payload; valid: boolean }): boolean {
+  const payloadStatus = stored.value.report?.status;
+  return !isRunStatus(row.status) || (row.run_status !== null && row.run_status !== undefined && !isRunStatus(row.run_status)) || (payloadStatus !== undefined && !isRunStatus(payloadStatus));
+}
+function safeTimestamp(value: unknown): string {
+  return safeIsoDate(value) ?? '1970-01-01T00:00:00.000Z';
+}
+function safeIsoDate(value: unknown): string | null {
+  if (typeof value !== 'string' || !IsoDateTimeSchema.safeParse(value).success) return null;
+  return new Date(value).toISOString();
+}
+function deliveryAttemptStatus(value: unknown): 'ready' | 'pending' | 'sent' | 'failed' | null { return value === 'ready' || value === 'pending' || value === 'sent' || value === 'failed' ? value : null; }
+function isLevel(value: unknown): value is SignaturePlan['signatures'][number]['level'] { return value === 'ERROR' || value === 'CRITICAL' || value === 'WARNING'; }
+function isClassification(value: unknown): value is SignaturePlan['signatures'][number]['classification'] { return value === 'new' || value === 'recurring' || value === 'reactivated' || value === 'latent'; }
+function isTrend(value: unknown): value is SignaturePlan['signatures'][number]['trend'] { return value === 'new' || value === 'increasing' || value === 'flat' || value === 'decreasing'; }
+function safeOccurrence(value: unknown): ParsedLogEntry | null {
+  const occurrence = asRecord(value);
+  if (typeof occurrence.at !== 'string' || !isLevel(occurrence.level) || typeof occurrence.component !== 'string' || occurrence.component.trim().length === 0 || typeof occurrence.message !== 'string' || occurrence.message.trim().length === 0 || typeof occurrence.normalizedMessage !== 'string' || occurrence.normalizedMessage.trim().length === 0 || typeof occurrence.signature !== 'string' || occurrence.signature.trim().length === 0) return null;
+  return { at: occurrence.at, level: occurrence.level, component: occurrence.component, message: occurrence.message, normalizedMessage: occurrence.normalizedMessage, signature: occurrence.signature };
 }
 
 export class SQLiteScheduleStateStore {

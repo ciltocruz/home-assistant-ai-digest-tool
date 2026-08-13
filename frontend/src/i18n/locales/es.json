@@ -148,10 +148,14 @@
         "info": "Info"
       },
       "deliveryStatus": {
-        "pending": "Pendiente",
-        "sent": "Enviado",
-        "failed": "Fallido",
-        "skipped": "Omitido"
+         "pending": "Entrega pendiente de confirmación",
+         "sent": "Enviado",
+         "failed": "Fallido",
+         "skipped": "Sin notificación"
+      },
+      "source": {
+        "legacy": "Informe heredado",
+        "v2": "Informe de IA"
       }
     },
     "jobLifecycle": {
@@ -202,7 +206,7 @@
       "recommendations": { "title": "Recomendación" },
       "evidence": { "title": "Evidencia" },
       "severity": { "critical": "Crítica", "warning": "Aviso", "info": "Información" },
-      "legacy": { "title": "Formato heredado", "copy": "Este informe no incluye datos estructurados. Se muestra el contenido original de forma segura." }
+       "legacy": { "title": "Formato heredado", "copy": "Este informe se generó con una versión anterior y no contiene análisis de IA estructurado por firma. Solo un informe v2 nuevo y correcto puede proporcionar ese análisis.", "disclosure": "Mostrar el contenido original del informe", "protectedData": "Datos protegidos ocultos" }
     }
   }
 }

@@ -218,6 +218,20 @@ describe('shared DTOs', () => {
     expect(JSON.stringify(summary)).not.toContain('providerPayload');
   });
 
+  it('accepts optional legacy and v2 report sources while keeping old summaries valid', () => {
+    const summary = {
+      id: 'digest-source',
+      window: { from: '2026-07-06T00:00:00.000Z', to: '2026-07-06T23:59:59.999Z' },
+      severityCounts: { critical: 0, warning: 0, info: 0 },
+      createdAt: '2026-07-06T20:00:00.000Z',
+      deliveryStatus: 'pending' as const
+    };
+
+    expect(DigestSummarySchema.parse({ ...summary, source: 'legacy' }).source).toBe('legacy');
+    expect(DigestSummarySchema.parse({ ...summary, source: 'v2' }).source).toBe('v2');
+    expect(DigestSummarySchema.parse(summary)).not.toHaveProperty('source');
+  });
+
   it('accepts only durable manual job responses and credential-free report detail', async () => {
     const { RunDigestRequestSchema, RunDigestResponseSchema, DigestJobStatusSchema, DigestDetailSchema } = await import('./dtos');
     expect(RunDigestRequestSchema.parse({ kind: 'manual' })).toEqual({ kind: 'manual' });

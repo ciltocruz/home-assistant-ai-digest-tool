@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { DigestDetailSchema, DigestHistoryResponseSchema, type DigestDetail } from '@ha-digest/shared';
 import type { FastifyInstance } from 'fastify';
 import type { BackendApiServices } from './app.js';
 import { createApp } from './app.js';
@@ -84,6 +85,198 @@ describe('account authentication boundary', () => {
     expect((await app.inject({ method: 'POST', url: '/api/account/password', headers: { cookie }, payload: { currentPassword: 'long-enough-password', nextPassword: 'changed-long-password' } })).statusCode).toBe(403);
     expect((await app.inject({ method: 'POST', url: '/api/account/password', headers: { cookie, 'x-csrf-token': csrfToken }, payload: { currentPassword: 'wrong', nextPassword: 'changed-long-password' } })).statusCode).toBe(401);
     expect((await app.inject({ method: 'POST', url: '/api/account/password', headers: { cookie, 'x-csrf-token': csrfToken }, payload: { currentPassword: 'long-enough-password', nextPassword: 'changed-long-password' } })).statusCode).toBe(204);
+  });
+
+  it('returns v2 detail without provider credentials in the HTTP-facing projection', async () => {
+    const rawSecrets = [
+      'http-route-bearer-fixture',
+      'http-route-token-fixture',
+      'http-route-api-key-fixture',
+      'http-route-query-token-fixture',
+      '123456:ABCdefGHIjklMNOpqr',
+      '987654:ZYXwvUTSrqponMLK'
+    ];
+    const detail: DigestDetail = {
+      id: 'v2-http-detail',
+      source: 'v2',
+      summary: { id: 'v2-http-detail', window: { from: '2026-08-03T10:00:00.000Z', to: '2026-08-03T11:00:00.000Z' }, severityCounts: { critical: 0, warning: 1, info: 0 }, createdAt: '2026-08-03T11:00:00.000Z', deliveryStatus: 'pending', source: 'v2' },
+      rendered: { format: 'markdown', body: '' },
+      presentation: {
+        version: 2,
+        mode: 'batch',
+        status: 'reported',
+        warnings: [],
+        signatures: [{
+          signature: 'sig-http',
+          component: 'mqtt',
+          level: 'WARNING',
+          classification: 'new',
+          trend: 'new',
+          occurrences: 1,
+          analysis: {
+            summary: `Incident: Bearer ${rawSecrets[0]} token=${rawSecrets[1]} api_key=${rawSecrets[2]} https://provider.test/?token=${rawSecrets[3]} botToken=${rawSecrets[4]}. Token budget is stable.`,
+            recommendation: `Restart after bot_token: ${rawSecrets[5]}; keep API key rotation documented.`
+          }
+        }]
+      }
+    };
+    const runtimeServices = services();
+    runtimeServices.reports.get = async () => detail;
+    app = createApp({ services: runtimeServices, auth: { sessionTtlMs: 60_000 } });
+    const registered = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: 'long-enough-password', language: 'en' } });
+
+    const response = await app.inject({ method: 'GET', url: '/api/digests/v2-http-detail', headers: { cookie: registered.headers['set-cookie'] } });
+
+    expect(response.statusCode).toBe(200);
+    for (const secret of rawSecrets) expect(response.body).not.toContain(secret);
+    expect(response.body).toContain('Token budget is stable');
+    expect(response.body).toContain('API key rotation documented');
+  });
+
+  it('sanitizes old v2 warning and integration fields at the HTTP detail seam', async () => {
+    const rawSecrets = ['http-old-warning-token-fixture', 'http-old-integration-secret-fixture'];
+    const detail: DigestDetail = {
+      id: 'v2-http-old-detail',
+      source: 'v2',
+      summary: { id: 'v2-http-old-detail', window: { from: '2026-08-03T10:00:00.000Z', to: '2026-08-03T11:00:00.000Z' }, severityCounts: { critical: 0, warning: 1, info: 0 }, createdAt: '2026-08-03T11:00:00.000Z', deliveryStatus: 'pending', source: 'v2' },
+      rendered: { format: 'markdown', body: '' },
+      presentation: {
+        version: 2,
+        mode: 'batch',
+        status: 'reported',
+        warnings: [`Bearer ${rawSecrets[0]}`],
+        integrationStatus: {
+          available: true,
+          providerControlled: rawSecrets[1],
+          integrations: [{ domain: 'mqtt', title: `MQTT Bearer ${rawSecrets[0]}`, state: `token=${rawSecrets[1]}`, opaque: 'do-not-return' }]
+        },
+        signatures: []
+      } as never
+    };
+    const runtimeServices = services();
+    runtimeServices.reports.get = async () => detail;
+    app = createApp({ services: runtimeServices, auth: { sessionTtlMs: 60_000 } });
+    const registered = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: 'long-enough-password', language: 'en' } });
+
+    const response = await app.inject({ method: 'GET', url: '/api/digests/v2-http-old-detail', headers: { cookie: registered.headers['set-cookie'] } });
+
+    expect(response.statusCode).toBe(200);
+    DigestDetailSchema.parse(response.json());
+    expect(response.json()).toMatchObject({
+      presentation: {
+        warnings: ['Bearer [REDACTED]'],
+        integrationStatus: { available: true, integrations: [{ domain: 'mqtt', title: 'MQTT Bearer [REDACTED]', state: 'token=[REDACTED]' }] }
+      }
+    });
+    for (const secret of rawSecrets) expect(response.body).not.toContain(secret);
+    expect(response.body).not.toContain('providerControlled');
+    expect(response.body).not.toContain('opaque');
+  });
+
+  it('drops unknown top-level, batch presentation, and signature fields at the HTTP detail seam', async () => {
+    const detail: DigestDetail = {
+      id: 'v2-http-allowlist-detail',
+      source: 'v2',
+      summary: { id: 'v2-http-allowlist-detail', window: { from: '2026-08-03T10:00:00.000Z', to: '2026-08-03T11:00:00.000Z' }, severityCounts: { critical: 0, warning: 1, info: 0 }, createdAt: '2026-08-03T11:00:00.000Z', deliveryStatus: 'pending', source: 'v2' },
+      rendered: { format: 'markdown', body: '' },
+      presentation: {
+        version: 2,
+        mode: 'batch',
+        status: 'reported',
+        warnings: [],
+        signatures: [{
+          signature: 'sig-http-allowlist',
+          component: 'mqtt',
+          level: 'WARNING',
+          classification: 'new',
+          trend: 'new',
+          occurrences: 1,
+          providerControlled: 'drop-signature-field'
+        } as never],
+        providerControlled: 'drop-presentation-field'
+      } as never,
+      providerControlled: 'drop-top-level-field'
+    } as never;
+    const runtimeServices = services();
+    runtimeServices.reports.get = async () => detail;
+    app = createApp({ services: runtimeServices, auth: { sessionTtlMs: 60_000 } });
+    const registered = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: 'long-enough-password', language: 'en' } });
+
+    const response = await app.inject({ method: 'GET', url: '/api/digests/v2-http-allowlist-detail', headers: { cookie: registered.headers['set-cookie'] } });
+
+    expect(response.statusCode).toBe(200);
+    expect(DigestDetailSchema.parse(response.json())).toMatchObject({ id: 'v2-http-allowlist-detail', presentation: { mode: 'batch', signatures: [{ signature: 'sig-http-allowlist' }] } });
+    expect(response.body).not.toContain('providerControlled');
+    expect(response.body).not.toContain('drop-signature-field');
+    expect(response.body).not.toContain('drop-presentation-field');
+    expect(response.body).not.toContain('drop-top-level-field');
+  });
+
+  it('returns a schema-valid corrupt v2 detail when status, timestamps, and notes are malformed', async () => {
+    const detail = {
+      id: 'v2-http-corrupt-detail',
+      source: 'v2',
+      summary: {
+        id: 'v2-http-corrupt-detail',
+        window: { from: 'not-a-window', to: 'also-not-a-window' },
+        severityCounts: { critical: 0, warning: 0, info: 0 },
+        createdAt: 'not-a-created-at',
+        deliveryStatus: 'not-a-delivery-status',
+        source: 'v2',
+        runStatus: 'not-a-run-status',
+        warningCodes: []
+      },
+      rendered: { format: 'markdown', body: '' },
+      presentation: {
+        version: 2,
+        mode: 'batch',
+        status: 'not-a-status',
+        warnings: [],
+        signatures: [{
+          signature: 'sig-http-corrupt',
+          component: 'mqtt',
+          level: 'WARNING',
+          classification: 'new',
+          trend: 'new',
+          occurrences: 1,
+          notes: [
+            { id: 'invalid-note', text: 'Discard me', occurredAt: 'not-a-date', createdAt: 'not-a-date', tags: ['sig-http-corrupt'] },
+            { id: 'valid-note', text: 'Keep me', occurredAt: '2026-08-05T21:00:00+02:00', createdAt: '2026-08-05T19:00:00Z', tags: ['sig-http-corrupt'] }
+          ]
+        }]
+      }
+    } as never;
+    const runtimeServices = services();
+    runtimeServices.reports.get = async () => detail;
+    app = createApp({ services: runtimeServices, auth: { sessionTtlMs: 60_000 } });
+    const registered = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: 'long-enough-password', language: 'en' } });
+
+    const response = await app.inject({ method: 'GET', url: '/api/digests/v2-http-corrupt-detail', headers: { cookie: registered.headers['set-cookie'] } });
+
+    expect(response.statusCode).toBe(200);
+    const parsed = DigestDetailSchema.parse(response.json());
+    expect(parsed).toMatchObject({
+      summary: { createdAt: '1970-01-01T00:00:00.000Z', runStatus: 'failed', warningCodes: ['REPORT_CORRUPT'] },
+      presentation: { mode: 'batch', status: 'failed', warnings: ['REPORT_CORRUPT'], signatures: [{ notes: [{ id: 'valid-note', occurredAt: '2026-08-05T19:00:00.000Z', createdAt: '2026-08-05T19:00:00.000Z' }] }] }
+    });
+  });
+
+  it('fails closed when the history service returns data outside the shared response schema', async () => {
+    const runtimeServices = services();
+    runtimeServices.reports.list = async () => [{
+      id: 'invalid-history',
+      window: { from: '2026-08-03T10:00:00.000Z', to: '2026-08-03T11:00:00.000Z' },
+      severityCounts: { critical: 0, warning: 0, info: 0 },
+      createdAt: '2026-08-03T11:00:00.000Z',
+      deliveryStatus: 'corrupt' as never
+    }];
+    app = createApp({ services: runtimeServices, auth: { sessionTtlMs: 60_000 } });
+    const registered = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: 'long-enough-password', language: 'en' } });
+
+    const response = await app.inject({ method: 'GET', url: '/api/digests/history', headers: { cookie: registered.headers['set-cookie'] } });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toMatchObject({ code: 'INTERNAL_ERROR' });
   });
 });
 
