@@ -237,6 +237,39 @@ describe('SQLiteV2Stores', () => {
     expect((await stores.getReport(reportId))?.summary.deliveryStatus).toBe('sent');
   });
 
+  it('persists and projects a bounded delivery diagnostic while old failures remain reasonless', async () => {
+    const db = await openTestDatabase();
+    runMigrations(db);
+    const stores = new SQLiteV2Stores(db, 10, () => '2026-08-13T10:00:01.000Z');
+    const entries = parseHomeAssistantLog(['2026-08-13 09:00:00 ERROR [homeassistant.components.demo] Failure 42']);
+    const plan = await stores.classifyAndStage(entries, '2026-08-13T10:00:00.000Z');
+    const reportId = await stores.commit({ request: { runId: 'diag-run', slotId: 'diag-slot' }, cursor: { dev: 1, ino: 2, size: 1, offset: 1 }, signatures: plan, report: { status: 'reported', findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [] } });
+
+    await stores.updateDeliveryStatus(reportId, 'failed', { channel: 'telegram', stage: 'response', errorCode: 'TELEGRAM_HTTP_401', messageKey: 'telegram_auth_failed', recordedAt: '2026-08-13T10:00:01.000Z' });
+
+    expect((await stores.listReports())[0]?.deliveryDiagnostic).toMatchObject({ errorCode: 'TELEGRAM_HTTP_401', messageKey: 'telegram_auth_failed' });
+    expect((await stores.getReport(reportId))?.summary.deliveryDiagnostic).toMatchObject({ stage: 'response' });
+    const row = db.prepare('select * from v2_report_delivery_attempts where report_id = ?').get(reportId);
+    expect(JSON.stringify(row)).not.toContain('target');
+    expect(JSON.stringify(row)).not.toContain('body');
+  });
+
+  it('persists an indeterminate Telegram response as pending and never claims it for automatic resend', async () => {
+    const db = await openTestDatabase();
+    runMigrations(db);
+    const stores = new SQLiteV2Stores(db, 10, () => '2026-08-13T10:00:01.000Z');
+    const entries = parseHomeAssistantLog(['2026-08-13 09:00:00 ERROR [homeassistant.components.demo] Failure 42']);
+    const plan = await stores.classifyAndStage(entries, '2026-08-13T10:00:00.000Z');
+    const reportId = await stores.commit({ request: { runId: 'invalid-response-run', slotId: 'invalid-response-slot' }, cursor: { dev: 1, ino: 2, size: 1, offset: 1 }, signatures: plan, report: { status: 'reported', findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [] } });
+
+    await stores.updateDeliveryStatus(reportId, 'pending', { channel: 'telegram', stage: 'response', errorCode: 'TELEGRAM_INVALID_RESPONSE', messageKey: 'telegram_invalid_response', recordedAt: '2026-08-13T10:00:01.000Z' });
+
+    expect((await stores.listReports())[0]).toMatchObject({ deliveryStatus: 'pending', deliveryDiagnostic: { errorCode: 'TELEGRAM_INVALID_RESPONSE', messageKey: 'telegram_invalid_response' } });
+    expect((await stores.getReport(reportId))?.summary.deliveryDiagnostic).toMatchObject({ stage: 'response' });
+    await expect(stores.claimDeliveryAttempt(reportId)).resolves.toEqual({ status: 'pending', shouldSend: false });
+    expect(JSON.stringify(db.prepare('select * from v2_report_delivery_attempts where report_id = ?').get(reportId))).not.toContain('response body');
+  });
+
   it('retrieves an old v2 payload with missing findings and warnings as a valid detail', async () => {
     const db = await openTestDatabase();
     runMigrations(db);

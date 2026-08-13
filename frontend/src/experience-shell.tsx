@@ -90,13 +90,13 @@ export function ExperienceShell({
       <a className="skip-link" href="#main-content">{t('shell.skipToContent')}</a>
       <div className="app-root">
         <aside className="app-sidebar">
-          <div className="app-sidebar-brand">
+          <a className="app-sidebar-brand" href="/" aria-label={t('shell.homeLabel')}>
             <div className="app-sidebar-icon" aria-hidden="true">🏡</div>
             <div className="app-sidebar-name">
               HA AI Digest
-              <span>Panel de control</span>
+              <span>{t('shell.brandSubtitle')}</span>
             </div>
-          </div>
+          </a>
 
           <nav className="app-nav" aria-label={t('shell.navigationLabel')}>
             <a

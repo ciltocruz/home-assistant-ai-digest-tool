@@ -20,7 +20,7 @@ describe('SQLite migrations', () => {
       expect.arrayContaining(['admin_accounts', 'auth_sessions', 'deliveries', 'digest_jobs', 'ignore_rules', 'login_attempts', 'notes', 'onboarding_state', 'reports', 'schedule_state', 'secrets', 'settings', 'v2_log_cursor', 'v2_reports', 'v2_report_delivery_attempts', 'v2_runs', 'v2_signatures'])
     );
       expect(db.prepare('select version from schema_migrations').all().map((row) => ({ ...(row as { version: number }) }))).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }
     ]);
   });
 
@@ -44,7 +44,7 @@ describe('SQLite migrations', () => {
     runMigrations(db);
 
     expect(db.prepare('select version from schema_migrations').all().map((row) => ({ ...(row as { version: number }) }))).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }
     ]);
   });
 
@@ -142,6 +142,21 @@ describe('SQLite migrations', () => {
 
     expect(db.prepare('select report_id, status, created_at, updated_at from v2_report_delivery_attempts order by report_id').all()).toEqual(firstState);
     expect(db.prepare('select id, delivery_status from v2_runs order by id').all()).toEqual(firstRunState);
+  });
+
+  it('adds nullable bounded diagnostic columns without changing old delivery attempts', async () => {
+    const db = await openTestDatabase();
+    runMigrations(db);
+    db.prepare('insert into v2_runs(id, slot_id, status, delivery_status, created_at) values (?, ?, ?, ?, ?)').run('old-diag', 'old-diag-slot', 'reported', 'failed', '2026-08-13T10:00:00.000Z');
+    db.prepare('insert into v2_reports(id, run_id, status, payload_json, created_at) values (?, ?, ?, ?, ?)').run('v2-report:old-diag', 'old-diag', 'reported', '{"report":{"status":"reported","deliveryStatus":"failed"}}', '2026-08-13T10:00:00.000Z');
+    db.prepare('insert into v2_report_delivery_attempts(report_id, status, created_at, updated_at) values (?, ?, ?, ?)').run('v2-report:old-diag', 'failed', '2026-08-13T10:00:00.000Z', '2026-08-13T10:00:00.000Z');
+
+    runMigrations(db);
+    runMigrations(db);
+
+    const columns = (db.prepare('pragma table_info(v2_report_delivery_attempts)').all() as Array<{ name: string }>).map(({ name }) => name);
+    expect(columns).toEqual(expect.arrayContaining(['diagnostic_error_code', 'diagnostic_message_key', 'diagnostic_stage', 'diagnostic_at']));
+    expect(db.prepare('select status, diagnostic_error_code, diagnostic_message_key, diagnostic_stage, diagnostic_at from v2_report_delivery_attempts where report_id = ?').get('v2-report:old-diag')).toEqual({ status: 'failed', diagnostic_error_code: null, diagnostic_message_key: null, diagnostic_stage: null, diagnostic_at: null });
   });
 
   it('repairs only an orphaned completed v2 job and makes it retryable once', async () => {

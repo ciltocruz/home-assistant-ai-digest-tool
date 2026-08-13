@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-const MIGRATION_VERSION = 10;
+const MIGRATION_VERSION = 11;
 
 export function runMigrations(db: DatabaseSync): void {
   db.exec('pragma foreign_keys = on');
@@ -123,6 +123,7 @@ function applyMigrations(db: DatabaseSync): void {
   addDigestJobColumns(db);
   addV2BatchTables(db);
   addV2RunColumns(db);
+  addV2DeliveryDiagnosticColumns(db);
   backfillV2DeliveryAttempts(db);
   backfillV2RunDeliveryStatuses(db);
   repairOrphanedCompletedV2Jobs(db);
@@ -136,8 +137,9 @@ function applyMigrations(db: DatabaseSync): void {
    db.prepare('insert or ignore into schema_migrations(version) values (?)').run(6);
    db.prepare('insert or ignore into schema_migrations(version) values (?)').run(7);
    db.prepare('insert or ignore into schema_migrations(version) values (?)').run(8);
-   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(9);
-   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(MIGRATION_VERSION);
+    db.prepare('insert or ignore into schema_migrations(version) values (?)').run(9);
+    db.prepare('insert or ignore into schema_migrations(version) values (?)').run(10);
+    db.prepare('insert or ignore into schema_migrations(version) values (?)').run(MIGRATION_VERSION);
   db.prepare(
     `insert or ignore into onboarding_state(singleton, current_step, completed_steps_json, draft_json, secret_refs_json, secret_metadata_json, completed, updated_at)
      select 1,
@@ -294,6 +296,15 @@ function addV2RunColumns(db: DatabaseSync): void {
   const columns = new Set((db.prepare('pragma table_info(v2_runs)').all() as Array<{ name: string }>).map((column) => column.name));
   if (!columns.has('error_message')) db.exec('alter table v2_runs add column error_message text');
   if (!columns.has('delivery_status')) db.exec('alter table v2_runs add column delivery_status text');
+}
+
+function addV2DeliveryDiagnosticColumns(db: DatabaseSync): void {
+  const columns = new Set((db.prepare('pragma table_info(v2_report_delivery_attempts)').all() as Array<{ name: string }>).map((column) => column.name));
+  const additions = [
+    ['diagnostic_error_code', 'text'], ['diagnostic_message_key', 'text'],
+    ['diagnostic_stage', 'text'], ['diagnostic_at', 'text']
+  ] as const;
+  for (const [name, definition] of additions) if (!columns.has(name)) db.exec(`alter table v2_report_delivery_attempts add column ${name} ${definition}`);
 }
 
 function backfillV2DeliveryAttempts(db: DatabaseSync): void {

@@ -35,6 +35,11 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
       - ha-digest-data:/data
       # Mount exactly one HA log file; never mount the HA config directory or Docker socket.

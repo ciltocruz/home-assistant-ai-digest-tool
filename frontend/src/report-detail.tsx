@@ -27,8 +27,10 @@ export function ReportDetail({ report, embedded = false, onDelete }: { report: D
     <p className="muted-copy">{t('report.createdAt').replace('{time}', formatDateTime(report.summary.createdAt))}</p>
     <dl className="report-metadata">
       <div className="report-metadata-id"><dt>{t('report.id')}</dt><dd><code translate="no" dir="ltr">{report.id}</code></dd></div>
-      <div><dt>{t('report.window')}</dt><dd>{formatDateTime(report.summary.window.from)} — {formatDateTime(report.summary.window.to)}</dd></div>
-      <div><dt>{t('dashboard.history.fields.source')}</dt><dd>{t(`dashboard.history.source.${source}`)}</dd></div>
+      {source === 'v2'
+        ? <div><dt>{t('report.generatedAtLabel')}</dt><dd>{formatDateTime(report.summary.createdAt)}</dd></div>
+        : <div><dt>{t('report.window')}</dt><dd>{formatDateTime(report.summary.window.from)} — {formatDateTime(report.summary.window.to)}<span className="report-metadata-help">{t('report.windowHelp')}</span></dd></div>}
+      {source === 'legacy' ? <div><dt>{t('dashboard.history.fields.format')}</dt><dd>{t('dashboard.history.source.legacy')}</dd></div> : null}
     </dl>
     <ReportOutcomes report={report} source={source} heading={SectionHeading} />
     <section className="report-section" aria-labelledby="report-severity-title">
@@ -106,13 +108,14 @@ function ReportOutcomes({ report, source, heading: Heading }: { report: DigestDe
           ? t('report.outcomes.analysisPartial').replace('{analyzed}', String(analyzed)).replace('{total}', String(total)).replace('{missing}', String(Math.max(0, total - analyzed)))
           : t('report.outcomes.analysisComplete').replace('{analyzed}', String(analyzed)).replace('{total}', String(total));
   const delivery = t(`report.outcomes.notification${capitalize(report.summary.deliveryStatus)}`);
+  const diagnostic = report.summary.deliveryDiagnostic;
 
   return <section className="report-section report-outcomes" aria-labelledby="report-outcomes-title">
     <Heading id="report-outcomes-title">{t('report.outcomes.title')}</Heading>
     <dl>
       <div><dt>{t('report.outcomes.reportResult')}</dt><dd>{result}</dd></div>
       <div><dt>{t('report.outcomes.aiAnalysis')}</dt><dd>{analysis}</dd></div>
-      <div><dt>{t('report.outcomes.notification')}</dt><dd>{delivery}{report.summary.deliveryStatus === 'failed' ? <><span>{t('report.outcomes.notificationFailureCopy')}</span><span>{t('report.outcomes.notificationFailureAction')}</span></> : null}</dd></div>
+      <div><dt>{t('report.outcomes.telegramNotification')}</dt><dd>{delivery}{diagnostic ? <><span>{t(`report.outcomes.deliveryDiagnostics.${diagnostic.messageKey}.copy`)}</span><span>{t(`report.outcomes.deliveryDiagnostics.${diagnostic.messageKey}.action`)}</span></> : report.summary.deliveryStatus === 'failed' ? <><span>{t('report.outcomes.notificationFailureCopy')}</span><span>{t('report.outcomes.notificationFailureAction')}</span></> : null}</dd></div>
     </dl>
   </section>;
 }
@@ -137,11 +140,11 @@ function BatchPresentation({ heading: Heading, presentation }: { heading: 'h2' |
   if (presentation.status === 'failed') return <section className="report-section" role="alert"><Heading>{t('report.batch.failure')}</Heading><p>{failureLabel(presentation.failure)}</p></section>;
   return <>
     {presentation.warnings.length > 0 ? <section className="report-section report-analysis-note"><Heading>{t('report.batch.warnings')}</Heading><ul>{presentation.warnings.map((warning) => <li key={warning}>{warningLabel(warning)}{warning === 'AI_ANALYSIS_PARTIAL' ? null : <code translate="no" dir="ltr">{warning}</code>}</li>)}</ul></section> : null}
-    <section className="report-section"><Heading>{t('report.batch.integrations')}</Heading><p>{presentation.integrationStatus?.available ? presentation.integrationStatus.integrations.map((item) => item.state ? `${item.title ?? item.domain} (${item.state})` : item.title ?? item.domain).join(', ') || t('report.batch.none') : t('report.batch.unavailable')}</p></section>
+    <section className="report-section"><Heading>{t('report.batch.integrations')}</Heading><p>{presentation.integrationStatus?.available ? presentation.integrationStatus.integrations.map((item) => item.state ? `${item.title ?? item.domain} (${item.state})` : item.title ?? item.domain).join(', ') || t('report.batch.none') : integrationFailureCopy(presentation.integrationStatus?.reason)}</p>{!presentation.integrationStatus?.available ? <p className="muted-copy">{t('report.batch.integrationAction')}</p> : null}</section>
     <section className="report-section report-problems"><Heading>{t('report.batch.problems')}</Heading><p className="report-section-intro">{t('report.batch.groupingExplanation')}</p><ul className="report-presentation-list">{presentation.signatures.map((item) => <li key={item.signature} className="report-presentation-item">
-      <div className="report-problem-heading"><p className="report-item-title">{t(`report.batch.classification.${item.classification}`)}</p><span className={`severity-badge severity-badge--${severityForLevel(item.level)}`}>{severityLabel(severityForLevel(item.level))}</span></div>
-      <p className="report-problem-stats"><span>{t('report.batch.trend').replace('{trend}', t(`report.batch.trendValues.${item.trend}`))}</span><span>{item.occurrences === 1 ? t('report.batch.occurrencesSingular') : t('report.batch.occurrencesPlural').replace('{count}', String(item.occurrences))}</span></p>
-      {item.analysis ? <div className="report-ai-content"><div><p className="report-field-label">{t('report.batch.aiExplanation')}</p><p>{item.analysis.summary}</p></div><div><p className="report-field-label">{t('report.batch.aiRecommendation')}</p><p>{item.analysis.recommendation}</p></div></div> : <p className="muted-copy">{t('report.batch.analysisUnavailable')}</p>}
+      <div className="report-problem-heading"><p className="report-item-title">{item.problemKind ? t(`report.batch.problemKinds.${item.problemKind}.title`) : t(`report.batch.classification.${item.classification}`)}</p><span className={`severity-badge severity-badge--${severityForLevel(item.level)}`}>{severityLabel(severityForLevel(item.level))}</span></div>
+      <p className="report-problem-stats"><span>{item.occurrences === 1 ? t('report.batch.occurrencesSingular') : t('report.batch.occurrencesPlural').replace('{count}', String(item.occurrences))}</span></p>
+      {item.problemKind ? <div className="report-ai-content"><div><p className="report-field-label">{t('report.batch.connectionExplanation')}</p><p>{t(`report.batch.problemKinds.${item.problemKind}.copy`)}</p></div><div><p className="report-field-label">{t('report.batch.nextStep')}</p><p>{t(`report.batch.problemKinds.${item.problemKind}.action`)}</p></div></div> : item.analysis ? <div className="report-ai-content"><div><p className="report-field-label">{t('report.batch.aiExplanation')}</p><p>{item.analysis.summary}</p></div><div><p className="report-field-label">{t('report.batch.aiRecommendation')}</p><p>{item.analysis.recommendation}</p></div></div> : <p className="muted-copy">{t('report.batch.analysisUnavailable')}</p>}
       <details className="report-technical-detail"><summary>{t('report.batch.component')}: <span translate="no">{item.component}</span></summary><dl><div><dt>{t('report.batch.technicalId')}</dt><dd><code translate="no" dir="ltr">{item.signature}</code></dd></div></dl></details>
       {item.notes?.length ? <div className="report-operator-notes"><p className="report-field-label">{t('report.batch.operatorNotes')}</p><ul>{item.notes.map((note) => <li key={note.id}>{note.text}</li>)}</ul></div> : null}
     </li>)}</ul></section>
@@ -181,6 +184,10 @@ function failureLabel(message?: string): string {
 
 function severityForLevel(level: 'ERROR' | 'CRITICAL' | 'WARNING'): 'critical' | 'warning' {
   return level === 'CRITICAL' ? 'critical' : 'warning';
+}
+
+function integrationFailureCopy(reason?: NonNullable<Extract<NonNullable<DigestDetail['presentation']>, { mode: 'batch' }>['integrationStatus']>['reason']): string {
+  return reason ? t(`report.batch.integrationReasons.${reason}`) : t('report.batch.unavailable');
 }
 
 function renderLegacyMarkdown(markdown: string) {

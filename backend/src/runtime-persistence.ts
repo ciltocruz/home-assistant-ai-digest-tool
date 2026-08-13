@@ -19,6 +19,7 @@ import { SQLiteV2Stores } from './adapters/persistence/sqlite-v2-stores.js';
 import { SQLiteAuthStore } from './adapters/persistence/sqlite-auth-store.js';
 import { BatchReportRun, type RunRequest } from './application/batch-report-run.js';
 import { DigestWorker, type DigestWorkerFailureEvent } from './application/digest-worker.js';
+import type { RuntimeOperationalEvent } from './runtime-logging.js';
 import { SettingsService, type SecretReplacement } from './application/settings.js';
 import { projectLegacyReportPresentation } from './application/report-presentation.js';
 import { redactProviderError } from './domain/safe-error.js';
@@ -37,6 +38,7 @@ export type PersistentRuntimeOptions = {
   haWebSocketFactory?: (url: string) => HomeAssistantSocket;
   reportUrl?: (request: RunRequest) => string | undefined;
   digestFailureReporter?: (event: DigestWorkerFailureEvent) => void;
+  operationalEventReporter?: (event: RuntimeOperationalEvent) => void;
 };
 
 const SETTINGS_KEY = 'runtime';
@@ -156,21 +158,24 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
         notify: async (summary) => {
           const current = await settingsStore.get();
           const targetRef = current.secretRefs.notifierRefs?.telegram;
-          if (!targetRef || targetRef.startsWith('unconfigured:')) return 'skipped' as const;
+          if (!targetRef || targetRef.startsWith('unconfigured:')) return { status: 'skipped' as const, targetRef: 'telegram:unconfigured' };
           try {
             const creds = JSON.parse(await secretStore.resolve(targetRef)) as { botToken: string; chatId: string };
-            const result = await new TelegramNotifier({ now, httpClient: options.telegramHttpClient }).sendSummary(summary, { channel: 'telegram', label: `Telegram ${creds.chatId}`, config: creds });
-            return result.status;
-          } catch { return 'failed' as const; /* Notification configuration and delivery failures never fail a committed v2 run. */ }
+            return await new TelegramNotifier({ now, httpClient: options.telegramHttpClient }).sendSummary(summary, { channel: 'telegram', label: 'Telegram', config: creds });
+          } catch {
+            return { status: 'failed' as const, targetRef: 'telegram:configured', errorCode: 'configuration_failed' as const, message: 'Telegram configuration could not be resolved.' };
+          }
         }
       },
       reportUrl: options.reportUrl,
       language: () => auth.language(),
-      now
+      now,
+      eventReporter: options.operationalEventReporter
     });
     worker = new DigestWorker({
       jobs: digestJobs,
       failureReporter: options.digestFailureReporter,
+      eventReporter: options.operationalEventReporter,
       analysis: {
         runWithStages: async (onStage, job) => {
           await onStage('collecting');

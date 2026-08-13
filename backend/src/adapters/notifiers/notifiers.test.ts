@@ -95,7 +95,48 @@ describe('notifier adapters', () => {
 
     const result = await notifier.send(digest, { channel: 'telegram', label: 'Telegram', config: { botToken: TELEGRAM_BOT_TOKEN_SENTINEL, chatId: '4242' } });
 
-    expect(result).toEqual({ status: 'failed', targetRef: 'telegram:Telegram', errorCode: 'TELEGRAM_HTTP_401', message: 'Telegram delivery failed with status 401' });
+    expect(result).toEqual({ status: 'failed', targetRef: 'telegram:Telegram', errorCode: 'TELEGRAM_HTTP_401', message: 'Telegram rejected the configured credentials.' });
+    expect(JSON.stringify(result)).not.toContain(TELEGRAM_BOT_TOKEN_SENTINEL);
+  });
+
+  it.each([
+    [503, 'TELEGRAM_HTTP_5XX', 'Telegram service is temporarily unavailable.'],
+    [418, 'TELEGRAM_REJECTED', 'Telegram rejected the delivery request.']
+  ] as const)('bounds HTTP %s to an allowlisted diagnostic', async (status, errorCode, message) => {
+    const notifier = new TelegramNotifier({
+      httpClient: async () => ({ status, json: async () => ({ ok: false, description: 'arbitrary provider response must not escape' }) })
+    });
+
+    const result = await notifier.send(digest, { channel: 'telegram', label: 'Telegram', config: { botToken: TELEGRAM_BOT_TOKEN_SENTINEL, chatId: '4242' } });
+
+    expect(result).toMatchObject({ status: 'failed', errorCode, message });
+    expect(JSON.stringify(result)).not.toContain('arbitrary provider response');
+    expect(JSON.stringify(result)).not.toContain('418');
+    expect(JSON.stringify(result)).not.toContain('503');
+  });
+
+  it.each([
+    ['malformed JSON', async () => { throw new SyntaxError(`invalid JSON ${TELEGRAM_BOT_TOKEN_SENTINEL}`); }],
+    ['an unrecognized response shape', async () => ({ result: { message_id: 10 }, responseBody: TELEGRAM_BOT_TOKEN_SENTINEL })]
+  ] as const)('maps Telegram 2xx %s to a bounded indeterminate result', async (_case, json) => {
+    const notifier = new TelegramNotifier({
+      httpClient: async () => ({ status: 200, json })
+    });
+
+    const result = await notifier.send(digest, { channel: 'telegram', label: 'Telegram', config: { botToken: TELEGRAM_BOT_TOKEN_SENTINEL, chatId: '4242' } });
+
+    expect(result).toEqual({ status: 'pending', targetRef: 'telegram:Telegram', errorCode: 'TELEGRAM_INVALID_RESPONSE', message: 'Telegram returned a response that could not be confirmed.' });
+    expect(JSON.stringify(result)).not.toContain(TELEGRAM_BOT_TOKEN_SENTINEL);
+  });
+
+  it('keeps an explicit Telegram ok:false response as a rejected failure', async () => {
+    const notifier = new TelegramNotifier({
+      httpClient: async () => ({ status: 200, json: async () => ({ ok: false, description: `private rejection ${TELEGRAM_BOT_TOKEN_SENTINEL}` }) })
+    });
+
+    const result = await notifier.send(digest, { channel: 'telegram', label: 'Telegram', config: { botToken: TELEGRAM_BOT_TOKEN_SENTINEL, chatId: '4242' } });
+
+    expect(result).toEqual({ status: 'failed', targetRef: 'telegram:Telegram', errorCode: 'TELEGRAM_REJECTED', message: 'Telegram rejected the message.' });
     expect(JSON.stringify(result)).not.toContain(TELEGRAM_BOT_TOKEN_SENTINEL);
   });
 

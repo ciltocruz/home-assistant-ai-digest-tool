@@ -5,12 +5,18 @@ import { redactProviderError } from '../domain/safe-error.js';
 type WorkerJobs = Pick<DigestJobStore, 'leaseNext' | 'setStage' | 'complete' | 'fail'>;
 type WorkerAnalysis = { runWithStages(onStage: (stage: Exclude<DigestJob['stage'], 'queued' | 'completed' | 'failed'>) => void | Promise<void>, job?: DigestJob): Promise<{ status: 'completed'; reportId: string }> };
 export type DigestWorkerFailureEvent = { jobId: string; stage: 'provider' | 'source' | 'processing' | 'storage'; errorCode: string; errorMessage: string };
+export type DigestWorkerEvent =
+  | { event: 'job_started'; jobId: string; retryCount: number }
+  | { event: 'job_retry'; jobId: string; retryCount: number }
+  | { event: 'job_stage'; jobId: string; stage: Exclude<DigestJob['stage'], 'queued' | 'completed' | 'failed'> }
+  | { event: 'job_completed'; jobId: string; reportId: string }
+  | { event: 'job_failed'; jobId: string; errorCode: string };
 
 export class DigestWorker {
   private active: Promise<void> | null = null;
   private stopping = false;
 
-  constructor(private readonly dependencies: { jobs: WorkerJobs; analysis: WorkerAnalysis; failureReporter?: (event: DigestWorkerFailureEvent) => void }) {}
+  constructor(private readonly dependencies: { jobs: WorkerJobs; analysis: WorkerAnalysis; failureReporter?: (event: DigestWorkerFailureEvent) => void; eventReporter?: (event: DigestWorkerEvent) => void }) {}
 
   start(): void { this.stopping = false; this.wake(); }
 
@@ -38,12 +44,19 @@ export class DigestWorker {
   private async processOne(): Promise<boolean> {
     const job = await this.dependencies.jobs.leaseNext();
     if (!job) return false;
+    this.report({ event: 'job_started', jobId: job.id, retryCount: job.retryCount });
+    if (job.retryCount > 0) this.report({ event: 'job_retry', jobId: job.id, retryCount: job.retryCount });
     try {
-      const result = await this.dependencies.analysis.runWithStages((stage) => this.dependencies.jobs.setStage(job.id, stage), job);
+      const result = await this.dependencies.analysis.runWithStages(async (stage) => {
+        this.report({ event: 'job_stage', jobId: job.id, stage });
+        await this.dependencies.jobs.setStage(job.id, stage);
+      }, job);
       await this.dependencies.jobs.complete(job.id, result.reportId);
+      this.report({ event: 'job_completed', jobId: job.id, reportId: result.reportId });
     } catch (error) {
       const failure = safeFailure(error);
       await this.dependencies.jobs.fail(job.id, failure.code, failure.message);
+      this.report({ event: 'job_failed', jobId: job.id, errorCode: failure.code });
       try {
         this.dependencies.failureReporter?.({ jobId: job.id, stage: failureStage(failure.code), errorCode: failure.code, errorMessage: failure.message });
       } catch {
@@ -51,6 +64,10 @@ export class DigestWorker {
       }
     }
     return true;
+  }
+
+  private report(event: DigestWorkerEvent): void {
+    try { this.dependencies.eventReporter?.(event); } catch { /* Logging failures must not change job execution. */ }
   }
 }
 

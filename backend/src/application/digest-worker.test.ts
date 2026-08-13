@@ -10,9 +10,11 @@ const job = {
 describe('DigestWorker', () => {
   it('persists every live-analysis stage and links the completed report', async () => {
     const stages: string[] = [];
+    const lifecycle: unknown[] = [];
     const complete = vi.fn(async () => undefined);
     const worker = new DigestWorker({
       jobs: { leaseNext: async () => job, setStage: async (_id, stage) => { stages.push(stage); }, complete, fail: async () => undefined },
+      eventReporter: (event) => { lifecycle.push(event); },
       analysis: { runWithStages: async (onStage) => {
         for (const stage of ['collecting', 'detecting', 'generating', 'rendering', 'saving'] as const) await onStage?.(stage);
         return { status: 'completed' as const, reportId: 'report-1' };
@@ -23,6 +25,15 @@ describe('DigestWorker', () => {
 
     expect(stages).toEqual(['collecting', 'detecting', 'generating', 'rendering', 'saving']);
     expect(complete).toHaveBeenCalledWith('job-1', 'report-1');
+    expect(lifecycle).toEqual([
+      { event: 'job_started', jobId: 'job-1', retryCount: 0 },
+      { event: 'job_stage', jobId: 'job-1', stage: 'collecting' },
+      { event: 'job_stage', jobId: 'job-1', stage: 'detecting' },
+      { event: 'job_stage', jobId: 'job-1', stage: 'generating' },
+      { event: 'job_stage', jobId: 'job-1', stage: 'rendering' },
+      { event: 'job_stage', jobId: 'job-1', stage: 'saving' },
+      { event: 'job_completed', jobId: 'job-1', reportId: 'report-1' }
+    ]);
   });
 
   it('classifies analysis failures without persisting the raw adapter error', async () => {
@@ -54,6 +65,19 @@ describe('DigestWorker', () => {
     expect(failureMessages[0]).not.toContain('raw-provider-token');
     expect(report).toHaveBeenCalledWith(expect.objectContaining({ stage: 'provider', errorMessage: expect.stringContaining('Gemini 404') }));
     expect(JSON.stringify(report.mock.calls)).not.toContain('raw-provider-token');
+  });
+
+  it('marks retried jobs explicitly in the safe lifecycle stream', async () => {
+    const events: unknown[] = [];
+    const worker = new DigestWorker({
+      jobs: { leaseNext: async () => ({ ...job, retryCount: 1 }), setStage: async () => undefined, complete: async () => undefined, fail: async () => undefined },
+      eventReporter: (event) => { events.push(event); },
+      analysis: { runWithStages: async () => ({ status: 'completed', reportId: 'report-retry' }) }
+    });
+
+    await worker.runOnce();
+
+    expect(events).toContainEqual({ event: 'job_retry', jobId: 'job-1', retryCount: 1 });
   });
 
   it('waits for active execution during shutdown', async () => {

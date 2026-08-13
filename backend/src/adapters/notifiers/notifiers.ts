@@ -90,21 +90,38 @@ export class TelegramNotifier implements Notifier {
     }
 
     if (response.status < 200 || response.status >= 300) {
+      const failure = telegramHttpFailure(response.status);
       return {
         status: 'failed',
         targetRef: targetRef(target),
-        errorCode: `TELEGRAM_HTTP_${response.status}`,
-        message: `Telegram delivery failed with status ${response.status}`
+        ...failure
       };
     }
 
-    const payload = await response.json();
-    if (!telegramOk(payload)) {
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      return telegramInvalidResponse(target);
+    }
+    if (telegramRejected(payload)) {
       return { status: 'failed', targetRef: targetRef(target), errorCode: 'TELEGRAM_REJECTED', message: 'Telegram rejected the message.' };
     }
+    if (!telegramOk(payload)) return telegramInvalidResponse(target);
 
     return { status: 'sent', targetRef: targetRef(target), deliveredAt: this.now() };
   }
+}
+
+function telegramHttpFailure(status: number): Pick<DeliveryResult, 'errorCode' | 'message'> {
+  if (status === 400) return { errorCode: 'TELEGRAM_HTTP_400', message: 'Telegram rejected the message format.' };
+  if (status === 401) return { errorCode: 'TELEGRAM_HTTP_401', message: 'Telegram rejected the configured credentials.' };
+  if (status === 403) return { errorCode: 'TELEGRAM_HTTP_403', message: 'Telegram refused delivery to the configured destination.' };
+  if (status === 404) return { errorCode: 'TELEGRAM_HTTP_404', message: 'Telegram could not find the configured bot endpoint.' };
+  if (status === 409) return { errorCode: 'TELEGRAM_HTTP_409', message: 'Telegram reported a conflicting bot operation.' };
+  if (status === 429) return { errorCode: 'TELEGRAM_HTTP_429', message: 'Telegram temporarily limited delivery requests.' };
+  if (status >= 500 && status <= 599) return { errorCode: 'TELEGRAM_HTTP_5XX', message: 'Telegram service is temporarily unavailable.' };
+  return { errorCode: 'TELEGRAM_REJECTED', message: 'Telegram rejected the delivery request.' };
 }
 
 async function withTimeout<T>(timeoutMs: number, operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
@@ -155,7 +172,15 @@ function targetRef(target: ResolvedTargetConfig): string {
 }
 
 function telegramOk(payload: unknown): boolean {
-  return Boolean(asRecord(payload).ok);
+  return asRecord(payload).ok === true;
+}
+
+function telegramRejected(payload: unknown): boolean {
+  return asRecord(payload).ok === false;
+}
+
+function telegramInvalidResponse(target: ResolvedTargetConfig): DeliveryResult {
+  return { status: 'pending', targetRef: targetRef(target), errorCode: 'TELEGRAM_INVALID_RESPONSE', message: 'Telegram returned a response that could not be confirmed.' };
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

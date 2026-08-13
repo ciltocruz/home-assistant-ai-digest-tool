@@ -21,6 +21,9 @@ describe('ReportDetail', () => {
     expect(html).toContain('Avisos 0');
     expect(html).toContain('Observaciones 2');
     expect(html).toContain('Volver a informes');
+    expect(html).toContain('Periodo revisado');
+    expect(html).toContain('Intervalo de información de Home Assistant revisado para crear este informe.');
+    expect(html).not.toContain('Origen');
     expect(html).not.toContain('<pre>');
   });
 
@@ -43,6 +46,36 @@ describe('ReportDetail', () => {
     expect(html).toContain('&lt;script&gt;no ejecutar&lt;/script&gt;');
     expect(html).toContain('Informe importado (formato anterior)');
     expect(html).not.toContain('<script>');
+  });
+
+  test.each([
+    { locale: 'en' as const, label: 'Report generated at' },
+    { locale: 'es' as const, label: 'Informe generado el' }
+  ])('labels a synthetic v2 point-in-time window honestly in $locale', ({ locale, label }) => {
+    setLocale(locale);
+    const html = renderToStaticMarkup(<ReportDetail report={{
+      id: `v2-point-in-time-${locale}`,
+      source: 'v2',
+      summary: { id: `v2-point-in-time-${locale}`, window: { from: '2026-08-01T09:59:59.999Z', to: '2026-08-01T10:00:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-08-01T10:00:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'quiet' },
+      rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'quiet', warnings: [], signatures: [] }
+    }} />);
+
+    expect(html).toContain(`<dt>${label}</dt>`);
+    expect(html).not.toContain(locale === 'es' ? 'Periodo revisado' : 'Reviewed period');
+  });
+
+  test('reserves reviewed-period metadata for legacy report windows', () => {
+    const html = renderToStaticMarkup(<ReportDetail report={{
+      id: 'v2-wide-fixture',
+      source: 'v2',
+      summary: { id: 'v2-wide-fixture', window: { from: '2026-08-01T09:00:00.000Z', to: '2026-08-01T10:00:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-08-01T10:00:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'quiet' },
+      rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'quiet', warnings: [], signatures: [] }
+    }} />);
+
+    expect(html).toContain('<dt>Informe generado el</dt>');
+    expect(html).not.toContain('Periodo revisado');
   });
 
   test.each([
@@ -175,19 +208,76 @@ describe('ReportDetail', () => {
     expect(html).toContain('Análisis de IA');
     expect(html).toContain('7 de 38 problemas detectados explicados por la IA');
     expect(html).toContain('31 problemas no pudieron explicarse');
-    expect(html).toContain('Notificación');
+    expect(html).toContain('Notificación de Telegram');
     expect(html).toContain('El informe existe, pero no se pudo enviar la notificación. El motivo exacto no quedó registrado.');
     expect(html).toContain('Revisa la configuración de Telegram y envía una prueba desde Configuración.');
     expect(html).toContain('Problemas detectados');
     expect(html).toContain('Los mensajes repetidos del mismo problema se agrupan para que el informe sea más fácil de leer.');
     expect(html).toContain('Explicación de la IA');
     expect(html).toContain('Recomendación de la IA');
-    expect(html).toContain('Tendencia: en aumento');
+    expect(html).not.toContain('Tendencia:');
     expect(html).toContain('3 apariciones');
     expect(html).not.toContain('Análisis de firmas');
     expect(html).not.toContain('Tendencia: increasing');
     expect(html).not.toContain('AI_ANALYSIS_PARTIAL</p>');
     expect(html.indexOf('homeassistant.component_1')).toBeGreaterThan(html.indexOf('Problema reactivado'));
+  });
+
+  test.each([
+    { code: 'TELEGRAM_HTTP_401' as const, copy: 'Telegram rechazó las credenciales configuradas.', action: 'Revisa el token del bot en Configuración y envía una prueba.' },
+    { code: 'TELEGRAM_HTTP_429' as const, copy: 'Telegram limitó temporalmente los envíos.', action: 'Espera unos minutos y vuelve a intentarlo.' }
+  ])('explains safe Telegram diagnostic $code without exposing technical data', ({ code, copy, action }) => {
+    const html = renderToStaticMarkup(<ReportDetail report={{
+      id: 'delivery-safe-diagnostic',
+      source: 'v2',
+      summary: {
+        id: 'delivery-safe-diagnostic', window: { from: '2026-08-13T09:00:00.000Z', to: '2026-08-13T10:00:00.000Z' },
+        severityCounts: { critical: 0, warning: 1, info: 0 }, createdAt: '2026-08-13T10:00:00.000Z', deliveryStatus: 'failed', source: 'v2', runStatus: 'reported',
+        deliveryDiagnostic: { channel: 'telegram', stage: 'response', errorCode: code, messageKey: code === 'TELEGRAM_HTTP_401' ? 'telegram_auth_failed' : 'telegram_rate_limited', recordedAt: '2026-08-13T10:00:01.000Z' }
+      },
+      rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'reported', warnings: [], signatures: [] }
+    }} />);
+
+    expect(html).toContain(copy);
+    expect(html).toContain(action);
+    expect(html).not.toContain(code);
+  });
+
+  test('explains an indeterminate Telegram response without calling it rejected', () => {
+    const html = renderToStaticMarkup(<ReportDetail report={{
+      id: 'delivery-invalid-response', source: 'v2',
+      summary: {
+        id: 'delivery-invalid-response', window: { from: '2026-08-13T09:00:00.000Z', to: '2026-08-13T10:00:00.000Z' },
+        severityCounts: { critical: 0, warning: 1, info: 0 }, createdAt: '2026-08-13T10:00:00.000Z', deliveryStatus: 'pending', source: 'v2', runStatus: 'reported',
+        deliveryDiagnostic: { channel: 'telegram', stage: 'response', errorCode: 'TELEGRAM_INVALID_RESPONSE', messageKey: 'telegram_invalid_response', recordedAt: '2026-08-13T10:00:01.000Z' }
+      },
+      rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'reported', warnings: [], signatures: [] }
+    }} />);
+
+    expect(html).toContain('Pendiente de confirmación');
+    expect(html).toContain('No se pudo confirmar la respuesta de Telegram.');
+    expect(html).toContain('Comprueba el chat antes de intentar un nuevo envío para evitar duplicados.');
+    expect(html).not.toContain('Telegram rechazó');
+    expect(html).not.toContain('TELEGRAM_INVALID_RESPONSE');
+  });
+
+  test('describes repeated Plex DNS resolution evidence without claiming transience or recovery', () => {
+    const html = renderToStaticMarkup(<ReportDetail report={{
+      id: 'plex-resolution', summary: { id: 'plex-resolution', window: { from: '2026-08-13T09:00:00.000Z', to: '2026-08-13T10:00:00.000Z' }, severityCounts: { critical: 0, warning: 1, info: 0 }, createdAt: '2026-08-13T10:00:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'reported' }, rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'reported', warnings: [], integrationStatus: { available: true, integrations: [{ domain: 'plex', state: 'loaded' }] }, signatures: [{ signature: 'plex-dns', component: 'homeassistant.components.plex', level: 'ERROR', classification: 'recurring', trend: 'unknown', occurrences: 3, problemKind: 'endpoint_resolution', analysis: { summary: 'raw model outage claim', recommendation: 'raw model action' } }] }
+    }} />);
+
+    expect(html).toContain('Home Assistant no pudo resolver el punto de conexión de Plex en los eventos registrados.');
+    expect(html).toContain('Problema de resolución del punto de conexión');
+    expect(html).toContain('3 apariciones');
+    expect(html).not.toContain('raw model outage claim');
+    expect(html).not.toContain('transitorio');
+    expect(html).not.toContain('temporalmente');
+    expect(html).not.toContain('sigue disponible');
+    expect(html).not.toContain('no hace falta actuar');
+    expect(html).not.toContain('Tendencia:');
   });
 
   test('uses honest localized outcome copy when no report was generated', () => {
@@ -246,5 +336,16 @@ describe('ReportDetail', () => {
     expect(html).toContain('mqtt');
     expect(html).not.toContain('undefined');
     expect(html).not.toContain('(undefined)');
+  });
+
+  test('explains a safe integration snapshot reason without exposing connection details', () => {
+    const html = renderToStaticMarkup(<ReportDetail report={{
+      id: 'ha-timeout', summary: { id: 'ha-timeout', window: { from: '2026-08-13T09:00:00.000Z', to: '2026-08-13T10:00:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-08-13T10:00:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'quiet' }, rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'quiet', warnings: [], integrationStatus: { available: false, integrations: [], reason: 'socket_timeout' }, signatures: [] }
+    }} />);
+
+    expect(html).toContain('Home Assistant no respondió a tiempo al consultar las integraciones.');
+    expect(html).toContain('Comprueba que Home Assistant esté accesible y vuelve a generar el informe.');
+    expect(html).not.toContain('socket_timeout');
   });
 });

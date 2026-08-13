@@ -9,7 +9,7 @@ describe('HomeAssistantWebSocketClient', () => {
     const client = new HomeAssistantWebSocketClient({ haUrl: 'https://ha.local:8123', haTokenRef: 'ha', secrets: { resolve: async () => 'ha-token' }, webSocketFactory: (url) => { expect(url).toBe('wss://ha.local:8123/api/websocket'); return socket.socket; } });
 
     const snapshot = client.snapshot();
-    await tick(); socket.open(); await tick(); socket.message({ type: 'auth_ok' }); await tick(); socket.message({ id: 1, type: 'result', success: true, result: [{ domain: 'mqtt', title: 'MQTT', state: 'loaded' }] });
+    await tick(); socket.open(); await tick(); socket.message({ type: 'auth_required', ha_version: '2026.8.0' }); await tick(); socket.message({ type: 'auth_ok' }); await tick(); socket.message({ id: 1, type: 'result', success: true, result: [{ domain: 'mqtt', title: 'MQTT', state: 'loaded' }] });
 
     await expect(snapshot).resolves.toEqual({ available: true, integrations: [{ domain: 'mqtt', title: 'MQTT', state: 'loaded' }] });
     expect(socket.sent.map((message) => JSON.parse(message))).toEqual([{ type: 'auth', access_token: 'ha-token' }, { id: 1, type: 'config_entries/get' }]);
@@ -25,7 +25,7 @@ describe('HomeAssistantWebSocketClient', () => {
     const snapshot = client.snapshot();
     await tick();
     if (_name === 'unreachable socket') await drive(socket);
-    await expect(snapshot).resolves.toEqual({ available: false, integrations: [] });
+    await expect(snapshot).resolves.toEqual({ available: false, integrations: [], reason: 'connection_failed' });
   });
 
   it('returns unavailable when Home Assistant does not answer before the timeout', async () => {
@@ -34,7 +34,34 @@ describe('HomeAssistantWebSocketClient', () => {
     const client = new HomeAssistantWebSocketClient({ haUrl: 'http://ha.local:8123', haTokenRef: 'ha', secrets: { resolve: async () => 'token' }, webSocketFactory: () => socket.socket, timeoutMs: 25 });
     const snapshot = client.snapshot();
     await tick(); socket.open(); await vi.advanceTimersByTimeAsync(25);
-    await expect(snapshot).resolves.toEqual({ available: false, integrations: [] });
+    await expect(snapshot).resolves.toEqual({ available: false, integrations: [], reason: 'socket_timeout' });
+  });
+
+  it.each([
+    ['rejected authentication', [{ type: 'auth_required' }, { type: 'auth_invalid', message: 'secret-bearing provider text' }], 'auth_failed'],
+    ['rejected command', [{ type: 'auth_required' }, { type: 'auth_ok' }, { id: 1, type: 'result', success: false, error: { message: 'private integration title' } }], 'command_rejected'],
+    ['invalid command result', [{ type: 'auth_required' }, { type: 'auth_ok' }, { id: 1, type: 'result', success: true, result: {} }], 'invalid_result']
+  ] as const)('returns only the safe reason code for %s', async (_label, messages, reason) => {
+    const socket = fakeSocket();
+    const client = new HomeAssistantWebSocketClient({ haUrl: 'http://ha.local:8123', haTokenRef: 'ha', secrets: { resolve: async () => 'token' }, webSocketFactory: () => socket.socket });
+    const snapshot = client.snapshot();
+
+    await tick(); socket.open();
+    for (const message of messages) { await tick(); socket.message(message); }
+
+    await expect(snapshot).resolves.toEqual({ available: false, integrations: [], reason });
+    expect(JSON.stringify(await snapshot)).not.toContain('private integration title');
+    expect(JSON.stringify(await snapshot)).not.toContain('secret-bearing provider text');
+  });
+
+  it('fails safely when auth_required is missing', async () => {
+    const socket = fakeSocket();
+    const client = new HomeAssistantWebSocketClient({ haUrl: 'http://ha.local:8123', haTokenRef: 'ha', secrets: { resolve: async () => 'token' }, webSocketFactory: () => socket.socket });
+    const snapshot = client.snapshot();
+
+    await tick(); socket.open(); await tick(); socket.message({ type: 'auth_ok' }); await tick(); socket.error();
+
+    await expect(snapshot).resolves.toEqual({ available: false, integrations: [], reason: 'auth_required_missing' });
   });
 });
 

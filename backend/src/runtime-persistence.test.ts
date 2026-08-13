@@ -708,6 +708,9 @@ function fakeHaSocket(events: { configEntries: number }) {
       }
     }
   };
-  queueMicrotask(() => socket.onopen?.({}));
+  queueMicrotask(() => {
+    socket.onopen?.({});
+    queueMicrotask(() => socket.onmessage?.({ data: JSON.stringify({ type: 'auth_required', ha_version: '2026.8.0' }) }));
+  });
   return socket;
 }

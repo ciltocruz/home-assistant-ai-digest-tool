@@ -22,6 +22,16 @@ Local mode is the default. It publishes only on loopback and deliberately uses n
 
 `/health` reports process liveness. `/ready` additionally requires the frontend, SQLite data, and a readable HA log. A missing, empty, metadata-only, or unreadable HA log returns HTTP 503 and makes the Docker health check unhealthy.
 
+## Review container logs
+
+The application writes one structured JSON object per line to stdout for runtime startup, listening, and shutdown, report jobs, aggregate collection and analysis outcomes, Home Assistant integration snapshots, and Telegram delivery. Docker and Portainer show these events through normal container logs. Readiness is exposed by `/ready`; liveness is exposed by `/health`. Health polling and raw report, Home Assistant, provider, and notification content are not logged.
+
+```bash
+docker compose logs app
+```
+
+The default Compose service uses Docker's `json-file` driver with three 10 MB files. The existing `/data/logs/runtime.log` remains available for bounded compatibility failure records. Node's SQLite experimental warning may still appear during startup; other warnings are not suppressed.
+
 ## Complete protected onboarding and run a report
 
 On first visit, choose a language, create the admin account, and complete the protected onboarding with the Home Assistant URL, dedicated long-lived token, provider, optional Telegram target, required schedule, timezone, and privacy settings. The first report is queued immediately; later reports can be launched from the dashboard. The server accepts only authenticated, CSRF-protected requests.

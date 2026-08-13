@@ -124,6 +124,126 @@ describe('BatchReportRun', () => {
     expect(events).toEqual(['commit', 'notify', 'delivery:sent']);
   });
 
+  it('preserves only the bounded Telegram delivery diagnostic after notification', async () => {
+    const updates: unknown[] = [];
+    const run = new BatchReportRun({
+      log: { read: async () => delta }, signatures: { classifyAndStage: async () => plan },
+      provider: { analyze: async () => ({ summary: 'summary', recommendation: 'fix' }) },
+      persistence: {
+        commit: async () => 'report-diagnostic', claimDeliveryAttempt: async () => ({ status: 'pending', shouldSend: true }),
+        updateDeliveryStatus: async (...args) => { updates.push(args); }, fail: async () => undefined
+      },
+      notifier: { notify: async () => ({ status: 'failed', targetRef: 'telegram:private-target', errorCode: 'TELEGRAM_HTTP_429', message: 'provider text must not persist' }) },
+      now: () => '2026-08-13T10:00:01.000Z'
+    });
+
+    await run.run({ runId: 'run-diagnostic', slotId: 'slot-diagnostic' });
+
+    expect(updates).toEqual([['report-diagnostic', 'failed', {
+      channel: 'telegram', stage: 'response', errorCode: 'TELEGRAM_HTTP_429',
+      messageKey: 'telegram_rate_limited', recordedAt: '2026-08-13T10:00:01.000Z'
+    }]]);
+    expect(JSON.stringify(updates)).not.toContain('private-target');
+    expect(JSON.stringify(updates)).not.toContain('provider text');
+  });
+
+  it('persists an indeterminate Telegram response as pending without provider content', async () => {
+    const updates: unknown[] = [];
+    const run = new BatchReportRun({
+      log: { read: async () => delta }, signatures: { classifyAndStage: async () => plan },
+      provider: { analyze: async () => ({ summary: 'summary', recommendation: 'fix' }) },
+      persistence: {
+        commit: async () => 'report-invalid-response', claimDeliveryAttempt: async () => ({ status: 'pending', shouldSend: true }),
+        updateDeliveryStatus: async (...args) => { updates.push(args); }, fail: async () => undefined
+      },
+      notifier: { notify: async () => ({ status: 'pending', targetRef: 'telegram:private-target', errorCode: 'TELEGRAM_INVALID_RESPONSE', message: 'private response body' }) },
+      now: () => '2026-08-13T10:00:01.000Z'
+    });
+
+    const outcome = await run.run({ runId: 'run-invalid-response', slotId: 'slot-invalid-response' });
+
+    expect(outcome).toMatchObject({ reportId: 'report-invalid-response' });
+    expect(updates).toEqual([['report-invalid-response', 'pending', {
+      channel: 'telegram', stage: 'response', errorCode: 'TELEGRAM_INVALID_RESPONSE',
+      messageKey: 'telegram_invalid_response', recordedAt: '2026-08-13T10:00:01.000Z'
+    }]]);
+    expect(JSON.stringify(updates)).not.toContain('private-target');
+    expect(JSON.stringify(updates)).not.toContain('private response body');
+  });
+
+  it('maps an arbitrary notifier error code to a generic bounded diagnostic', async () => {
+    const updates: unknown[] = [];
+    const run = new BatchReportRun({
+      log: { read: async () => delta }, signatures: { classifyAndStage: async () => plan }, provider: { analyze: async () => ({ summary: 'summary', recommendation: 'fix' }) },
+      persistence: { commit: async () => 'report-generic-diagnostic', claimDeliveryAttempt: async () => ({ status: 'pending', shouldSend: true }), updateDeliveryStatus: async (...args) => { updates.push(args); }, fail: async () => undefined },
+      notifier: { notify: async () => ({ status: 'failed', targetRef: 'telegram:private', errorCode: 'ARBITRARY_PROVIDER_CODE', message: 'private provider detail' }) },
+      now: () => '2026-08-13T10:00:01.000Z'
+    });
+
+    await run.run({ runId: 'run-generic-diagnostic', slotId: 'slot-generic-diagnostic' });
+
+    expect(updates).toEqual([['report-generic-diagnostic', 'failed', { channel: 'telegram', stage: 'response', errorCode: 'TELEGRAM_REJECTED', messageKey: 'telegram_rejected', recordedAt: '2026-08-13T10:00:01.000Z' }]]);
+    expect(JSON.stringify(updates)).not.toContain('ARBITRARY_PROVIDER_CODE');
+    expect(JSON.stringify(updates)).not.toContain('private provider detail');
+  });
+
+  it('emits a completed pending Telegram event when delivery throws', async () => {
+    const events: unknown[] = [];
+    const run = new BatchReportRun({
+      log: { read: async () => delta }, signatures: { classifyAndStage: async () => plan }, provider: { analyze: async () => ({ summary: 'summary', recommendation: 'fix' }) },
+      persistence: { commit: async () => 'report-throw-event', claimDeliveryAttempt: async () => ({ status: 'pending', shouldSend: true }), updateDeliveryStatus: async () => undefined, fail: async () => undefined },
+      notifier: { notify: async () => { throw new Error('private outbound URL'); } },
+      eventReporter: (event) => { events.push(event); }
+    });
+
+    await run.run({ runId: 'run-throw-event', slotId: 'slot-throw-event' });
+
+    expect(events).toContainEqual(expect.objectContaining({ event: 'telegram_delivery_completed', outcome: 'pending' }));
+    expect(JSON.stringify(events)).not.toContain('private outbound URL');
+  });
+
+  it('reports aggregate report, HA snapshot, and Telegram lifecycle events without content', async () => {
+    const events: unknown[] = [];
+    let time = 100;
+    const run = new BatchReportRun({
+      log: { read: async () => delta }, signatures: { classifyAndStage: async () => plan },
+      provider: { analyze: async () => ({ summary: 'private provider content', recommendation: 'private action' }) },
+      persistence: { commit: async () => 'report-events', claimDeliveryAttempt: async () => ({ status: 'pending', shouldSend: true }), updateDeliveryStatus: async () => undefined, fail: async () => undefined },
+      haStatus: { snapshot: async () => ({ available: false, integrations: [], reason: 'socket_timeout' }) },
+      notifier: { notify: async () => ({ status: 'sent', targetRef: 'telegram:private-chat' }) },
+      eventReporter: (event) => { events.push(event); },
+      clock: () => time++
+    });
+
+    await run.run({ runId: 'run-events', slotId: 'slot-events' });
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: 'report_collection_completed', lineCount: 3, signatureCount: 3 }),
+      expect.objectContaining({ event: 'ha_snapshot_failed', reason: 'socket_timeout' }),
+      expect.objectContaining({ event: 'report_analysis_completed', analyzedCount: 3, failedCount: 0 }),
+      expect.objectContaining({ event: 'report_commit_completed', reportId: 'report-events' }),
+      expect.objectContaining({ event: 'telegram_delivery_started' }),
+      expect.objectContaining({ event: 'telegram_delivery_completed', outcome: 'sent' })
+    ]));
+    expect(JSON.stringify(events)).not.toContain('private provider content');
+    expect(JSON.stringify(events)).not.toContain('private-chat');
+  });
+
+  it('reports a safe collection failure without logging the thrown error', async () => {
+    const events: unknown[] = [];
+    const run = new BatchReportRun({
+      log: { read: async () => { throw new Error('private Home Assistant log path and content'); } },
+      signatures: { classifyAndStage: async () => plan }, provider: { analyze: async () => ({ summary: 'unused', recommendation: 'unused' }) },
+      persistence: { commit: async () => 'unused', claimDeliveryAttempt: async () => ({ status: 'pending', shouldSend: false }), updateDeliveryStatus: async () => undefined, fail: async () => undefined },
+      eventReporter: (event) => { events.push(event); }
+    });
+
+    await expect(run.run({ runId: 'collection-failure', slotId: 'collection-failure' })).rejects.toThrow();
+
+    expect(events).toEqual([{ event: 'report_collection_failed' }]);
+    expect(JSON.stringify(events)).not.toContain('private Home Assistant');
+  });
+
   it.each([
     ['no target', undefined, 'skipped'],
     ['successful target', { notify: async () => 'sent' as const }, 'sent'],

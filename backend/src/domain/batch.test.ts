@@ -20,7 +20,7 @@ describe('batch log domain', () => {
     expect(parseHomeAssistantLog([line], { includeWarnings: true })[0]).toMatchObject({ normalizedMessage: 'retry id=<number> request=<id>' });
   });
 
-  it('learns old entries silently and classifies current entries as new, recurring, reactivated, or latent with trends', () => {
+  it('learns old entries silently and neutralizes trends without an equivalent prior window', () => {
     const entries = parseHomeAssistantLog([
       '2026-07-01 12:00:00 ERROR (MainThread) [ha.old] old issue id=1',
       '2026-07-29 12:00:00 ERROR (MainThread) [ha.old] old issue id=2',
@@ -38,9 +38,25 @@ describe('batch log domain', () => {
     expect(plan.signatures.map(({ component, classification, trend }) => ({ component, classification, trend }))).toEqual([
       { component: 'ha.old', classification: 'latent', trend: 'new' },
       { component: 'ha.new', classification: 'new', trend: 'new' },
-      { component: 'ha.recurring', classification: 'recurring', trend: 'flat' },
-      { component: 'ha.reactivated', classification: 'reactivated', trend: 'decreasing' }
+      { component: 'ha.recurring', classification: 'recurring', trend: 'unknown' },
+      { component: 'ha.reactivated', classification: 'reactivated', trend: 'unknown' }
     ]);
+  });
+
+  it('classifies DNS-resolution evidence only from Home Assistant Plex namespaces', () => {
+    const [plexRoot, plexModule, unrelated, complex, simplex] = parseHomeAssistantLog([
+      '2026-08-13 12:00:00 ERROR [homeassistant.components.plex] NameResolutionError: failed to resolve 192-0-2-1.example.plex.direct',
+      '2026-08-13 12:01:00 ERROR [homeassistant.components.plex.media_player] NameResolutionError: failed to resolve 192-0-2-1.example.plex.direct',
+      '2026-08-13 12:02:00 ERROR [homeassistant.components.plex] Authentication failed for Plex account',
+      '2026-08-13 12:03:00 ERROR [homeassistant.components.complex] NameResolutionError: failed to resolve example.invalid',
+      '2026-08-13 12:04:00 ERROR [custom_components.simplex] NameResolutionError: failed to resolve example.invalid'
+    ]);
+
+    expect(plexRoot?.problemKind).toBe('endpoint_resolution');
+    expect(plexModule?.problemKind).toBe('endpoint_resolution');
+    expect(unrelated?.problemKind).toBeUndefined();
+    expect(complex?.problemKind).toBeUndefined();
+    expect(simplex?.problemKind).toBeUndefined();
   });
 
   it('uses only the available current-file history when it cannot cover the full lookback window', () => {

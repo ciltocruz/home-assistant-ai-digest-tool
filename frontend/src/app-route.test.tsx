@@ -47,6 +47,26 @@ describe('App report route', () => {
     expect(container.textContent).not.toContain('Notas del operador');
     expect(container.textContent).not.toContain('Avisos ignorados');
     expect(container.querySelector('a[href="/settings"]')).not.toBeNull();
+    expect(container.querySelector('a.app-sidebar-brand[href="/"]')).not.toBeNull();
+    expect(container.querySelector('.app-sidebar-name span')?.textContent).toBe('Panel de control');
+  });
+
+  test('localizes the operational brand subtitle in English', async () => {
+    setLocale('en');
+    history.pushState({}, '', '/');
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push(root);
+
+    await act(async () => {
+      root.render(<App api={{ getOnboarding: async () => ({ currentStep: 'first_report', completedSteps: [], draft: {}, secretMetadata: {}, completed: true }) }} />);
+      await Promise.resolve();
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(container.querySelector('.app-sidebar-name span')?.textContent).toBe('Control panel');
+    expect(container.textContent).not.toContain('Panel de control');
   });
 
   test('loads a durable report when following its completed lifecycle link', async () => {

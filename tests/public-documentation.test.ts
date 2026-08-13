@@ -43,6 +43,15 @@ describe('public product documentation', () => {
     expect(operations).toContain('No Docker socket, host networking, privileged mode');
     expect(context).toContain('Admin account');
   });
+
+  it('documents stdout lifecycle separately from HTTP health and readiness', async () => {
+    const operations = await readRepositoryFile('docs/operations/docker-runtime.md');
+
+    expect(operations).toContain('startup, listening, and shutdown');
+    expect(operations).toContain('Readiness is exposed by `/ready`');
+    expect(operations).toContain('liveness is exposed by `/health`');
+    expect(operations).not.toContain('stdout for runtime startup, readiness, shutdown');
+  });
 });
 
 function readRepositoryFile(path: string): Promise<string> {

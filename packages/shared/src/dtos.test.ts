@@ -268,6 +268,42 @@ describe('shared DTOs', () => {
     expect(JSON.stringify(error)).not.toContain('sentinel-raw-ai-credential');
   });
 
+  it('accepts only bounded public Telegram delivery diagnostics', () => {
+    const summary = DigestSummarySchema.parse({
+      id: 'report-safe-delivery',
+      window: { from: '2026-08-13T09:00:00.000Z', to: '2026-08-13T10:00:00.000Z' },
+      severityCounts: { critical: 0, warning: 1, info: 0 },
+      createdAt: '2026-08-13T10:00:00.000Z',
+      deliveryStatus: 'failed',
+      deliveryDiagnostic: {
+        channel: 'telegram', stage: 'response', errorCode: 'TELEGRAM_HTTP_429',
+        messageKey: 'telegram_rate_limited', recordedAt: '2026-08-13T10:00:01.000Z'
+      }
+    });
+
+    expect(summary.deliveryDiagnostic).toMatchObject({ errorCode: 'TELEGRAM_HTTP_429', messageKey: 'telegram_rate_limited' });
+    expect(() => DigestSummarySchema.parse({ ...summary, deliveryDiagnostic: { ...summary.deliveryDiagnostic, errorCode: 'PROVIDER_RAW_SENTINEL', rawBody: 'secret response' } })).toThrow();
+  });
+
+  it('accepts a bounded indeterminate Telegram response while preserving older diagnostics', () => {
+    const base = {
+      id: 'report-indeterminate-delivery',
+      window: { from: '2026-08-13T09:00:00.000Z', to: '2026-08-13T10:00:00.000Z' },
+      severityCounts: { critical: 0, warning: 1, info: 0 }, createdAt: '2026-08-13T10:00:00.000Z'
+    };
+    const current = DigestSummarySchema.parse({
+      ...base, deliveryStatus: 'pending',
+      deliveryDiagnostic: { channel: 'telegram', stage: 'response', errorCode: 'TELEGRAM_INVALID_RESPONSE', messageKey: 'telegram_invalid_response', recordedAt: '2026-08-13T10:00:01.000Z' }
+    });
+    const old = DigestSummarySchema.parse({
+      ...base, deliveryStatus: 'failed',
+      deliveryDiagnostic: { channel: 'telegram', stage: 'response', errorCode: 'TELEGRAM_REJECTED', messageKey: 'telegram_rejected', recordedAt: '2026-08-13T10:00:01.000Z' }
+    });
+
+    expect(current.deliveryDiagnostic?.errorCode).toBe('TELEGRAM_INVALID_RESPONSE');
+    expect(old.deliveryDiagnostic?.errorCode).toBe('TELEGRAM_REJECTED');
+  });
+
   it('rejects raw secret fields in response DTOs', () => {
     expect(() =>
       SetupValidationResponseSchema.parse({

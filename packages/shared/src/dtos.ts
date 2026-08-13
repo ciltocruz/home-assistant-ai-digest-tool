@@ -51,6 +51,27 @@ export type OnboardingProgress = z.infer<typeof OnboardingProgressSchema>;
 
 export const DeliveryStatusSchema = z.enum(['pending', 'sent', 'failed', 'skipped']);
 export type DeliveryStatus = z.infer<typeof DeliveryStatusSchema>;
+export const IsoDateTimeSchema = z.string().datetime({ offset: true });
+
+export const DeliveryDiagnosticErrorCodeSchema = z.enum([
+  'TELEGRAM_HTTP_400', 'TELEGRAM_HTTP_401', 'TELEGRAM_HTTP_403', 'TELEGRAM_HTTP_404',
+  'TELEGRAM_HTTP_409', 'TELEGRAM_HTTP_429', 'TELEGRAM_HTTP_5XX',
+  'TELEGRAM_REJECTED', 'TELEGRAM_INVALID_RESPONSE', 'TELEGRAM_REQUEST_FAILED', 'configuration_failed'
+]);
+export type DeliveryDiagnosticErrorCode = z.infer<typeof DeliveryDiagnosticErrorCodeSchema>;
+export const DeliveryDiagnosticMessageKeySchema = z.enum([
+  'telegram_bad_request', 'telegram_auth_failed', 'telegram_forbidden', 'telegram_not_found',
+  'telegram_conflict', 'telegram_rate_limited', 'telegram_service_unavailable',
+  'telegram_rejected', 'telegram_invalid_response', 'telegram_request_failed', 'telegram_configuration_failed'
+]);
+export const DeliveryDiagnosticSchema = z.object({
+  channel: z.literal('telegram'),
+  stage: z.enum(['configuration', 'request', 'response']),
+  errorCode: DeliveryDiagnosticErrorCodeSchema,
+  messageKey: DeliveryDiagnosticMessageKeySchema,
+  recordedAt: IsoDateTimeSchema
+}).strict();
+export type DeliveryDiagnostic = z.infer<typeof DeliveryDiagnosticSchema>;
 
 export const SecretRefSchema = z.string().min(1);
 export type SecretRef = z.infer<typeof SecretRefSchema>;
@@ -76,8 +97,6 @@ const DayOfWeekSchema = z
   .int()
   .min(SCHEDULE_DAY_OF_WEEK.SUNDAY)
   .max(SCHEDULE_DAY_OF_WEEK.SATURDAY);
-
-export const IsoDateTimeSchema = z.string().datetime({ offset: true });
 
 export const DigestWindowSchema = z
   .object({
@@ -319,6 +338,7 @@ export const DigestSummarySchema = z
     severityCounts: SeverityCountsSchema,
     createdAt: IsoDateTimeSchema,
     deliveryStatus: DeliveryStatusSchema,
+    deliveryDiagnostic: DeliveryDiagnosticSchema.optional(),
     source: z.enum(['legacy', 'v2']).optional(),
     runStatus: z.enum(['quiet', 'reported', 'partial', 'failed']).optional(),
     warningCodes: z.array(z.string().min(1)).optional(),
@@ -357,7 +377,8 @@ const LegacyMarkdownReportPresentationV1Schema = z.object({
 
 export const V2SignaturePresentationSchema = z.object({
   signature: z.string().min(1), component: z.string().min(1), level: z.enum(['ERROR', 'CRITICAL', 'WARNING']),
-  classification: z.enum(['new', 'recurring', 'reactivated', 'latent']), trend: z.enum(['new', 'increasing', 'flat', 'decreasing']),
+  classification: z.enum(['new', 'recurring', 'reactivated', 'latent']), trend: z.enum(['new', 'increasing', 'flat', 'decreasing', 'unknown']),
+  problemKind: z.literal('endpoint_resolution').optional(),
   occurrences: z.number().int().min(1), analysis: z.object({ summary: z.string().min(1), recommendation: z.string().min(1) }).strict().optional(),
   notes: z.array(z.object({
     id: z.string().min(1),
@@ -369,7 +390,7 @@ export const V2SignaturePresentationSchema = z.object({
 }).strict();
 export const V2ReportPresentationSchema = z.object({
   version: z.literal(2), mode: z.literal('batch'), status: z.enum(['quiet', 'reported', 'partial', 'failed']),
-  warnings: z.array(z.string().min(1)), integrationStatus: z.object({ available: z.boolean(), integrations: z.array(z.object({ domain: z.string(), title: z.string().optional(), state: z.string().optional() }).strict()) }).strict().optional(),
+  warnings: z.array(z.string().min(1)), integrationStatus: z.object({ available: z.boolean(), integrations: z.array(z.object({ domain: z.string(), title: z.string().optional(), state: z.string().optional() }).strict()), reason: z.enum(['socket_timeout', 'auth_required_missing', 'auth_failed', 'command_rejected', 'invalid_result', 'connection_failed']).optional() }).strict().optional(),
   signatures: z.array(V2SignaturePresentationSchema), failure: z.string().min(1).optional()
 }).strict();
 

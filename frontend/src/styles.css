@@ -835,7 +835,10 @@ button, input, select, textarea { font: inherit; }
   align-items: center;
   gap: 0.625rem;
   padding: 0 0.5rem 2rem;
+  color: inherit;
+  text-decoration: none;
 }
+.app-sidebar-brand:hover .app-sidebar-name { color: var(--ha-orange); }
 
 .app-sidebar-icon {
   width: 32px;
@@ -1317,6 +1320,9 @@ button, input, select, textarea { font: inherit; }
   margin: 0;
   overflow-wrap: anywhere;
 }
+.history-window-help,
+.history-diagnostic,
+.report-metadata-help { display: block; margin-top: 0.2rem; }
 
 .history-facts {
   display: grid;
@@ -1343,6 +1349,7 @@ button, input, select, textarea { font: inherit; }
   margin: 0;
   overflow-wrap: anywhere;
 }
+.history-diagnostic { color: var(--text-muted); font-size: 0.74rem; }
 
 .history-statuses {
   display: none;

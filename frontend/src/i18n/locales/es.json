@@ -139,7 +139,9 @@
       },
       "summarySingular": "1 informe guardado",
       "summaryPlural": "{count} informes guardados",
-        "analysisWindow": "Ventana analizada: {from} — {to}",
+        "analysisWindow": "Periodo revisado: {from} — {to}",
+        "generatedAt": "Informe generado el: {time}",
+        "reviewedPeriodHelp": "Intervalo de información de Home Assistant revisado para crear este informe.",
         "openReport": "Abrir informe del {time}",
       "severityAriaLabel": "Recuento por severidad",
       "severity": {
@@ -150,7 +152,7 @@
       "deliveryStatus": {
          "pending": "Pendiente de confirmación",
          "sent": "Enviada",
-         "failed": "No se pudo enviar",
+         "failed": "no enviada",
          "skipped": "No enviada (omitida o no configurada)"
       },
       "source": {
@@ -161,9 +163,11 @@
         "date": "Fecha",
         "window": "Periodo analizado",
         "source": "Origen",
+        "format": "Formato",
         "reportResult": "Resultado del informe",
         "aiAnalysis": "Análisis de IA",
-        "notification": "Notificación"
+        "notification": "Notificación",
+        "telegramNotification": "Notificación de Telegram"
       },
       "reportResult": {
         "generated": "Generado",
@@ -199,14 +203,16 @@
     }
   },
   "account": { "loading": "Comprobando el acceso seguro…", "firstRun": "Primer arranque", "welcomeBack": "Bienvenido de nuevo", "createTitle": "Crea tu cuenta de administrador", "signInTitle": "Inicia sesión", "language": "Idioma", "english": "English", "spanish": "Español", "password": "Contraseña", "createAction": "Crear cuenta", "signInAction": "Iniciar sesión", "signInFailed": "No se pudo iniciar sesión.", "securityCheck": "Comprobación de acceso", "bootstrapErrorTitle": "No se pudo comprobar el acceso", "bootstrapErrorCopy": "No se pudo validar la sesión. Revisa la conexión con el backend y vuelve a intentarlo.", "retry": "Reintentar" },
-  "shell": { "skipToContent": "Saltar al contenido principal", "navigationLabel": "Navegación principal", "dashboard": "Panel", "reports": "Informes", "settings": "Configuración", "loadingSetup": "Cargando la configuración guardada…" },
+  "shell": { "skipToContent": "Saltar al contenido principal", "navigationLabel": "Navegación principal", "homeLabel": "Ir al panel", "brandSubtitle": "Panel de control", "dashboard": "Panel", "reports": "Informes", "settings": "Configuración", "loadingSetup": "Cargando la configuración guardada…" },
   "settings": { "title": "Configuración", "signIn": "Inicie sesión para revisar y modificar la configuración.", "loading": "Cargando los ajustes guardados…", "loadError": "No se pudieron cargar los ajustes. Compruebe la sesión y vuelva a intentarlo.", "review": "Revise los campos indicados antes de guardar.", "saving": "Guardando ajustes…", "saved": "Los ajustes se guardaron correctamente.", "saveError": "No se pudieron guardar los ajustes. Compruebe los campos y vuelva a intentarlo.", "noteSaved": "La nota se guardó correctamente.", "noteError": "No se pudo guardar la nota. Revise el texto y vuelva a intentarlo.", "ignoreSaved": "El aviso se añadió a los ignorados.", "ignoreError": "No se pudo guardar el aviso ignorado. Revise el valor y vuelva a intentarlo.", "ignoreRemoved": "El aviso ignorado se quitó correctamente.", "ignoreRemoveError": "No se pudo quitar el aviso ignorado. El aviso sigue disponible; vuelva a intentarlo.", "testingTelegram": "Enviando la prueba de Telegram…", "telegramSent": "La prueba de Telegram se envió correctamente.", "telegramError": "No se pudo enviar la prueba de Telegram. Revise la configuración y vuelva a intentarlo.", "eyebrow": "Configuración", "heading": "Conexiones, horario y privacidad", "secretDescription": "Los secretos actuales se muestran solo enmascarados. Puede conservarlos o sustituirlos de forma explícita.", "navigation": "Secciones de configuración", "retryRemoval": "Reintentar eliminación", "homeAssistant": "Home Assistant", "homeAssistantUrl": "URL de Home Assistant", "homeAssistantToken": "Token de Home Assistant", "ai": "Proveedor de IA", "provider": "Proveedor", "providerKey": "Clave del proveedor", "notifications": "Notificaciones", "channel": "Canal", "noNotifications": "No enviar notificaciones", "telegramChat": "Chat de Telegram", "telegramBotToken": "Token del bot de Telegram", "sendTelegramTest": "Enviar prueba de Telegram", "schedule": "Horario", "frequency": "Frecuencia", "daily": "Diaria", "weekly": "Semanal", "time": "Hora", "timezone": "Zona horaria", "dayOfWeek": "Día de la semana", "weekdays": ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"], "enableSchedule": "Activar este horario", "privacyRetention": "Privacidad y retención", "detailLevel": "Nivel de detalle", "minimal": "Mínimo", "balanced": "Equilibrado", "detailed": "Detallado", "retentionDays": "Días de retención", "save": "Guardar ajustes", "cancel": "Cancelar cambios", "changesDiscarded": "Los cambios sin guardar se descartaron.", "context": "Contexto", "contextTitle": "Notas y avisos ignorados", "contextDescription": "Conserve el contexto operativo junto a la configuración para evitar cambios duplicados en el panel.", "operatorNotes": "Notas del operador", "addNote": "Añadir nota", "note": "Nota", "saveNote": "Guardar nota", "savingNote": "Guardando nota…", "notesUnavailable": "Las notas no están disponibles en esta sesión.", "noNotes": "No hay notas guardadas.", "ignoredWarnings": "Avisos ignorados", "addIgnoredWarning": "Añadir aviso ignorado", "match": "Coincidencia", "ignoreWarning": "Ignorar aviso", "savingWarning": "Guardando aviso…", "ignoresUnavailable": "Los avisos ignorados no están disponibles en esta sesión.", "noIgnores": "No hay avisos ignorados.", "noReason": "Sin motivo registrado", "remove": "Quitar", "removeIgnoredTitle": "Quitar aviso ignorado", "removeIgnoredDescription": "El aviso “{match}” volverá a aparecer en los próximos informes.", "loadNotesError": "No se pudieron cargar las notas. Vuelva a intentarlo.", "loadIgnoresError": "No se pudieron cargar los avisos ignorados. Vuelva a intentarlo.", "configured": "Configurado: {mask}", "notConfigured": "No configurado todavía.", "keepCurrent": "Conservar el valor actual", "replace": "Reemplazar con un valor nuevo", "newValue": "Nuevo valor", "loadingContext": "Cargando…", "validHomeAssistantUrl": "Indica una URL válida de Home Assistant.", "validTime": "Indica una hora válida.", "validTimezone": "Indica una zona horaria.", "validRetention": "Use entre 1 y {max} días de retención." },
   "report": {
     "eyebrow": "Informe guardado",
     "title": "Detalle del informe",
     "id": "ID del informe",
     "createdAt": "Generado: {time}",
-    "window": "Ventana analizada",
+    "window": "Periodo revisado",
+    "generatedAtLabel": "Informe generado el",
+    "windowHelp": "Intervalo de información de Home Assistant revisado para crear este informe.",
     "delivery": "Notificación",
     "back": "Volver a informes",
     "loadingTitle": "Cargando informe",
@@ -225,6 +231,7 @@
       "reportResult": "Resultado del informe",
       "aiAnalysis": "Análisis de IA",
       "notification": "Notificación",
+      "telegramNotification": "Notificación de Telegram",
       "generated": "Generado",
       "partial": "Generado con análisis de IA incompleto",
       "failed": "Informe no generado",
@@ -239,7 +246,21 @@
       "notificationSkipped": "No enviada (omitida o no configurada)",
       "notificationFailed": "No se pudo enviar",
       "notificationFailureCopy": "El informe existe, pero no se pudo enviar la notificación. El motivo exacto no quedó registrado.",
-      "notificationFailureAction": "Revisa la configuración de Telegram y envía una prueba desde Configuración."
+      "notificationFailureUnknown": "El motivo exacto no quedó registrado.",
+      "notificationFailureAction": "Revisa la configuración de Telegram y envía una prueba desde Configuración.",
+      "deliveryDiagnostics": {
+        "telegram_bad_request": { "copy": "Telegram rechazó el formato del mensaje.", "action": "Envía una prueba desde Configuración. Si también falla, revisa el contenido del informe y vuelve a intentarlo." },
+        "telegram_auth_failed": { "copy": "Telegram rechazó las credenciales configuradas.", "action": "Revisa el token del bot en Configuración y envía una prueba." },
+        "telegram_forbidden": { "copy": "Telegram rechazó el envío al destino configurado.", "action": "Comprueba que el bot pueda escribir en el chat seleccionado y envía una prueba." },
+        "telegram_not_found": { "copy": "Telegram no encontró el bot configurado.", "action": "Revisa el token del bot y el destino en Configuración." },
+        "telegram_conflict": { "copy": "Telegram detectó una operación incompatible del bot.", "action": "Comprueba que ningún otro servicio use este bot para operaciones incompatibles y vuelve a intentarlo." },
+        "telegram_rate_limited": { "copy": "Telegram limitó temporalmente los envíos.", "action": "Espera unos minutos y vuelve a intentarlo." },
+        "telegram_service_unavailable": { "copy": "Telegram no estuvo disponible temporalmente.", "action": "Espera a que el servicio se recupere y vuelve a intentarlo." },
+        "telegram_rejected": { "copy": "Telegram rechazó la notificación.", "action": "Envía una prueba desde Configuración y revisa los permisos del bot." },
+        "telegram_invalid_response": { "copy": "No se pudo confirmar la respuesta de Telegram.", "action": "Comprueba el chat antes de intentar un nuevo envío para evitar duplicados." },
+        "telegram_request_failed": { "copy": "La aplicación no pudo conectar con Telegram.", "action": "Comprueba la conexión de red y vuelve a intentarlo." },
+        "telegram_configuration_failed": { "copy": "No se pudo usar la configuración guardada de Telegram.", "action": "Revisa el token del bot y el chat en Configuración y envía una prueba." }
+      }
     },
     "batch": {
       "warnings": "Información del análisis",
@@ -249,6 +270,8 @@
       "warningGeneric": "El informe incluye información adicional que requiere revisión.",
       "integrations": "Estado de integraciones",
       "unavailable": "El estado de integraciones no está disponible.",
+      "integrationAction": "Comprueba que Home Assistant esté accesible y vuelve a generar el informe.",
+      "integrationReasons": { "socket_timeout": "Home Assistant no respondió a tiempo al consultar las integraciones.", "auth_required_missing": "Home Assistant devolvió una secuencia de autenticación inesperada.", "auth_failed": "Home Assistant rechazó el token de acceso guardado.", "command_rejected": "Home Assistant rechazó la consulta del estado de integraciones.", "invalid_result": "Home Assistant devolvió una respuesta de integraciones que no se pudo interpretar.", "connection_failed": "La aplicación no pudo conectar con Home Assistant para consultar las integraciones." },
       "none": "No se recibieron integraciones.",
       "problems": "Problemas detectados",
       "groupingExplanation": "Los mensajes repetidos del mismo problema se agrupan para que el informe sea más fácil de leer.",
@@ -260,12 +283,15 @@
       "occurrencesPlural": "{count} apariciones",
       "aiExplanation": "Explicación de la IA",
       "aiRecommendation": "Recomendación de la IA",
+      "connectionExplanation": "Explicación de la conexión",
+      "nextStep": "Siguiente paso",
       "analysisUnavailable": "La IA no pudo explicar este problema.",
       "component": "Componente",
       "technicalId": "ID técnico",
       "operatorNotes": "Notas del operador",
       "classification": { "new": "Problema nuevo", "recurring": "Problema recurrente", "reactivated": "Problema reactivado", "latent": "Problema latente" },
-      "trendValues": { "new": "nuevo", "increasing": "en aumento", "flat": "estable", "decreasing": "en descenso" }
+      "problemKinds": { "endpoint_resolution": { "title": "Problema de resolución del punto de conexión", "copy": "Home Assistant no pudo resolver el punto de conexión de Plex en los eventos registrados.", "action": "Revisa el DNS y la conectividad si el problema se repite o Plex no está disponible en Home Assistant." } },
+      "trendValues": { "new": "nuevo", "increasing": "en aumento", "flat": "estable", "decreasing": "en descenso", "unknown": "no disponible" }
     },
     "delete": {
       "action": "Eliminar informe",

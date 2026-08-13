@@ -139,7 +139,9 @@
       },
       "summarySingular": "1 saved digest",
       "summaryPlural": "{count} saved digests",
-        "analysisWindow": "Analyzed window: {from} — {to}",
+        "analysisWindow": "Reviewed period: {from} — {to}",
+        "generatedAt": "Report generated at: {time}",
+        "reviewedPeriodHelp": "The span of Home Assistant information reviewed to create this report.",
         "openReport": "Open report from {time}",
       "severityAriaLabel": "Severity counts",
       "severity": {
@@ -150,7 +152,7 @@
       "deliveryStatus": {
          "pending": "Pending confirmation",
          "sent": "Sent",
-         "failed": "Could not send",
+         "failed": "not sent",
          "skipped": "Not sent (skipped or not configured)"
       },
       "source": {
@@ -161,9 +163,11 @@
         "date": "Date",
         "window": "Analysis window",
         "source": "Source",
+        "format": "Format",
         "reportResult": "Report result",
         "aiAnalysis": "AI analysis",
-        "notification": "Notification"
+        "notification": "Notification",
+        "telegramNotification": "Telegram notification"
       },
       "reportResult": {
         "generated": "Generated",
@@ -199,14 +203,16 @@
     }
   },
   "account": { "loading": "Checking secure access…", "firstRun": "First run", "welcomeBack": "Welcome back", "createTitle": "Create your administrator account", "signInTitle": "Sign in", "language": "Language", "english": "English", "spanish": "Español", "password": "Password", "createAction": "Create account", "signInAction": "Sign in", "signInFailed": "Sign-in failed.", "securityCheck": "Access check", "bootstrapErrorTitle": "Secure access could not be checked", "bootstrapErrorCopy": "The session could not be validated. Check the backend connection and try again.", "retry": "Retry" },
-  "shell": { "skipToContent": "Skip to main content", "navigationLabel": "Primary navigation", "dashboard": "Dashboard", "reports": "Reports", "settings": "Settings", "loadingSetup": "Loading saved setup…" },
+  "shell": { "skipToContent": "Skip to main content", "navigationLabel": "Primary navigation", "homeLabel": "Go to dashboard", "brandSubtitle": "Control panel", "dashboard": "Dashboard", "reports": "Reports", "settings": "Settings", "loadingSetup": "Loading saved setup…" },
   "settings": { "title": "Settings", "signIn": "Sign in to review and update configuration.", "loading": "Loading saved settings…", "loadError": "Settings could not be loaded. Check the session and try again.", "review": "Review the highlighted fields before saving.", "saving": "Saving settings…", "saved": "Settings saved successfully.", "saveError": "Settings could not be saved. Check the fields and try again.", "noteSaved": "Note saved successfully.", "noteError": "The note could not be saved. Review the text and try again.", "ignoreSaved": "Warning added to ignored items.", "ignoreError": "The ignored warning could not be saved. Review the value and try again.", "ignoreRemoved": "Ignored warning removed successfully.", "ignoreRemoveError": "The ignored warning could not be removed. It is still available; try again.", "testingTelegram": "Sending Telegram test…", "telegramSent": "Telegram test sent successfully.", "telegramError": "Telegram test could not be sent. Review the configuration and try again.", "eyebrow": "Settings", "heading": "Connections, schedule, and privacy", "secretDescription": "Current secrets are masked. You can keep them or explicitly replace them.", "navigation": "Settings sections", "retryRemoval": "Retry removal", "homeAssistant": "Home Assistant", "homeAssistantUrl": "Home Assistant URL", "homeAssistantToken": "Home Assistant token", "ai": "AI provider", "provider": "Provider", "providerKey": "Provider key", "notifications": "Notifications", "channel": "Channel", "noNotifications": "Do not send notifications", "telegramChat": "Telegram chat", "telegramBotToken": "Telegram bot token", "sendTelegramTest": "Send Telegram test", "schedule": "Schedule", "frequency": "Frequency", "daily": "Daily", "weekly": "Weekly", "time": "Time", "timezone": "Timezone", "dayOfWeek": "Day of the week", "weekdays": ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], "enableSchedule": "Enable this schedule", "privacyRetention": "Privacy and retention", "detailLevel": "Detail level", "minimal": "Minimal", "balanced": "Balanced", "detailed": "Detailed", "retentionDays": "Retention days", "save": "Save settings", "cancel": "Discard changes", "changesDiscarded": "Unsaved changes were discarded.", "context": "Context", "contextTitle": "Notes and ignored warnings", "contextDescription": "Keep operational context with configuration to avoid duplicate panel changes.", "operatorNotes": "Operator notes", "addNote": "Add note", "note": "Note", "saveNote": "Save note", "savingNote": "Saving note…", "notesUnavailable": "Notes are unavailable in this session.", "noNotes": "No saved notes.", "ignoredWarnings": "Ignored warnings", "addIgnoredWarning": "Add ignored warning", "match": "Match", "ignoreWarning": "Ignore warning", "savingWarning": "Saving warning…", "ignoresUnavailable": "Ignored warnings are unavailable in this session.", "noIgnores": "No ignored warnings.", "noReason": "No reason recorded", "remove": "Remove", "removeIgnoredTitle": "Remove ignored warning", "removeIgnoredDescription": "The warning “{match}” will appear again in upcoming reports.", "loadNotesError": "Notes could not be loaded. Try again.", "loadIgnoresError": "Ignored warnings could not be loaded. Try again.", "configured": "Configured: {mask}", "notConfigured": "Not configured yet.", "keepCurrent": "Keep current value", "replace": "Replace with a new value", "newValue": "New value", "loadingContext": "Loading…", "validHomeAssistantUrl": "Enter a valid Home Assistant URL.", "validTime": "Enter a valid time.", "validTimezone": "Enter a valid timezone.", "validRetention": "Use between 1 and {max} retention days." },
   "report": {
     "eyebrow": "Saved report",
     "title": "Report details",
     "id": "Report ID",
     "createdAt": "Generated: {time}",
-    "window": "Analysis window",
+    "window": "Reviewed period",
+    "generatedAtLabel": "Report generated at",
+    "windowHelp": "The span of Home Assistant information reviewed to create this report.",
     "delivery": "Delivery",
     "back": "Back to reports",
     "loadingTitle": "Loading report",
@@ -225,6 +231,7 @@
       "reportResult": "Report result",
       "aiAnalysis": "AI analysis",
       "notification": "Notification",
+      "telegramNotification": "Telegram notification",
       "generated": "Generated",
       "partial": "Generated with incomplete AI analysis",
       "failed": "Report not generated",
@@ -239,7 +246,21 @@
       "notificationSkipped": "Not sent (skipped or not configured)",
       "notificationFailed": "Could not send",
       "notificationFailureCopy": "The report exists, but the notification could not be sent. The exact reason was not recorded.",
-      "notificationFailureAction": "Review the Telegram configuration and send a test from Settings."
+      "notificationFailureUnknown": "The exact reason was not recorded.",
+      "notificationFailureAction": "Review the Telegram configuration and send a test from Settings.",
+      "deliveryDiagnostics": {
+        "telegram_bad_request": { "copy": "Telegram rejected the message format.", "action": "Send a test from Settings. If it also fails, review the report content and try again." },
+        "telegram_auth_failed": { "copy": "Telegram rejected the configured credentials.", "action": "Review the bot token in Settings and send a test." },
+        "telegram_forbidden": { "copy": "Telegram refused delivery to the configured destination.", "action": "Confirm that the bot can write to the selected chat, then send a test." },
+        "telegram_not_found": { "copy": "Telegram could not find the configured bot endpoint.", "action": "Review the bot token and destination in Settings." },
+        "telegram_conflict": { "copy": "Telegram reported a conflicting bot operation.", "action": "Check that no other service is using this bot for conflicting operations, then try again." },
+        "telegram_rate_limited": { "copy": "Telegram temporarily limited delivery requests.", "action": "Wait a few minutes and try again." },
+        "telegram_service_unavailable": { "copy": "Telegram was temporarily unavailable.", "action": "Wait for the service to recover and try again." },
+        "telegram_rejected": { "copy": "Telegram rejected the notification.", "action": "Send a test from Settings and review the bot permissions." },
+        "telegram_invalid_response": { "copy": "Telegram's response could not be confirmed.", "action": "Check the chat before attempting another send to avoid duplicates." },
+        "telegram_request_failed": { "copy": "The application could not reach Telegram.", "action": "Check the network connection and try again." },
+        "telegram_configuration_failed": { "copy": "The saved Telegram configuration could not be used.", "action": "Review the bot token and chat in Settings, then send a test." }
+      }
     },
     "batch": {
       "warnings": "Analysis information",
@@ -249,6 +270,8 @@
       "warningGeneric": "The report includes additional information that needs review.",
       "integrations": "Integration status",
       "unavailable": "Integration status is unavailable.",
+      "integrationAction": "Check that Home Assistant is reachable and generate the report again.",
+      "integrationReasons": { "socket_timeout": "Home Assistant did not answer the integration check in time.", "auth_required_missing": "Home Assistant returned an unexpected authentication sequence.", "auth_failed": "Home Assistant rejected the saved access token.", "command_rejected": "Home Assistant rejected the integration status request.", "invalid_result": "Home Assistant returned an unreadable integration status response.", "connection_failed": "The application could not connect to Home Assistant for the integration check." },
       "none": "No integration entries were returned.",
       "problems": "Detected problems",
       "groupingExplanation": "Repeated messages for the same problem are grouped together so the report is easier to read.",
@@ -260,12 +283,15 @@
       "occurrencesPlural": "{count} occurrences",
       "aiExplanation": "AI explanation",
       "aiRecommendation": "AI recommendation",
+      "connectionExplanation": "Connection explanation",
+      "nextStep": "Next step",
       "analysisUnavailable": "AI could not explain this problem.",
       "component": "Component",
       "technicalId": "Technical ID",
       "operatorNotes": "Operator notes",
       "classification": { "new": "New problem", "recurring": "Recurring problem", "reactivated": "Reactivated problem", "latent": "Latent problem" },
-      "trendValues": { "new": "new", "increasing": "increasing", "flat": "stable", "decreasing": "decreasing" }
+      "problemKinds": { "endpoint_resolution": { "title": "Endpoint resolution problem", "copy": "Home Assistant could not resolve the Plex endpoint in the recorded events.", "action": "Review DNS and connectivity if the problem repeats or Plex is unavailable in Home Assistant." } },
+      "trendValues": { "new": "new", "increasing": "increasing", "flat": "stable", "decreasing": "decreasing", "unknown": "not available" }
     },
     "delete": {
       "action": "Delete Report",

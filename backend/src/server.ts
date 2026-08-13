@@ -17,6 +17,7 @@ export async function startRuntimeServer(
   const dataDir = environment.DATA_DIR ?? '/data';
   const logDir = environment.LOG_DIR ?? `${dataDir}/logs`;
   const logger = (dependencies.createLogger ?? createRuntimeLogger)({ dataDir, logDir });
+  logger.reportOperational({ event: 'runtime_starting' });
 
   try {
     const config = loadRuntimeConfig(environment);
@@ -31,14 +32,17 @@ export async function startRuntimeServer(
       haMaxResponseBytes: config.haMaxResponseBytes,
       haAnalysisTimeoutMs: config.haAnalysisTimeoutMs,
       failureReporter: logger.reportApiFailure,
-      digestFailureReporter: logger.reportDigestFailure
+      digestFailureReporter: logger.reportDigestFailure,
+      operationalEventReporter: logger.reportOperational
     });
     await app.listen({ host: config.host, port: config.port });
+    logger.reportOperational({ event: 'runtime_listening' });
 
     let shutdownStarted = false;
     const closeServer = async (): Promise<void> => {
       if (shutdownStarted) return;
       shutdownStarted = true;
+      logger.reportOperational({ event: 'runtime_shutdown' });
       try {
         await app.close();
       } catch (error) {
@@ -50,6 +54,7 @@ export async function startRuntimeServer(
     registerSignalHandler('SIGTERM', closeServer);
     registerSignalHandler('SIGINT', closeServer);
   } catch (error) {
+    logger.reportOperational({ event: 'runtime_fatal', reason: 'runtime_startup_failed' });
     logger.reportStartupFailure(startupFailureEvent(error));
     (dependencies.setExitCode ?? setProcessExitCode)(1);
   }

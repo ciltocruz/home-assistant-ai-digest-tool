@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createRuntimeFailureLogger, createRuntimeLogger, type RuntimeLogSink } from './runtime-logging.js';
+import { createRuntimeFailureLogger, createRuntimeLogger, type RuntimeLogSink, type RuntimeOperationalEvent } from './runtime-logging.js';
 
 describe('runtime failure logger', () => {
   it('writes secret-safe operational failure events to a JSONL log file under /data logs', async () => {
@@ -21,13 +21,13 @@ describe('runtime failure logger', () => {
     const log = await readFile(join(dataDir, 'logs', 'runtime.log'), 'utf8');
 
     expect(log).toContain('"event":"runtime_api_failure"');
-    expect(log).toContain('"url":"/api/settings"');
+    expect(log).not.toContain('"url"');
     expect(log).toContain('"createdAt":"2026-07-15T10:00:00.000Z"');
     expect(log).not.toContain('token');
     expect(log).not.toContain('secret');
   });
 
-  it('writes detailed secret-safe AI provider failures for digest jobs', async () => {
+  it('writes only allowlisted AI provider failure codes for digest jobs', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-runtime-ai-logs-'));
     const logger = createRuntimeLogger({ dataDir, now: () => '2026-07-15T10:00:00.000Z' });
 
@@ -41,9 +41,50 @@ describe('runtime failure logger', () => {
     const log = await readFile(join(dataDir, 'logs', 'runtime.log'), 'utf8');
 
     expect(log).toContain('"event":"runtime_digest_failure"');
-    expect(log).toContain('Gemini 404');
-    expect(log).toContain('model retired');
+    expect(log).not.toContain('Gemini 404');
+    expect(log).not.toContain('model retired');
     expect(log).not.toContain('super-secret');
+  });
+
+  it('writes typed operational events as JSON lines to stdout with an injectable clock', () => {
+    const stdout: string[] = [];
+    const logger = createRuntimeLogger({ stdout: (line) => stdout.push(line), now: () => '2026-08-13T10:00:00.000Z' });
+
+    logger.reportOperational({ event: 'telegram_delivery_completed', outcome: 'failed', errorCode: 'TELEGRAM_HTTP_429', durationMs: 125 });
+
+    expect(stdout).toEqual(['{"level":"warn","createdAt":"2026-08-13T10:00:00.000Z","event":"telegram_delivery_completed","outcome":"failed","errorCode":"TELEGRAM_HTTP_429","durationMs":125}']);
+  });
+
+  it('projects known stdout events through an exact field allowlist', () => {
+    const stdout: string[] = [];
+    const logger = createRuntimeLogger({ stdout: (line) => stdout.push(line), now: () => '2026-08-13T10:00:00.000Z' });
+
+    logger.reportOperational({
+      event: 'telegram_delivery_completed',
+      outcome: 'failed',
+      errorCode: 'TELEGRAM_HTTP_429',
+      durationMs: 125,
+      botToken: 'secret-token-must-not-reach-stdout',
+      level: 'error',
+      createdAt: 'attacker-controlled-time'
+    } as RuntimeOperationalEvent);
+
+    expect(stdout).toEqual(['{"level":"warn","createdAt":"2026-08-13T10:00:00.000Z","event":"telegram_delivery_completed","outcome":"failed","errorCode":"TELEGRAM_HTTP_429","durationMs":125}']);
+  });
+
+  it('drops unknown stdout event kinds', () => {
+    const stdout: string[] = [];
+    const logger = createRuntimeLogger({ stdout: (line) => stdout.push(line) });
+
+    logger.reportOperational({ event: 'provider_debug_dump', apiKey: 'secret-key' } as unknown as RuntimeOperationalEvent);
+
+    expect(stdout).toEqual([]);
+  });
+
+  it('never lets stdout logging failure break the caller', () => {
+    const logger = createRuntimeLogger({ stdout: () => { throw new Error('stdout unavailable'); } });
+
+    expect(() => logger.reportOperational({ event: 'runtime_ready' })).not.toThrow();
   });
 
   it('uses the shared redactor for quoted and Telegram-shaped provider failures', async () => {

@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
-import { IsoDateTimeSchema, type DeliveryStatus, type DigestDetail, type DigestHistoryResponse, type DigestSummary, type IgnoreRuleCreate, type IgnoreRuleDto, type NoteCreate, type NoteDto } from '@ha-digest/shared';
+import { DeliveryDiagnosticSchema, IsoDateTimeSchema, type DeliveryDiagnostic, type DeliveryStatus, type DigestDetail, type DigestHistoryResponse, type DigestSummary, type IgnoreRuleCreate, type IgnoreRuleDto, type NoteCreate, type NoteDto } from '@ha-digest/shared';
 import type { BatchPersistence, CommitPlan, FailedRun, SignatureAnalysis, SignatureMemory } from '../../application/batch-report-run.js';
 import { classifySignatures, type LogCursor, type ParsedLogEntry, type SignaturePlan } from '../../domain/batch.js';
 import { redactProviderError } from '../../domain/safe-error.js';
@@ -74,7 +74,7 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
     return reportId;
   }
 
-  async updateDeliveryStatus(reportId: string, status: DeliveryStatus): Promise<void> {
+  async updateDeliveryStatus(reportId: string, status: DeliveryStatus, diagnostic?: DeliveryDiagnostic): Promise<void> {
     const apiKey = await this.apiKey?.();
     this.transaction(() => {
       const row = this.db.prepare('select payload_json, status, (select status from v2_runs where id = v2_reports.run_id) as run_status from v2_reports where id = ?').get(reportId) as V2ReportRow | undefined;
@@ -88,8 +88,11 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
       const storedReport = safeReport(stored.value.report, status, apiKey);
       this.db.prepare('update v2_reports set payload_json = ? where id = ?')
         .run(JSON.stringify({ report: storedReport, signatures: safeSignatures(stored.value.signatures), notesBySignature: safeNotes(stored.value.notesBySignature) ?? {} }), reportId);
-      this.db.prepare('update v2_report_delivery_attempts set status = ?, updated_at = ? where report_id = ?')
-        .run(status, this.now(), reportId);
+      const safeDiagnostic = deliveryDiagnosticValue(diagnostic);
+      this.db.prepare(`update v2_report_delivery_attempts
+        set status = ?, updated_at = ?, diagnostic_error_code = ?, diagnostic_message_key = ?, diagnostic_stage = ?, diagnostic_at = ?
+        where report_id = ?`)
+        .run(status, this.now(), safeDiagnostic?.errorCode ?? null, safeDiagnostic?.messageKey ?? null, safeDiagnostic?.stage ?? null, safeDiagnostic?.recordedAt ?? null, reportId);
       this.db.prepare('update v2_runs set delivery_status = ? where id = (select run_id from v2_reports where id = ?)')
         .run(status, reportId);
     });
@@ -191,7 +194,7 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
   }
 
   async listReports(): Promise<DigestHistoryResponse> {
-    const reports = this.db.prepare('select id, status, payload_json, created_at, (select status from v2_runs where id = v2_reports.run_id) as run_status from v2_reports order by created_at desc').all() as V2ReportRow[];
+    const reports = this.db.prepare(`${REPORT_SELECT} order by created_at desc`).all() as V2ReportRow[];
     const failures = this.db.prepare("select id, status, error_code, error_message, created_at from v2_runs where (status = 'failed' or status not in ('quiet', 'reported', 'partial')) and not exists (select 1 from v2_reports where v2_reports.run_id = v2_runs.id) order by created_at desc").all() as FailedRunRow[];
     const apiKey = await this.apiKey?.();
     return [...reports.map((row) => summaryFor(row, apiKey)), ...failures.map((row) => failedSummary(row))].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -202,7 +205,7 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
       const run = this.db.prepare("select id, status, error_code, error_message, created_at from v2_runs where id = ? and (status = 'failed' or status not in ('quiet', 'reported', 'partial'))").get(id.slice(7)) as FailedRunRow | undefined;
       return run ? failedDetail(run) : null;
     }
-    const row = this.db.prepare('select id, status, payload_json, created_at, (select status from v2_runs where id = v2_reports.run_id) as run_status from v2_reports where id = ?').get(id) as V2ReportRow | undefined;
+    const row = this.db.prepare(`${REPORT_SELECT} where v2_reports.id = ?`).get(id) as V2ReportRow | undefined;
     return row ? detailFor(row, await this.apiKey?.()) : null;
   }
 
@@ -293,7 +296,14 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
   }
 }
 
-type V2ReportRow = { id: string; status: string; run_status?: string | null; run_delivery_status?: string | null; payload_json: string; created_at: string };
+const REPORT_SELECT = `select v2_reports.id, v2_reports.status, v2_reports.payload_json, v2_reports.created_at,
+  (select status from v2_runs where id = v2_reports.run_id) as run_status,
+  (select diagnostic_error_code from v2_report_delivery_attempts where report_id = v2_reports.id) as diagnostic_error_code,
+  (select diagnostic_message_key from v2_report_delivery_attempts where report_id = v2_reports.id) as diagnostic_message_key,
+  (select diagnostic_stage from v2_report_delivery_attempts where report_id = v2_reports.id) as diagnostic_stage,
+  (select diagnostic_at from v2_report_delivery_attempts where report_id = v2_reports.id) as diagnostic_at
+  from v2_reports`;
+type V2ReportRow = { id: string; status: string; run_status?: string | null; run_delivery_status?: string | null; payload_json: string; created_at: string; diagnostic_error_code?: string | null; diagnostic_message_key?: string | null; diagnostic_stage?: string | null; diagnostic_at?: string | null };
 type FailedRunRow = { id: string; status: string; error_code: string | null; error_message: string | null; created_at: string };
 type V2Payload = { report?: Partial<CommitPlan['report']>; signatures?: unknown; notesBySignature?: unknown };
 function safeSignatureAnalysis(value: unknown, apiKey?: string): SignatureAnalysis | null {
@@ -316,7 +326,7 @@ function safeSignatures(value: unknown): SignaturePlan['signatures'] {
     const signature = asRecord(item);
     if (typeof signature.signature !== 'string' || signature.signature.trim().length === 0 || typeof signature.component !== 'string' || signature.component.trim().length === 0 || !isLevel(signature.level) || !isClassification(signature.classification) || !isTrend(signature.trend) || !Array.isArray(signature.occurrences)) return [];
     const occurrences = signature.occurrences.flatMap((item) => { const occurrence = safeOccurrence(item); return occurrence ? [occurrence] : []; });
-    return occurrences.length > 0 ? [{ signature: signature.signature, component: signature.component, level: signature.level, normalizedMessage: typeof signature.normalizedMessage === 'string' ? signature.normalizedMessage : '', classification: signature.classification, trend: signature.trend, occurrences }] : [];
+    return occurrences.length > 0 ? [{ signature: signature.signature, component: signature.component, level: signature.level, normalizedMessage: typeof signature.normalizedMessage === 'string' ? signature.normalizedMessage : '', ...(signature.problemKind === 'endpoint_resolution' ? { problemKind: signature.problemKind } : {}), classification: signature.classification, trend: signature.trend, occurrences }] : [];
   });
 }
 function safeFindings(value: unknown, apiKey?: string): Array<{ signature: string; analysis: SignatureAnalysis }> {
@@ -339,7 +349,7 @@ function safeNotes(value: unknown): Record<string, NoteDto[]> | undefined {
   }));
   return Object.keys(notes).length > 0 ? notes as Record<string, NoteDto[]> : undefined;
 }
-function safeIntegrationStatus(value: unknown, apiKey?: string): { available: boolean; integrations: Array<{ domain: string; title?: string; state?: string }> } | undefined {
+function safeIntegrationStatus(value: unknown, apiKey?: string): { available: boolean; integrations: Array<{ domain: string; title?: string; state?: string }>; reason?: 'socket_timeout' | 'auth_required_missing' | 'auth_failed' | 'command_rejected' | 'invalid_result' | 'connection_failed' } | undefined {
   const status = asRecord(value);
   if (typeof status.available !== 'boolean' || !Array.isArray(status.integrations)) return undefined;
   const integrations = status.integrations.flatMap((entry) => {
@@ -347,9 +357,9 @@ function safeIntegrationStatus(value: unknown, apiKey?: string): { available: bo
     if (typeof integration.domain !== 'string') return [];
     return [{ domain: redactProviderError(integration.domain, apiKey), ...(typeof integration.title === 'string' ? { title: redactProviderError(integration.title, apiKey) } : {}), ...(typeof integration.state === 'string' ? { state: redactProviderError(integration.state, apiKey) } : {}) }];
   });
-  return { available: status.available, integrations };
+  return { available: status.available, integrations, ...(isIntegrationReason(status.reason) ? { reason: status.reason } : {}) };
 }
-function safeReport(value: unknown, deliveryStatus: DeliveryStatus, apiKey?: string): { status: 'quiet' | 'reported' | 'partial' | 'failed'; deliveryStatus: DeliveryStatus; findings: Array<{ signature: string; analysis: SignatureAnalysis }>; warnings: string[]; integrationStatus?: { available: boolean; integrations: Array<{ domain: string; title?: string; state?: string }> } } {
+function safeReport(value: unknown, deliveryStatus: DeliveryStatus, apiKey?: string): { status: 'quiet' | 'reported' | 'partial' | 'failed'; deliveryStatus: DeliveryStatus; findings: Array<{ signature: string; analysis: SignatureAnalysis }>; warnings: string[]; integrationStatus?: { available: boolean; integrations: Array<{ domain: string; title?: string; state?: string }>; reason?: 'socket_timeout' | 'auth_required_missing' | 'auth_failed' | 'command_rejected' | 'invalid_result' | 'connection_failed' } } {
   const report = asRecord(value);
   const status = isRunStatus(report.status) ? report.status : 'reported';
   return { status, deliveryStatus, findings: safeFindings(report.findings, apiKey), warnings: safeWarnings(report.warnings, apiKey), ...(safeIntegrationStatus(report.integrationStatus, apiKey) ? { integrationStatus: safeIntegrationStatus(report.integrationStatus, apiKey) } : {}) };
@@ -366,7 +376,7 @@ function summaryFor(row: V2ReportRow, apiKey?: string): DigestSummary {
   if (isCorruptReport(row, stored)) return invalidSummary(row, 'REPORT_CORRUPT');
   const signatures = safeSignatures(stored.value.signatures);
   const createdAt = safeTimestamp(row.created_at);
-  return { id: row.id, window: pointInTimeWindow(createdAt), severityCounts: severity(signatures), createdAt, deliveryStatus: deliveryStatusValue(stored.value.report?.deliveryStatus) ?? 'pending', source: 'v2', runStatus: row.status as 'quiet' | 'reported' | 'partial' | 'failed', warningCodes: safeWarnings(stored.value.report?.warnings, apiKey), signatureCounts: counts(signatures) };
+  return { id: row.id, window: pointInTimeWindow(createdAt), severityCounts: severity(signatures), createdAt, deliveryStatus: deliveryStatusValue(stored.value.report?.deliveryStatus) ?? 'pending', ...(deliveryDiagnosticForRow(row) ? { deliveryDiagnostic: deliveryDiagnosticForRow(row) } : {}), source: 'v2', runStatus: row.status as 'quiet' | 'reported' | 'partial' | 'failed', warningCodes: safeWarnings(stored.value.report?.warnings, apiKey), signatureCounts: counts(signatures) };
 }
 function detailFor(row: V2ReportRow, apiKey?: string): DigestDetail {
   const stored = payload(row);
@@ -376,7 +386,7 @@ function detailFor(row: V2ReportRow, apiKey?: string): DigestDetail {
   return {
     id: row.id, summary: summaryFor(row, apiKey), rendered: { format: 'markdown', body: '' },
      presentation: { version: 2, mode: 'batch', status: row.status as 'quiet' | 'reported' | 'partial' | 'failed', warnings: safeWarnings(value.report?.warnings, apiKey), ...(safeIntegrationStatus(value.report?.integrationStatus, apiKey) ? { integrationStatus: safeIntegrationStatus(value.report?.integrationStatus, apiKey) } : {}),
-      signatures: signatures.map((item) => ({ signature: item.signature, component: item.component, level: item.level, classification: item.classification, trend: item.trend, occurrences: item.occurrences.length, ...(analyses.has(item.signature) ? { analysis: analyses.get(item.signature) } : {}), ...(safeNotes(value.notesBySignature)?.[item.signature] ? { notes: safeNotes(value.notesBySignature)![item.signature] } : {}) })) }
+       signatures: signatures.map((item) => ({ signature: item.signature, component: item.component, level: item.level, classification: item.classification, trend: item.trend, ...(item.problemKind ? { problemKind: item.problemKind } : {}), occurrences: item.occurrences.length, ...(analyses.has(item.signature) ? { analysis: analyses.get(item.signature) } : {}), ...(safeNotes(value.notesBySignature)?.[item.signature] ? { notes: safeNotes(value.notesBySignature)![item.signature] } : {}) })) }
   };
 }
 function invalidSummary(row: V2ReportRow, warning = 'REPORT_PAYLOAD_INVALID'): DigestSummary {
@@ -418,11 +428,24 @@ function safeIsoDate(value: unknown): string | null {
 function deliveryAttemptStatus(value: unknown): 'ready' | 'pending' | 'sent' | 'failed' | null { return value === 'ready' || value === 'pending' || value === 'sent' || value === 'failed' ? value : null; }
 function isLevel(value: unknown): value is SignaturePlan['signatures'][number]['level'] { return value === 'ERROR' || value === 'CRITICAL' || value === 'WARNING'; }
 function isClassification(value: unknown): value is SignaturePlan['signatures'][number]['classification'] { return value === 'new' || value === 'recurring' || value === 'reactivated' || value === 'latent'; }
-function isTrend(value: unknown): value is SignaturePlan['signatures'][number]['trend'] { return value === 'new' || value === 'increasing' || value === 'flat' || value === 'decreasing'; }
+function isTrend(value: unknown): value is SignaturePlan['signatures'][number]['trend'] { return value === 'new' || value === 'increasing' || value === 'flat' || value === 'decreasing' || value === 'unknown'; }
 function safeOccurrence(value: unknown): ParsedLogEntry | null {
   const occurrence = asRecord(value);
   if (typeof occurrence.at !== 'string' || !isLevel(occurrence.level) || typeof occurrence.component !== 'string' || occurrence.component.trim().length === 0 || typeof occurrence.message !== 'string' || occurrence.message.trim().length === 0 || typeof occurrence.normalizedMessage !== 'string' || occurrence.normalizedMessage.trim().length === 0 || typeof occurrence.signature !== 'string' || occurrence.signature.trim().length === 0) return null;
-  return { at: occurrence.at, level: occurrence.level, component: occurrence.component, message: occurrence.message, normalizedMessage: occurrence.normalizedMessage, signature: occurrence.signature };
+  return { at: occurrence.at, level: occurrence.level, component: occurrence.component, message: occurrence.message, normalizedMessage: occurrence.normalizedMessage, signature: occurrence.signature, ...(occurrence.problemKind === 'endpoint_resolution' ? { problemKind: occurrence.problemKind } : {}) };
+}
+
+function deliveryDiagnosticValue(value: unknown): DeliveryDiagnostic | undefined {
+  const parsed = DeliveryDiagnosticSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function deliveryDiagnosticForRow(row: V2ReportRow): DeliveryDiagnostic | undefined {
+  return deliveryDiagnosticValue({ channel: 'telegram', stage: row.diagnostic_stage, errorCode: row.diagnostic_error_code, messageKey: row.diagnostic_message_key, recordedAt: row.diagnostic_at });
+}
+
+function isIntegrationReason(value: unknown): value is NonNullable<ReturnType<typeof safeIntegrationStatus>>['reason'] {
+  return value === 'socket_timeout' || value === 'auth_required_missing' || value === 'auth_failed' || value === 'command_rejected' || value === 'invalid_result' || value === 'connection_failed';
 }
 
 export class SQLiteScheduleStateStore {

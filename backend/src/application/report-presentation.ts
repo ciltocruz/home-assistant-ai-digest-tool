@@ -164,7 +164,8 @@ function safeBatchSignatures(value: unknown): Array<{
   component: string;
   level: 'ERROR' | 'CRITICAL' | 'WARNING';
   classification: 'new' | 'recurring' | 'reactivated' | 'latent';
-  trend: 'new' | 'increasing' | 'flat' | 'decreasing';
+  trend: 'new' | 'increasing' | 'flat' | 'decreasing' | 'unknown';
+  problemKind?: 'endpoint_resolution';
   occurrences: number;
   analysis?: { summary: string; recommendation: string };
   notes?: Array<{ id: string; text: string; occurredAt: string; createdAt: string; tags: string[] }>;
@@ -179,7 +180,7 @@ function safeBatchSignatures(value: unknown): Array<{
       ? { summary: redactProviderError(analysis.summary), recommendation: redactProviderError(analysis.recommendation) }
       : undefined;
      const notes = safeNotes(signature.notes);
-    return [{ signature: signature.signature, component: signature.component, level: signature.level, classification: signature.classification, trend: signature.trend, occurrences: signature.occurrences, ...(safeAnalysis ? { analysis: safeAnalysis } : {}), ...(notes ? { notes } : {}) }];
+    return [{ signature: signature.signature, component: signature.component, level: signature.level, classification: signature.classification, trend: signature.trend, occurrences: signature.occurrences, ...(signature.problemKind === 'endpoint_resolution' ? { problemKind: signature.problemKind } : {}), ...(safeAnalysis ? { analysis: safeAnalysis } : {}), ...(notes ? { notes } : {}) }];
   });
 }
 
@@ -218,6 +219,7 @@ function safeSummary(summary: DigestDetail['summary']): DigestDetail['summary'] 
     severityCounts,
     createdAt,
     deliveryStatus: isDeliveryStatus(summary.deliveryStatus) ? summary.deliveryStatus : 'pending',
+    ...(deliveryDiagnostic(summary.deliveryDiagnostic) ? { deliveryDiagnostic: deliveryDiagnostic(summary.deliveryDiagnostic) } : {}),
     ...(summary.source === 'legacy' || summary.source === 'v2' ? { source: summary.source } : {}),
     runStatus: corrupt ? 'failed' : summary.runStatus,
     warningCodes: [...(Array.isArray(summary.warningCodes) ? summary.warningCodes.filter((code): code is string => typeof code === 'string' && code.length > 0).map((code) => redactProviderError(code)) : []), ...(corrupt ? ['REPORT_CORRUPT'] : [])].filter((code, index, codes) => codes.indexOf(code) === index),
@@ -252,9 +254,9 @@ function isRunStatus(value: unknown): value is NonNullable<DigestDetail['summary
 function isBatchStatus(value: unknown): value is 'quiet' | 'reported' | 'partial' | 'failed' { return value === 'quiet' || value === 'reported' || value === 'partial' || value === 'failed'; }
 function isBatchLevel(value: unknown): value is 'ERROR' | 'CRITICAL' | 'WARNING' { return value === 'ERROR' || value === 'CRITICAL' || value === 'WARNING'; }
 function isClassification(value: unknown): value is 'new' | 'recurring' | 'reactivated' | 'latent' { return value === 'new' || value === 'recurring' || value === 'reactivated' || value === 'latent'; }
-function isTrend(value: unknown): value is 'new' | 'increasing' | 'flat' | 'decreasing' { return value === 'new' || value === 'increasing' || value === 'flat' || value === 'decreasing'; }
+function isTrend(value: unknown): value is 'new' | 'increasing' | 'flat' | 'decreasing' | 'unknown' { return value === 'new' || value === 'increasing' || value === 'flat' || value === 'decreasing' || value === 'unknown'; }
 
-function safeIntegrationStatus(value: unknown): { available: boolean; integrations: Array<{ domain: string; title?: string; state?: string }> } | undefined {
+function safeIntegrationStatus(value: unknown): { available: boolean; integrations: Array<{ domain: string; title?: string; state?: string }>; reason?: 'socket_timeout' | 'auth_required_missing' | 'auth_failed' | 'command_rejected' | 'invalid_result' | 'connection_failed' } | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const status = value as { available?: unknown; integrations?: unknown };
   if (typeof status.available !== 'boolean' || !Array.isArray(status.integrations)) return undefined;
@@ -263,5 +265,21 @@ function safeIntegrationStatus(value: unknown): { available: boolean; integratio
     const integration = entry as { domain: string; title?: unknown; state?: unknown };
     return [{ domain: redactProviderError(integration.domain), ...(typeof integration.title === 'string' ? { title: redactProviderError(integration.title) } : {}), ...(typeof integration.state === 'string' ? { state: redactProviderError(integration.state) } : {}) }];
   });
-  return { available: status.available, integrations };
+  const reason = typeof (status as { reason?: unknown }).reason === 'string' ? (status as { reason: string }).reason : undefined;
+  return { available: status.available, integrations, ...(isIntegrationReason(reason) ? { reason } : {}) };
 }
+
+function deliveryDiagnostic(value: unknown): DigestDetail['summary']['deliveryDiagnostic'] | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const diagnostic = value as Record<string, unknown>;
+  const errorCode = diagnostic.errorCode;
+  const messageKey = diagnostic.messageKey;
+  if (diagnostic.channel !== 'telegram' || !isDeliveryStage(diagnostic.stage) || !isDeliveryErrorCode(errorCode) || !isDeliveryMessageKey(messageKey)) return undefined;
+  const recordedAt = safeIsoDate(diagnostic.recordedAt);
+  return recordedAt ? { channel: 'telegram', stage: diagnostic.stage, errorCode, messageKey, recordedAt } : undefined;
+}
+
+function isDeliveryStage(value: unknown): value is 'configuration' | 'request' | 'response' { return value === 'configuration' || value === 'request' || value === 'response'; }
+function isDeliveryErrorCode(value: unknown): value is NonNullable<DigestDetail['summary']['deliveryDiagnostic']>['errorCode'] { return value === 'TELEGRAM_HTTP_400' || value === 'TELEGRAM_HTTP_401' || value === 'TELEGRAM_HTTP_403' || value === 'TELEGRAM_HTTP_404' || value === 'TELEGRAM_HTTP_409' || value === 'TELEGRAM_HTTP_429' || value === 'TELEGRAM_HTTP_5XX' || value === 'TELEGRAM_REJECTED' || value === 'TELEGRAM_INVALID_RESPONSE' || value === 'TELEGRAM_REQUEST_FAILED' || value === 'configuration_failed'; }
+function isDeliveryMessageKey(value: unknown): value is NonNullable<DigestDetail['summary']['deliveryDiagnostic']>['messageKey'] { return value === 'telegram_bad_request' || value === 'telegram_auth_failed' || value === 'telegram_forbidden' || value === 'telegram_not_found' || value === 'telegram_conflict' || value === 'telegram_rate_limited' || value === 'telegram_service_unavailable' || value === 'telegram_rejected' || value === 'telegram_invalid_response' || value === 'telegram_request_failed' || value === 'telegram_configuration_failed'; }
+function isIntegrationReason(value: unknown): value is 'socket_timeout' | 'auth_required_missing' | 'auth_failed' | 'command_rejected' | 'invalid_result' | 'connection_failed' { return value === 'socket_timeout' || value === 'auth_required_missing' || value === 'auth_failed' || value === 'command_rejected' || value === 'invalid_result' || value === 'connection_failed'; }

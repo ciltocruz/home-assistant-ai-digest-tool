@@ -1,5 +1,5 @@
 import type { SecretStore } from '../../domain/stores.js';
-import type { IntegrationStatus, IntegrationStatusSnapshot } from '../../application/integration-status.js';
+import type { IntegrationStatus, IntegrationStatusFailureReason, IntegrationStatusSnapshot } from '../../application/integration-status.js';
 
 export type { IntegrationStatus, IntegrationStatusSnapshot } from '../../application/integration-status.js';
 
@@ -37,16 +37,19 @@ export class HomeAssistantWebSocketClient {
       const token = await this.options.secrets.resolve(this.options.haTokenRef);
       socket = this.factory(webSocketUrl(this.options.haUrl));
       await waitForOpen(socket, this.timeoutMs);
+      const initial = await nextMessage(socket, this.timeoutMs);
+      if (initial.type !== 'auth_required') throw reasonError('auth_required_missing');
       socket.send(JSON.stringify({ type: 'auth', access_token: token }));
       const authentication = await nextMessage(socket, this.timeoutMs);
-      if (authentication.type !== 'auth_ok') throw new Error('HA_WEBSOCKET_AUTH_FAILED');
+      if (authentication.type !== 'auth_ok') throw reasonError('auth_failed');
 
       socket.send(JSON.stringify({ id: 1, type: 'config_entries/get' }));
       const result = await nextMessage(socket, this.timeoutMs);
-      if (result.id !== 1 || result.type !== 'result' || result.success !== true || !Array.isArray(result.result)) throw new Error('HA_WEBSOCKET_RESULT_INVALID');
+      if (result.id === 1 && result.type === 'result' && result.success === false) throw reasonError('command_rejected');
+      if (result.id !== 1 || result.type !== 'result' || result.success !== true || !Array.isArray(result.result)) throw reasonError('invalid_result');
       return { available: true, integrations: result.result.flatMap(toIntegrationStatus) };
-    } catch {
-      return { available: false, integrations: [] };
+    } catch (error) {
+      return { available: false, integrations: [], reason: failureReason(error) };
     } finally {
       socket?.close();
     }
@@ -61,15 +64,15 @@ function webSocketUrl(haUrl: string): string {
 
 function waitForOpen(socket: HomeAssistantSocket, timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('HA_WEBSOCKET_TIMEOUT')), timeoutMs);
+    const timeout = setTimeout(() => reject(reasonError('socket_timeout')), timeoutMs);
     socket.onopen = () => { clearTimeout(timeout); resolve(); };
-    socket.onerror = socket.onclose = () => { clearTimeout(timeout); reject(new Error('HA_WEBSOCKET_UNAVAILABLE')); };
+    socket.onerror = socket.onclose = () => { clearTimeout(timeout); reject(reasonError('connection_failed')); };
   });
 }
 
 function nextMessage(socket: HomeAssistantSocket, timeoutMs: number): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('HA_WEBSOCKET_TIMEOUT')), timeoutMs);
+    const timeout = setTimeout(() => reject(reasonError('socket_timeout')), timeoutMs);
     socket.onmessage = ({ data }) => {
       clearTimeout(timeout);
       try {
@@ -77,11 +80,22 @@ function nextMessage(socket: HomeAssistantSocket, timeoutMs: number): Promise<Re
         if (!parsed || typeof parsed !== 'object') throw new Error('invalid');
         resolve(parsed as Record<string, unknown>);
       } catch {
-        reject(new Error('HA_WEBSOCKET_INVALID_MESSAGE'));
+        reject(reasonError('invalid_result'));
       }
     };
-    socket.onerror = socket.onclose = () => { clearTimeout(timeout); reject(new Error('HA_WEBSOCKET_UNAVAILABLE')); };
+    socket.onerror = socket.onclose = () => { clearTimeout(timeout); reject(reasonError('connection_failed')); };
   });
+}
+
+function reasonError(reason: IntegrationStatusFailureReason): Error {
+  return new Error(reason);
+}
+
+function failureReason(error: unknown): IntegrationStatusFailureReason {
+  const reason = error instanceof Error ? error.message : '';
+  return reason === 'socket_timeout' || reason === 'auth_required_missing' || reason === 'auth_failed' || reason === 'command_rejected' || reason === 'invalid_result'
+    ? reason
+    : 'connection_failed';
 }
 
 function toIntegrationStatus(value: unknown): IntegrationStatus[] {

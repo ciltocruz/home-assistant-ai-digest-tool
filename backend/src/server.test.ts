@@ -19,7 +19,8 @@ describe('runtime server startup', () => {
         createLogger: () => ({
           reportApiFailure: vi.fn(),
           reportDigestFailure: vi.fn(),
-          reportStartupFailure: (event) => startupEvents.push(event)
+          reportStartupFailure: (event) => startupEvents.push(event),
+          reportOperational: vi.fn()
         }),
         setExitCode
       }
@@ -42,7 +43,7 @@ describe('runtime server startup', () => {
       },
       {
         createApp: async () => ({ listen: vi.fn(async () => undefined), close }) as never,
-        createLogger: () => ({ reportApiFailure: vi.fn(), reportDigestFailure: vi.fn(), reportStartupFailure: vi.fn() }),
+        createLogger: () => ({ reportApiFailure: vi.fn(), reportDigestFailure: vi.fn(), reportStartupFailure: vi.fn(), reportOperational: vi.fn() }),
         registerSignalHandler: (signal, handler) => handlers.set(signal, handler)
       }
     );
@@ -53,6 +54,38 @@ describe('runtime server startup', () => {
     expect(handlers.has('SIGTERM')).toBe(true);
     expect(handlers.has('SIGINT')).toBe(true);
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('emits one safe stdout lifecycle sequence without logging health polls', async () => {
+    const handlers = new Map<NodeJS.Signals, () => Promise<void>>();
+    const events: unknown[] = [];
+    await startRuntimeServer(
+      { DATA_DIR: await mkdtemp(join(tmpdir(), 'ha-digest-lifecycle-')) },
+      {
+        createApp: async () => ({ listen: vi.fn(async () => undefined), close: vi.fn(async () => undefined) }) as never,
+        createLogger: () => ({ reportApiFailure: vi.fn(), reportDigestFailure: vi.fn(), reportStartupFailure: vi.fn(), reportOperational: (event) => { events.push(event); } }),
+        registerSignalHandler: (signal, handler) => handlers.set(signal, handler)
+      }
+    );
+
+    await handlers.get('SIGTERM')?.();
+
+    expect(events).toEqual([{ event: 'runtime_starting' }, { event: 'runtime_listening' }, { event: 'runtime_shutdown' }]);
+    expect(events).not.toContainEqual({ event: 'runtime_ready' });
+  });
+
+  it('emits a safe fatal lifecycle event when startup fails', async () => {
+    const events: unknown[] = [];
+    await startRuntimeServer(
+      { DATA_DIR: await mkdtemp(join(tmpdir(), 'ha-digest-fatal-')), TRUST_PROXY: 'invalid-private-config' },
+      {
+        createLogger: () => ({ reportApiFailure: vi.fn(), reportDigestFailure: vi.fn(), reportStartupFailure: vi.fn(), reportOperational: (event) => { events.push(event); } }),
+        setExitCode: vi.fn()
+      }
+    );
+
+    expect(events).toEqual([{ event: 'runtime_starting' }, { event: 'runtime_fatal', reason: 'runtime_startup_failed' }]);
+    expect(JSON.stringify(events)).not.toContain('invalid-private-config');
   });
 
 });

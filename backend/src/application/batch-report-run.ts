@@ -1,6 +1,6 @@
 import type { BatchSignature, LogDelta, ParsedLogEntry, SignaturePlan } from '../domain/batch.js';
 import { parseHomeAssistantLog } from '../domain/batch.js';
-import type { DeliveryStatus, IgnoreRuleDto, NoteDto } from '@ha-digest/shared';
+import type { DeliveryDiagnostic, DeliveryDiagnosticErrorCode, DeliveryResult, DeliveryStatus, IgnoreRuleDto, NoteDto } from '@ha-digest/shared';
 import type { IntegrationStatusSnapshot } from './integration-status.js';
 import { redactProviderError } from '../domain/safe-error.js';
 
@@ -20,11 +20,22 @@ export interface BatchPersistence {
   commit(plan: CommitPlan): Promise<string>;
   getDeliveryStatus?(reportId: string): Promise<DeliveryStatus | null>;
   claimDeliveryAttempt(reportId: string): Promise<{ status: DeliveryStatus; shouldSend: boolean }>;
-  updateDeliveryStatus(reportId: string, status: DeliveryStatus): Promise<void>;
+  updateDeliveryStatus(reportId: string, status: DeliveryStatus, diagnostic?: DeliveryDiagnostic): Promise<void>;
   fail(run: FailedRun): Promise<void>;
 }
 export interface HAStatusPort { snapshot(): Promise<IntegrationStatusSnapshot>; }
-export interface BatchNotifier { notify(summary: { findings: Array<{ signature: string; analysis: SignatureAnalysis }>; reportUrl?: string; language: 'en' | 'es' }): Promise<DeliveryStatus>; }
+export interface BatchNotifier { notify(summary: { findings: Array<{ signature: string; analysis: SignatureAnalysis }>; reportUrl?: string; language: 'en' | 'es' }): Promise<DeliveryStatus | DeliveryResult>; }
+
+export type BatchOperationalEvent =
+  | { event: 'report_collection_completed'; lineCount: number; signatureCount: number; durationMs: number }
+  | { event: 'report_collection_failed' }
+  | { event: 'report_analysis_completed'; analyzedCount: number; failedCount: number; durationMs: number }
+  | { event: 'report_commit_completed'; reportId: string; status: 'quiet' | 'reported' | 'partial'; signatureCount: number }
+  | { event: 'report_commit_failed' }
+  | { event: 'ha_snapshot_completed'; integrationCount: number; durationMs: number }
+  | { event: 'ha_snapshot_failed'; reason: NonNullable<IntegrationStatusSnapshot['reason']>; durationMs: number }
+  | { event: 'telegram_delivery_started' }
+  | { event: 'telegram_delivery_completed'; outcome: DeliveryStatus; errorCode?: DeliveryDiagnosticErrorCode; durationMs: number };
 
 export type DeferredProviderAuth = { readonly status: 'deferred' };
 export type CommitPlan = {
@@ -55,13 +66,22 @@ export type BatchReportRunDependencies = {
   notes?: { listWindow(window: { from: string; to: string }): Promise<NoteDto[]> };
   reportUrl?: (request: RunRequest) => string | undefined;
   language?: () => Promise<'en' | 'es'>;
+  eventReporter?: (event: BatchOperationalEvent) => void;
+  clock?: () => number;
 };
 
 export class BatchReportRun {
   constructor(private readonly dependencies: BatchReportRunDependencies) {}
 
   async run(request: RunRequest): Promise<RunOutcome> {
-    const delta = await this.dependencies.log.read();
+    const collectionStarted = this.time();
+    let delta: LogDelta;
+    try {
+      delta = await this.dependencies.log.read();
+    } catch (error) {
+      this.report({ event: 'report_collection_failed' });
+      throw error;
+    }
     const now = this.dependencies.now?.() ?? new Date().toISOString();
     const plan = await this.dependencies.signatures.classifyAndStage(
       parseHomeAssistantLog(delta.lines, { includeWarnings: request.includeWarnings }),
@@ -72,14 +92,17 @@ export class BatchReportRun {
       this.dependencies.notes?.listWindow({ from: '1970-01-01T00:00:00.000Z', to: now }) ?? []
     ]);
     const reportedSignatures = plan.signatures.filter((signature) => !isIgnored(signature, rules));
+    this.report({ event: 'report_collection_completed', lineCount: delta.lines.length, signatureCount: reportedSignatures.length, durationMs: this.duration(collectionStarted) });
     const notesBySignature = notesForSignatures(reportedSignatures, notes);
     const integrationStatus = await this.readIntegrationStatus();
     if (reportedSignatures.length === 0) {
-      const reportId = await this.dependencies.persistence.commit({ request, cursor: delta.cursor, signatures: plan, reportedSignatures, notesBySignature, report: { status: 'quiet', deliveryStatus: 'skipped', findings: [], warnings: [], integrationStatus } });
+      const reportId = await this.commit({ request, cursor: delta.cursor, signatures: plan, reportedSignatures, notesBySignature, report: { status: 'quiet', deliveryStatus: 'skipped', findings: [], warnings: [], integrationStatus } });
+      this.report({ event: 'report_commit_completed', reportId, status: 'quiet', signatureCount: 0 });
       return { status: 'quiet', warnings: [], reportId };
     }
 
     const language = await this.dependencies.language?.() ?? 'en';
+    const analysisStarted = this.time();
     const analyses = await Promise.all(reportedSignatures.map(async (signature) => {
       try {
         return { signature, analysis: await this.dependencies.provider.analyze(this.contextFor(signature), new AbortController().signal, language), error: undefined };
@@ -88,6 +111,7 @@ export class BatchReportRun {
       }
     }));
     const findings = analyses.flatMap(({ signature, analysis }) => analysis ? [{ signature: signature.signature, analysis }] : []);
+    this.report({ event: 'report_analysis_completed', analyzedCount: findings.length, failedCount: analyses.length - findings.length, durationMs: this.duration(analysisStarted) });
     if (findings.length === 0) {
       const errorMessage = firstProviderFailureMessage(analyses.map(({ error }) => error));
       await this.dependencies.persistence.fail({ request, code: 'AI_ANALYSIS_UNAVAILABLE', errorMessage });
@@ -96,24 +120,33 @@ export class BatchReportRun {
     const warnings = findings.length === analyses.length ? [] : ['AI_ANALYSIS_PARTIAL'];
     const status = warnings.length ? 'partial' : 'reported';
     const report: CommitPlan['report'] = { status, deliveryStatus: 'pending', findings, warnings, integrationStatus };
-    const reportId = await this.dependencies.persistence.commit({ request, cursor: delta.cursor, signatures: plan, reportedSignatures, notesBySignature, report });
+    const reportId = await this.commit({ request, cursor: delta.cursor, signatures: plan, reportedSignatures, notesBySignature, report });
+    this.report({ event: 'report_commit_completed', reportId, status, signatureCount: reportedSignatures.length });
     if (await this.dependencies.persistence.getDeliveryStatus?.(reportId) === 'sent') {
       return { status, warnings, reportId, deliveryStatus: 'sent' };
     }
     let deliveryStatus: DeliveryStatus = 'skipped';
+    let deliveryDiagnostic: DeliveryDiagnostic | undefined;
+    let deliveryStarted: number | undefined;
     try {
       if (this.dependencies.notifier) {
         const attempt = await this.dependencies.persistence.claimDeliveryAttempt(reportId);
         if (!attempt.shouldSend) return { status, warnings, reportId, deliveryStatus: attempt.status };
-        deliveryStatus = await this.dependencies.notifier.notify({ findings, reportUrl: this.dependencies.reportUrl?.(request), language });
+        deliveryStarted = this.time();
+        this.report({ event: 'telegram_delivery_started' });
+        const result = await this.dependencies.notifier.notify({ findings, reportUrl: this.dependencies.reportUrl?.(request), language });
+        deliveryStatus = typeof result === 'string' ? result : result.status;
+        deliveryDiagnostic = typeof result === 'string' ? undefined : deliveryDiagnosticFor(result, this.dependencies.now?.() ?? new Date().toISOString());
+        this.report({ event: 'telegram_delivery_completed', outcome: deliveryStatus, ...(deliveryDiagnostic ? { errorCode: deliveryDiagnostic.errorCode } : {}), durationMs: this.duration(deliveryStarted) });
       }
     } catch {
       // An exception leaves external delivery unknown; pending prevents an automatic duplicate.
       deliveryStatus = 'pending';
+      this.report({ event: 'telegram_delivery_completed', outcome: 'pending', errorCode: 'TELEGRAM_REQUEST_FAILED', durationMs: deliveryStarted === undefined ? 0 : this.duration(deliveryStarted) });
     }
     report.deliveryStatus = deliveryStatus;
     try {
-      await this.dependencies.persistence.updateDeliveryStatus(reportId, deliveryStatus);
+      await this.dependencies.persistence.updateDeliveryStatus(reportId, deliveryStatus, deliveryDiagnostic);
     } catch {
       // The notification outcome is known; do not make a committed run retryable because its status write failed.
       return { status, warnings: [...warnings, 'DELIVERY_STATUS_PERSISTENCE_FAILED'], reportId, deliveryStatus };
@@ -122,10 +155,15 @@ export class BatchReportRun {
   }
 
   private async readIntegrationStatus(): Promise<IntegrationStatusSnapshot> {
+    const started = this.time();
     try {
-      return await this.dependencies.haStatus?.snapshot() ?? { available: false, integrations: [] };
+      const snapshot = await this.dependencies.haStatus?.snapshot() ?? { available: false, integrations: [], reason: 'connection_failed' as const };
+      if (snapshot.available) this.report({ event: 'ha_snapshot_completed', integrationCount: snapshot.integrations.length, durationMs: this.duration(started) });
+      else this.report({ event: 'ha_snapshot_failed', reason: snapshot.reason ?? 'connection_failed', durationMs: this.duration(started) });
+      return snapshot;
     } catch {
-      return { available: false, integrations: [] };
+      this.report({ event: 'ha_snapshot_failed', reason: 'connection_failed', durationMs: this.duration(started) });
+      return { available: false, integrations: [], reason: 'connection_failed' };
     }
   }
 
@@ -141,6 +179,22 @@ export class BatchReportRun {
     }
     return { signature: signature.signature, component: signature.component, classification: signature.classification, occurrences };
   }
+
+  private async commit(plan: CommitPlan): Promise<string> {
+    try {
+      return await this.dependencies.persistence.commit(plan);
+    } catch (error) {
+      this.report({ event: 'report_commit_failed' });
+      throw error;
+    }
+  }
+
+  private report(event: BatchOperationalEvent): void {
+    try { this.dependencies.eventReporter?.(event); } catch { /* Operational logging must not affect the report. */ }
+  }
+
+  private time(): number { return this.dependencies.clock?.() ?? Date.now(); }
+  private duration(started: number): number { return Math.max(0, this.time() - started); }
 }
 
 function isIgnored(signature: BatchSignature, rules: IgnoreRuleDto[]): boolean {
@@ -162,4 +216,32 @@ function redact(value: string): string {
 function firstProviderFailureMessage(errors: unknown[]): string {
   const detail = errors.find((error): error is Error => error instanceof Error && error.message.length > 0)?.message;
   return redactProviderError(detail ?? 'The AI provider failed without an error message.');
+}
+
+function deliveryDiagnosticFor(result: DeliveryResult, recordedAt: string): DeliveryDiagnostic | undefined {
+  if (result.status !== 'failed' && !(result.status === 'pending' && result.errorCode === 'TELEGRAM_INVALID_RESPONSE')) return undefined;
+  const errorCode = isDeliveryDiagnosticErrorCode(result.errorCode) ? result.errorCode : 'TELEGRAM_REJECTED';
+  const messageKey = deliveryMessageKey(errorCode);
+  if (!messageKey) return undefined;
+  return {
+    channel: 'telegram',
+    stage: errorCode === 'configuration_failed' ? 'configuration' : errorCode === 'TELEGRAM_REQUEST_FAILED' ? 'request' : 'response',
+    errorCode,
+    messageKey,
+    recordedAt
+  };
+}
+
+function isDeliveryDiagnosticErrorCode(value: unknown): value is DeliveryDiagnosticErrorCode {
+  return value === 'TELEGRAM_HTTP_400' || value === 'TELEGRAM_HTTP_401' || value === 'TELEGRAM_HTTP_403' || value === 'TELEGRAM_HTTP_404' || value === 'TELEGRAM_HTTP_409' || value === 'TELEGRAM_HTTP_429' || value === 'TELEGRAM_HTTP_5XX' || value === 'TELEGRAM_REJECTED' || value === 'TELEGRAM_INVALID_RESPONSE' || value === 'TELEGRAM_REQUEST_FAILED' || value === 'configuration_failed';
+}
+
+function deliveryMessageKey(errorCode: DeliveryDiagnosticErrorCode): DeliveryDiagnostic['messageKey'] {
+  const keys: Record<DeliveryDiagnosticErrorCode, DeliveryDiagnostic['messageKey']> = {
+    TELEGRAM_HTTP_400: 'telegram_bad_request', TELEGRAM_HTTP_401: 'telegram_auth_failed', TELEGRAM_HTTP_403: 'telegram_forbidden',
+    TELEGRAM_HTTP_404: 'telegram_not_found', TELEGRAM_HTTP_409: 'telegram_conflict', TELEGRAM_HTTP_429: 'telegram_rate_limited',
+    TELEGRAM_HTTP_5XX: 'telegram_service_unavailable', TELEGRAM_REJECTED: 'telegram_rejected', TELEGRAM_INVALID_RESPONSE: 'telegram_invalid_response',
+    TELEGRAM_REQUEST_FAILED: 'telegram_request_failed', configuration_failed: 'telegram_configuration_failed'
+  };
+  return keys[errorCode];
 }

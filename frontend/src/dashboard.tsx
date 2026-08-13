@@ -149,17 +149,17 @@ function HistoryItem({ item, variant = 'history' }: { item: DigestSummary; varia
     <a className="history-link" href={`/reports/${encodeURIComponent(item.id)}`} aria-label={t('dashboard.history.openReport').replace('{time}', createdAt)}>
       <div className="history-primary">
         <div><span className="history-field-label">{t('dashboard.history.fields.date')}</span><time dateTime={item.createdAt}>{createdAt}</time></div>
-        <span className="muted-copy">{analysisWindowLabel(item)}</span>
+        <span className="muted-copy">{analysisWindowLabel(item)}{item.source === 'v2' ? null : <> <span className="history-window-help">{t('dashboard.history.reviewedPeriodHelp')}</span></>}</span>
       </div>
       <dl className="history-facts">
-        <div className="history-fact history-fact--source"><dt>{t('dashboard.history.fields.source')}</dt><dd><span className={`history-source-badge history-source-badge--${source}`}>{sourceLabel(source)}</span></dd></div>
+        {source === 'legacy' ? <div className="history-fact history-fact--source"><dt>{t('dashboard.history.fields.format')}</dt><dd><span className="history-source-badge history-source-badge--legacy">{sourceLabel(source)}</span></dd></div> : null}
         <div className="history-fact history-fact--report"><dt>{t('dashboard.history.fields.reportResult')}</dt><dd>{reportResultLabel(item)}</dd></div>
         <div className="history-fact history-fact--analysis"><dt>{t('dashboard.history.fields.aiAnalysis')}</dt><dd>{aiAnalysisLabel(item)}</dd></div>
-        <div className="history-fact history-fact--notification"><dt>{t('dashboard.history.fields.notification')}</dt><dd>{deliveryLabel(item.deliveryStatus)}</dd></div>
+        <div className="history-fact history-fact--notification"><dt>{t('dashboard.history.fields.telegramNotification')}</dt><dd>{deliveryLabel(item.deliveryStatus)}{item.deliveryDiagnostic ? <span className="history-diagnostic">{deliveryDiagnosticCopy(item.deliveryDiagnostic.messageKey)}</span> : item.deliveryStatus === 'failed' ? <span className="history-diagnostic">{t('report.outcomes.notificationFailureUnknown')}</span> : null}</dd></div>
       </dl>
       <div className="history-statuses" aria-label={`${t('dashboard.history.fields.reportResult')}; ${t('dashboard.history.fields.notification')}`}>
-        <span className={`outcome-badge outcome-badge--${reportResultKind(item)}`}>{reportResultLabel(item)}</span>
-        <span className={`outcome-badge outcome-badge--notification-${item.deliveryStatus}`}>{deliveryLabel(item.deliveryStatus)}</span>
+        <span className={`outcome-badge outcome-badge--${reportResultKind(item)}`}>{t('dashboard.history.fields.reportResult')}: {reportResultLabel(item)}</span>
+        <span className={`outcome-badge outcome-badge--notification-${item.deliveryStatus}`}>{t('dashboard.history.fields.telegramNotification')}: {deliveryLabel(item.deliveryStatus)}</span>
       </div>
       <div className="severity-strip" aria-label={t('dashboard.history.severityAriaLabel')}>
         <span className="severity-chip severity-chip--critical">{t('dashboard.history.severity.critical')} {item.severityCounts.critical}</span>
@@ -203,9 +203,16 @@ function sourceLabel(source: NonNullable<DigestSummary['source']>): string {
 }
 
 function analysisWindowLabel(item: DigestSummary): string {
+  if (item.source === 'v2') {
+    return t('dashboard.history.generatedAt').replace('{time}', formatDateTime(item.createdAt));
+  }
   return t('dashboard.history.analysisWindow')
     .replace('{from}', formatDateTime(item.window.from))
     .replace('{to}', formatDateTime(item.window.to));
+}
+
+function deliveryDiagnosticCopy(messageKey: NonNullable<DigestSummary['deliveryDiagnostic']>['messageKey']): string {
+  return t(`report.outcomes.deliveryDiagnostics.${messageKey}.copy`);
 }
 
 function formatDateTime(value: string): string {

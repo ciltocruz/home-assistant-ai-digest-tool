@@ -78,7 +78,31 @@ describe('DashboardHistory', () => {
     const state = await loadDigestHistory(fakeDashboardApi([historyItem]));
     const html = renderToStaticMarkup(<DashboardHistory state={state} />);
 
-    expect(html).toContain('Ventana analizada: 10 jul 2026, 09:00 — 10 jul 2026, 10:00');
+    expect(html).toContain('Periodo revisado: 10 jul 2026, 09:00 — 10 jul 2026, 10:00');
+    expect(html).toContain('Intervalo de información de Home Assistant revisado para crear este informe.');
+  });
+
+  test('labels a synthetic v2 point-in-time window as the report generation time', async () => {
+    const createdAt = '2026-07-10T10:00:00.000Z';
+    const state = await loadDigestHistory(fakeDashboardApi([{
+      ...historyItem,
+      source: 'v2',
+      window: { from: '2026-07-10T09:59:59.999Z', to: createdAt },
+      createdAt
+    }]));
+    const html = renderToStaticMarkup(<DashboardHistory state={state} />);
+
+    expect(html).toContain('Informe generado el: 10 jul 2026, 10:00');
+    expect(html).not.toContain('Periodo revisado');
+    expect(html).not.toContain('Intervalo de información de Home Assistant revisado');
+  });
+
+  test('reserves reviewed-period copy for legacy reports even when a v2 fixture contains a wider window', async () => {
+    const state = await loadDigestHistory(fakeDashboardApi([{ ...historyItem, source: 'v2' }]));
+    const html = renderToStaticMarkup(<DashboardHistory state={state} />);
+
+    expect(html).toContain('Informe generado el: 10 jul 2026, 10:00');
+    expect(html).not.toContain('Periodo revisado');
   });
 
   test('separates a partial report result from its failed notification without inventing analysis counts', async () => {
@@ -97,10 +121,42 @@ describe('DashboardHistory', () => {
     expect(html).toContain('Análisis de IA');
     expect(html).toContain('Algunos problemas detectados no pudieron explicarse');
     expect(html).toContain('Notificación');
-    expect(html).toContain('No se pudo enviar');
+    expect(html).toContain('Notificación de Telegram: no enviada');
+    expect(html).toContain('Resultado del informe: Generado con análisis de IA incompleto');
     expect(html).not.toContain('>Fallido<');
     expect(html).not.toContain('7 de 38');
     expect(html).not.toContain('AI_ANALYSIS_PARTIAL');
+  });
+
+  test('shows a plain history diagnostic when a safe Telegram reason was recorded', async () => {
+    const state = await loadDigestHistory(fakeDashboardApi([{
+      ...historyItem, source: 'v2', runStatus: 'reported', deliveryStatus: 'failed',
+      deliveryDiagnostic: { channel: 'telegram', stage: 'response', errorCode: 'TELEGRAM_HTTP_429', messageKey: 'telegram_rate_limited', recordedAt: '2026-07-10T10:00:01.000Z' }
+    }]));
+    const html = renderToStaticMarkup(<DashboardHistory state={state} />);
+
+    expect(html).toContain('Telegram limitó temporalmente los envíos.');
+    expect(html).not.toContain('TELEGRAM_HTTP_429');
+  });
+
+  test('shows an indeterminate Telegram response as pending rather than rejected', async () => {
+    const state = await loadDigestHistory(fakeDashboardApi([{
+      ...historyItem, source: 'v2', runStatus: 'reported', deliveryStatus: 'pending',
+      deliveryDiagnostic: { channel: 'telegram', stage: 'response', errorCode: 'TELEGRAM_INVALID_RESPONSE', messageKey: 'telegram_invalid_response', recordedAt: '2026-07-10T10:00:01.000Z' }
+    }]));
+    const html = renderToStaticMarkup(<DashboardHistory state={state} />);
+
+    expect(html).toContain('Pendiente de confirmación');
+    expect(html).toContain('No se pudo confirmar la respuesta de Telegram.');
+    expect(html).not.toContain('Telegram rechazó');
+    expect(html).not.toContain('TELEGRAM_INVALID_RESPONSE');
+  });
+
+  test('states when an older failed delivery has no recorded reason', async () => {
+    const state = await loadDigestHistory(fakeDashboardApi([{ ...historyItem, source: 'v2', runStatus: 'reported', deliveryStatus: 'failed' }]));
+    const html = renderToStaticMarkup(<DashboardHistory state={state} />);
+
+    expect(html).toContain('El motivo exacto no quedó registrado.');
   });
 
   test('marks an older-format report honestly and keeps report and notification outcomes explicit', async () => {
@@ -108,6 +164,7 @@ describe('DashboardHistory', () => {
     const html = renderToStaticMarkup(<DashboardHistory state={state} />);
 
     expect(html).toContain('Informe importado (formato anterior)');
+    expect(html).toContain('Formato');
     expect(html).toContain('Resultado del informe');
     expect(html).toContain('Informe importado');
     expect(html).toContain('Notificación');
@@ -115,11 +172,9 @@ describe('DashboardHistory', () => {
   });
 
   test.each([
-    { locale: 'en' as const, source: 'legacy' as const, sourceLabel: 'Imported report (older format)', deliveryLabel: 'Sent' },
-    { locale: 'en' as const, source: 'v2' as const, sourceLabel: 'AI report', deliveryLabel: 'Sent' },
-    { locale: 'es' as const, source: 'legacy' as const, sourceLabel: 'Informe importado (formato anterior)', deliveryLabel: 'Enviada' },
-    { locale: 'es' as const, source: 'v2' as const, sourceLabel: 'Informe de IA', deliveryLabel: 'Enviada' }
-  ])('shows the $source source label separately from delivery in $locale history', async ({ locale, source, sourceLabel, deliveryLabel }) => {
+    { locale: 'en' as const, source: 'legacy' as const, sourceLabel: 'Imported report (older format)', deliveryLabel: 'Telegram notification: Sent' },
+    { locale: 'es' as const, source: 'legacy' as const, sourceLabel: 'Informe importado (formato anterior)', deliveryLabel: 'Notificación de Telegram: Enviada' }
+  ])('flags only $source reports as older format in $locale history', async ({ locale, source, sourceLabel, deliveryLabel }) => {
     setLocale(locale);
     const state = await loadDigestHistory(fakeDashboardApi([{ ...historyItem, source }]));
     const html = renderToStaticMarkup(<DashboardHistory state={state} />);
@@ -127,6 +182,16 @@ describe('DashboardHistory', () => {
     expect(html).toContain(sourceLabel);
     expect(html).toContain(deliveryLabel);
     expect(html).toContain('history-source-badge');
+  });
+
+  test.each([
+    { locale: 'en' as const, forbidden: ['Source', 'AI report'] },
+    { locale: 'es' as const, forbidden: ['Origen', 'Informe de IA'] }
+  ])('does not show normal v2 origin metadata in $locale history', async ({ locale, forbidden }) => {
+    setLocale(locale);
+    const state = await loadDigestHistory(fakeDashboardApi([{ ...historyItem, source: 'v2' }]));
+    const html = renderToStaticMarkup(<DashboardHistory state={state} />);
+    for (const copy of forbidden) expect(html).not.toContain(copy);
   });
 
   test('mounted production path loads empty history through api prop', async () => {
@@ -175,7 +240,7 @@ describe('DashboardHistory', () => {
     });
 
     expect(container.textContent).toContain('1 informe guardado');
-    expect(container.textContent).toContain('Ventana analizada: 10 jul 2026, 09:00 — 10 jul 2026, 10:00');
+    expect(container.textContent).toContain('Periodo revisado: 10 jul 2026, 09:00 — 10 jul 2026, 10:00');
   });
 
   test('mounted production path renders safe error results from api prop', async () => {

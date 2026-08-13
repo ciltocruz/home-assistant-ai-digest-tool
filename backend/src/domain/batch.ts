@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 export type LogLevel = 'ERROR' | 'CRITICAL' | 'WARNING';
 export type SignatureClass = 'new' | 'recurring' | 'reactivated' | 'latent';
-export type SignatureTrend = 'new' | 'increasing' | 'flat' | 'decreasing';
+export type SignatureTrend = 'new' | 'increasing' | 'flat' | 'decreasing' | 'unknown';
+export type ProblemKind = 'endpoint_resolution';
 export type ParsedLogEntry = {
   at: string;
   level: LogLevel;
@@ -9,6 +10,7 @@ export type ParsedLogEntry = {
   message: string;
   normalizedMessage: string;
   signature: string;
+  problemKind?: ProblemKind;
 };
 export type LogCursor = { dev: number; ino: number; size: number; offset: number };
 export type LogDelta = { lines: string[]; cursor: LogCursor; recovery?: 'truncated' | 'replaced' };
@@ -24,6 +26,7 @@ export type BatchSignature = {
   component: string;
   level: LogLevel;
   normalizedMessage: string;
+  problemKind?: ProblemKind;
   classification: SignatureClass;
   trend: SignatureTrend;
   occurrences: ParsedLogEntry[];
@@ -55,7 +58,8 @@ export function parseHomeAssistantLog(lines: string[], options: { includeWarning
     const component = match.groups.component.trim().toLowerCase();
     const message = match.groups.message.trim();
     const normalizedMessage = normalizeLogMessage(message);
-    return [{ at, level, component, message, normalizedMessage, signature: signatureFor(component, level, normalizedMessage) }];
+    const problemKind = problemKindFor(component, normalizedMessage);
+    return [{ at, level, component, message, normalizedMessage, signature: signatureFor(component, level, normalizedMessage), ...(problemKind ? { problemKind } : {}) }];
   });
 }
 
@@ -95,8 +99,9 @@ export function classifySignatures(entries: ParsedLogEntry[], known: KnownSignat
       component: first.component,
       level: first.level,
       normalizedMessage: first.normalizedMessage,
+      ...(first.problemKind ? { problemKind: first.problemKind } : {}),
       classification,
-      trend: trendFor(inWindow.length, prior?.previousPeriodCount),
+      trend: trendFor(prior?.previousPeriodCount),
       occurrences: inWindow
     }];
   });
@@ -112,9 +117,14 @@ function toIso(value: string): string | null {
   return Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
 }
 
-function trendFor(current: number, previous: number | undefined): SignatureTrend {
+function trendFor(previous: number | undefined): SignatureTrend {
   if (previous === undefined) return 'new';
-  if (current > previous) return 'increasing';
-  if (current < previous) return 'decreasing';
-  return 'flat';
+  return 'unknown';
+}
+
+function problemKindFor(component: string, normalizedMessage: string): ProblemKind | undefined {
+  if (component !== 'homeassistant.components.plex' && !component.startsWith('homeassistant.components.plex.')) return undefined;
+  return /(?:name\s*resolution\s*error|nameresolutionerror|failed to resolve|temporary failure in name resolution)/i.test(normalizedMessage)
+    ? 'endpoint_resolution'
+    : undefined;
 }

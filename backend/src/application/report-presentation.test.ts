@@ -207,6 +207,27 @@ One condition needs review.
     expect(JSON.stringify(report)).not.toContain('summary-warning-secret');
   });
 
+  it('projects only the bounded indeterminate Telegram diagnostic fields', () => {
+    const report = redactReportDetail({
+      id: 'v2-invalid-telegram-response', source: 'v2',
+      summary: {
+        ...summary, deliveryStatus: 'pending',
+        deliveryDiagnostic: {
+          channel: 'telegram', stage: 'response', errorCode: 'TELEGRAM_INVALID_RESPONSE',
+          messageKey: 'telegram_invalid_response', recordedAt: '2026-08-13T10:00:01.000Z', rawBody: 'private response body'
+        }
+      } as never,
+      rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'reported', warnings: [], signatures: [] }
+    });
+
+    expect(report.summary.deliveryDiagnostic).toEqual({
+      channel: 'telegram', stage: 'response', errorCode: 'TELEGRAM_INVALID_RESPONSE',
+      messageKey: 'telegram_invalid_response', recordedAt: '2026-08-13T10:00:01.000Z'
+    });
+    expect(JSON.stringify(report)).not.toContain('private response body');
+  });
+
   it('normalizes malformed summary counts before returning a schema-valid detail', () => {
     const report = redactReportDetail({
       id: 'malformed-counts',
