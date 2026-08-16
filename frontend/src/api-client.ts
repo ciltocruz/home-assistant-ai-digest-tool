@@ -1,4 +1,6 @@
 import {
+  BatchDeleteReportsRequestSchema,
+  BatchDeleteReportsResponseSchema,
   DeliveryResultSchema,
   DigestDetailSchema,
   DigestJobStatusSchema,
@@ -20,6 +22,7 @@ import {
   RunDigestResponseSchema,
   SendDigestRequestSchema,
   TestResultSchema,
+  type BatchDeleteReportsResponse,
   type DeliveryResult,
   type DigestDetail,
   type DigestJobStatus,
@@ -126,6 +129,11 @@ export function createApiClient(options: ApiClientOptions = {}) {
     listHistory: (): Promise<DigestHistoryResponse> => request('/api/digests/history', DigestHistoryResponseSchema),
     getDigest: (id: string): Promise<DigestDetail> => request(`/api/digests/${encodeURIComponent(id)}`, DigestDetailSchema),
     deleteDigest: (id: string): Promise<void> => request(`/api/digests/${encodeURIComponent(id)}`, z.unknown(), { method: 'DELETE' }).then(() => undefined),
+    deleteDigestsBatch: (ids: string[]): Promise<BatchDeleteReportsResponse> =>
+      request('/api/digests/batch-delete', BatchDeleteReportsResponseSchema, {
+        method: 'POST',
+        body: JSON.stringify(BatchDeleteReportsRequestSchema.parse({ ids }))
+      }),
     addNote: (input: NoteCreate): Promise<NoteDto> => request('/api/notes', NoteDtoSchema, { method: 'POST', body: JSON.stringify(NoteCreateSchema.parse(input)) }),
     listNotes: (window: { from: string; to: string }): Promise<NoteDto[]> => {
       const params = new URLSearchParams({ from: window.from, to: window.to });

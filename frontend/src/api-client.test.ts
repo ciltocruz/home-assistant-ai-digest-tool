@@ -90,6 +90,7 @@ describe('createApiClient', () => {
     await client.runDigest({ kind: 'manual' });
     await client.listHistory();
     await client.deleteDigest('digest/id with spaces');
+    await client.deleteDigestsBatch(['digest-1', 'digest-2']);
     await client.addNote({ text: 'Observed restart', occurredAt: '2026-07-10T10:00:00.000Z', tags: ['maintenance'] });
     await client.listNotes({ from: '2026-07-10T00:00:00.000Z', to: '2026-07-11T00:00:00.000Z' });
     await client.listIgnores();
@@ -104,6 +105,7 @@ describe('createApiClient', () => {
       ['http://ui.test/api/digests/run', 'POST'],
       ['http://ui.test/api/digests/history', 'GET'],
       ['http://ui.test/api/digests/digest%2Fid%20with%20spaces', 'DELETE'],
+      ['http://ui.test/api/digests/batch-delete', 'POST'],
       ['http://ui.test/api/notes', 'POST'],
       ['http://ui.test/api/notes?from=2026-07-10T00%3A00%3A00.000Z&to=2026-07-11T00%3A00%3A00.000Z', 'GET'],
       ['http://ui.test/api/ignores', 'GET'],
@@ -128,12 +130,13 @@ describe('createApiClient', () => {
     expect(calls[4]?.init.body).toBeUndefined();
     expect(new Headers(calls[4]?.init.headers).get('content-type')).toBeNull();
     expect(new Headers(calls[4]?.init.headers).get('x-csrf-token')).toBe('csrf sample value');
-    expect(JSON.parse(String(calls[5]?.init.body))).toEqual({ text: 'Observed restart', occurredAt: '2026-07-10T10:00:00.000Z', tags: ['maintenance'] });
-    expect(JSON.parse(String(calls[8]?.init.body))).toEqual({ match: 'sensor.noisy', type: 'entity', reason: 'Known noisy fixture' });
-    expect(calls[9]?.init.body).toBeUndefined();
-    expect(new Headers(calls[9]?.init.headers).get('content-type')).toBeNull();
-    expect(JSON.parse(String(calls[10]?.init.body))).toEqual({ channel: 'telegram', targetRef: 'ref-telegram', message: 'Synthetic test message' });
-    expect(JSON.parse(String(calls[11]?.init.body))).toEqual({ digestId: 'digest-1', targetRef: 'ref-telegram' });
+    expect(JSON.parse(String(calls[5]?.init.body))).toEqual({ ids: ['digest-1', 'digest-2'] });
+    expect(JSON.parse(String(calls[6]?.init.body))).toEqual({ text: 'Observed restart', occurredAt: '2026-07-10T10:00:00.000Z', tags: ['maintenance'] });
+    expect(JSON.parse(String(calls[9]?.init.body))).toEqual({ match: 'sensor.noisy', type: 'entity', reason: 'Known noisy fixture' });
+    expect(calls[10]?.init.body).toBeUndefined();
+    expect(new Headers(calls[10]?.init.headers).get('content-type')).toBeNull();
+    expect(JSON.parse(String(calls[11]?.init.body))).toEqual({ channel: 'telegram', targetRef: 'ref-telegram', message: 'Synthetic test message' });
+    expect(JSON.parse(String(calls[12]?.init.body))).toEqual({ digestId: 'digest-1', targetRef: 'ref-telegram' });
   });
 
   test('rejects unexpected response shapes before UI state can consume them', async () => {
@@ -357,6 +360,7 @@ function routeResponse(url: string, init: RequestInit): Response {
   if (url.endsWith('/api/settings') && method === 'PUT') return jsonResponse(200, settingsResponse);
   if (url.endsWith('/api/digests/run') && method === 'POST') return jsonResponse(200, { jobId: 'job-1', status: 'queued' });
   if (url.endsWith('/api/digests/history') && method === 'GET') return jsonResponse(200, [digestSummaryResponse]);
+  if (url.endsWith('/api/digests/batch-delete') && method === 'POST') return jsonResponse(200, { deletedCount: 2 });
   if (url.endsWith('/api/digests/digest%2Fid%20with%20spaces') && method === 'DELETE') return emptyResponse(204);
   if (url.endsWith('/api/digests/digest-1') && method === 'GET') return jsonResponse(200, { id: 'digest-1', summary: digestSummaryResponse, rendered: { format: 'markdown', body: '# Synthetic report' } });
   if (url.endsWith('/api/notes') && method === 'POST') return jsonResponse(200, noteResponse);

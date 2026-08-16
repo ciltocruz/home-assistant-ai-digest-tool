@@ -4,28 +4,8 @@ import { ApiClientError, redactSensitiveText } from './api-client.js';
 import { t } from './i18n/index.js';
 import { formatDateTime } from './date-time.js';
 
-export type DashboardApi = {
-  listHistory(): Promise<DigestHistoryResponse>;
-};
-
-export type DashboardHistoryState =
-  | { status: 'loading' }
-  | { status: 'empty' }
-  | { status: 'ready'; items: DigestSummary[] }
-  | { status: 'error'; message: string }
-  | { status: 'unavailable' };
-
-export async function loadDigestHistory(api: DashboardApi): Promise<DashboardHistoryState> {
-  try {
-    const items = await api.listHistory();
-    return items.length === 0 ? { status: 'empty' } : { status: 'ready', items };
-  } catch (error) {
-    const message = error instanceof ApiClientError || error instanceof Error
-      ? redactSensitiveText(error.message)
-      : t('dashboard.history.error.copy');
-    return { status: 'error', message };
-  }
-}
+export { DashboardHistory, loadDigestHistory, type DashboardApi, type DashboardHistoryState } from './report-history.js';
+import { DashboardHistory, loadDigestHistory, type DashboardApi, type DashboardHistoryState } from './report-history.js';
 
 export function Dashboard({ api, state: initialState, activeReport, refreshKey = 0, timeZone }: { api?: DashboardApi; state?: DashboardHistoryState; activeReport: ReactNode; refreshKey?: number; timeZone?: string }) {
   const [state, setState] = useState<DashboardHistoryState>(initialState ?? (api ? { status: 'loading' } : { status: 'unavailable' }));
@@ -71,53 +51,6 @@ export function Dashboard({ api, state: initialState, activeReport, refreshKey =
       </section>
     </div>
   </section>;
-}
-
-export function DashboardHistory({ api, state: initialState, refreshKey = 0, headingLevel = 'h1', timeZone }: { api?: DashboardApi; state?: DashboardHistoryState; refreshKey?: number; headingLevel?: 'h1' | 'h2'; timeZone?: string }) {
-  const [state, setState] = useState<DashboardHistoryState>(initialState ?? (api ? { status: 'loading' } : { status: 'unavailable' }));
-  const [retryKey, setRetryKey] = useState(0);
-
-  useEffect(() => {
-    if (initialState) {
-      setState(initialState);
-      return;
-    }
-
-    if (!api) {
-      setState({ status: 'unavailable' });
-      return;
-    }
-
-    let active = true;
-    setState({ status: 'loading' });
-    void loadDigestHistory(api).then((nextState) => {
-      if (active) setState(nextState);
-    });
-    return () => { active = false; };
-  }, [api, initialState, refreshKey, retryKey]);
-
-  const Heading = headingLevel;
-  return (
-    <article className="panel history-panel" aria-live="polite">
-      <p className="eyebrow">{t('dashboard.history.eyebrow')}</p>
-      <Heading>{t('shell.reports')}</Heading>
-      {renderHistoryState(state, () => setRetryKey((value) => value + 1), timeZone)}
-    </article>
-  );
-}
-
-function renderHistoryState(state: DashboardHistoryState, onRetry: () => void, timeZone?: string) {
-  if (state.status === 'loading') return <><h2>{t('dashboard.history.loading.title')}</h2><p>{t('dashboard.history.loading.copy')}</p></>;
-  if (state.status === 'error') return <><h2>{t('dashboard.history.error.title')}</h2><p>{t('dashboard.history.error.copy')}</p><p className="muted-copy">{state.message}</p><button type="button" onClick={onRetry}>{t('dashboard.history.error.action')}</button></>;
-  if (state.status === 'unavailable') return <><h2>{t('dashboard.history.unavailable.title')}</h2><p>{t('dashboard.history.unavailable.copy')}</p></>;
-  if (state.status === 'empty') return <><h2>{t('dashboard.history.empty.title')}</h2><p>{t('dashboard.history.empty.copy')}</p></>;
-
-  return <>
-    <p>{summaryLabel(state.items.length)}</p>
-    <ul className="history-list">
-      {state.items.map((item) => <HistoryItem key={item.id} item={item} timeZone={timeZone} />)}
-    </ul>
-  </>;
 }
 
 function renderCurrentState(state: DashboardHistoryState, onRetry: () => void) {
