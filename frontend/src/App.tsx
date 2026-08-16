@@ -72,9 +72,9 @@ function OperationalRoute({ route, api, settingsApi, timeZoneApi, dashboardApi, 
     return () => { active = false; };
   }, [timeZoneApi]);
 
-  if (route.kind === 'report') return <ReportsWorkspace api={api} reportId={route.reportId} refreshKey={historyRevision} onChanged={onCompleted} timeZone={timeZone} />;
+  if (route.kind === 'report') return <ReportsWorkspace api={api} reportId={route.reportId} refreshKey={historyRevision} onChanged={onCompleted} timeZone={timeZone} manualDigestApi={manualDigestApi} jobLifecycleApi={jobLifecycleApi} activeJobIds={activeJobIds} onQueued={onQueued} />;
   if (route.kind === 'settings') return <SettingsPanel api={settingsApi} section={route.section} />;
-  if (route.kind === 'reports') return <ReportsWorkspace api={api} refreshKey={historyRevision} onChanged={onCompleted} timeZone={timeZone} />;
+  if (route.kind === 'reports') return <ReportsWorkspace api={api} refreshKey={historyRevision} onChanged={onCompleted} timeZone={timeZone} manualDigestApi={manualDigestApi} jobLifecycleApi={jobLifecycleApi} activeJobIds={activeJobIds} onQueued={onQueued} />;
   if (route.kind === 'audit') {
     const auditApi: AuditPageApi | undefined = typeof api?.getStaleEntities === 'function' ? (api as AuditPageApi) : undefined;
     return <AuditPage api={auditApi} />;
@@ -99,9 +99,20 @@ function ActiveReport({ manualDigestApi, jobLifecycleApi, activeJobIds, onQueued
   return <ManualDigestCard api={manualDigestApi} onQueued={onQueued} />;
 }
 
-function ReportsWorkspace({ api, reportId, refreshKey, onChanged, timeZone }: { api?: AppApi; reportId?: string; refreshKey: number; onChanged(): void; timeZone?: string }) {
+function ReportsWorkspace({ api, reportId, refreshKey, onChanged, timeZone, manualDigestApi, jobLifecycleApi, activeJobIds, onQueued }: {
+  api?: AppApi;
+  reportId?: string;
+  refreshKey: number;
+  onChanged(): void;
+  timeZone?: string;
+  manualDigestApi?: ManualDigestApi;
+  jobLifecycleApi?: JobLifecycleApi;
+  activeJobIds: string[];
+  onQueued(jobId: string): void;
+}) {
   const dashboardApi = hasDashboardApi(api) ? api : undefined;
   return <section className={`reports-workspace${reportId ? ' reports-workspace--selected' : ' reports-workspace--list'}`} aria-label={t('shell.reports')}>
+    {reportId ? null : <ActiveReport manualDigestApi={manualDigestApi} jobLifecycleApi={jobLifecycleApi} activeJobIds={activeJobIds} onQueued={onQueued} onCompleted={onChanged} />}
     {reportId ? <ReportRoute api={api} reportId={reportId} timeZone={timeZone} onDeleted={() => { onChanged(); window.history.pushState({}, '', '/reports'); window.dispatchEvent(new PopStateEvent('popstate')); }} /> : null}
     <DashboardHistory api={dashboardApi} refreshKey={refreshKey} headingLevel={reportId ? 'h2' : 'h1'} timeZone={timeZone} />
   </section>;

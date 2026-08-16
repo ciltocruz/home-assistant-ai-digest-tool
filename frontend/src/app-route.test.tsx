@@ -286,6 +286,34 @@ describe('App report route', () => {
     expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Lanzar informe')).toBe(false);
   });
 
+  test('launches a new report from the reports page and shows the job lifecycle', async () => {
+    sessionStorage.clear();
+    history.pushState({}, '', '/reports');
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push(root);
+    const runDigest = vi.fn(async () => ({ status: 'queued' as const, jobId: 'job-reports-1' }));
+    const api = {
+      getOnboarding: async () => ({ currentStep: 'first_report' as const, completedSteps: [], draft: {}, secretMetadata: {}, completed: true }),
+      listHistory: async () => [],
+      runDigest,
+      getDigestJob: async () => ({ id: 'job-reports-1', status: 'completed' as const, stage: 'completed' as const, attempts: 1, retryCount: 0, retryAvailable: false, reportId: 'report-9', createdAt: '2026-08-01T10:00:00.000Z', updatedAt: '2026-08-01T10:02:00.000Z' }),
+      retryDigestJob: async () => { throw new Error('not expected'); }
+    };
+
+    await act(async () => { root.render(<App api={api} />); await Promise.resolve(); });
+
+    const action = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Lanzar informe');
+    expect(action).toBeTruthy();
+    await act(async () => { action?.dispatchEvent(new MouseEvent('click', { bubbles: true })); await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(runDigest).toHaveBeenCalledWith({ kind: 'manual' });
+    expect(container.querySelector('a[href="/reports/report-9"]')?.textContent).toBe('Ver informe');
+    expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Lanzar informe')).toBe(false);
+  });
+
   test('renders the selected Configuration area with the shell navigation after onboarding', async () => {
     history.pushState({}, '', '/settings');
     const container = document.createElement('div');
