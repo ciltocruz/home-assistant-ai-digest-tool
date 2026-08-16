@@ -41,6 +41,20 @@ Open `http://127.0.0.1:3000`. Local mode binds only to loopback.
 
 Set `PUBLIC_APP_URL` only when the application's browser-accessible HTTP(S) origin is stable, for example `https://digest.example/`. It must not include a path prefix, credentials, a query string, or a fragment. Invalid values are ignored and Telegram summaries remain unlinked.
 
+## Release-based deployment
+
+Deployments always point to a **release**, never to a branch or an ad-hoc commit. The Compose service references a versioned local image (`home-assistant-ai-digest-tool:<version>`), and the source transferred to the host is the release tag archive:
+
+1. Create a release in the repository (for example `v1.0.0`).
+2. Transfer the release source to the deployment host and update the image tag in `compose.yaml` to the release version.
+3. Build and start from that release source only:
+
+   ```bash
+   docker compose up --build --detach
+   ```
+
+Roll back by redeploying the previous release (previous source + previous image tag); the image tag and the deployed source always carry the same release version.
+
 ## Six-screen onboarding
 
 The first browser visit selects a language, creates the admin account, then resumes the protected onboarding flow:

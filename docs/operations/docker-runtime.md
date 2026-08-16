@@ -2,6 +2,20 @@
 
 This how-to is for operators running the Docker-first runtime with Home Assistant Core. Home Assistant OS and Supervised are not supported by this runtime.
 
+## Release-based deployment
+
+Deployments point to a **release**, never to a branch or an ad-hoc commit. The Compose service references a versioned local image (`home-assistant-ai-digest-tool:<version>`), and the source transferred to the host is always the release tag archive.
+
+1. Create a release in the repository (for example `v1.0.0`).
+2. Transfer the release source to the deployment host. Update the `image:` tag in `compose.yaml` to the release version.
+3. Build and start from that release source only:
+
+   ```bash
+   docker compose up --build --detach
+   ```
+
+Roll back by redeploying the previous release (previous source archive and previous image tag); image tag and deployed source always carry the same release version.
+
 ## Start in local mode
 
 Local mode is the default. It publishes only on loopback and deliberately uses non-Secure cookies for direct localhost HTTP.
