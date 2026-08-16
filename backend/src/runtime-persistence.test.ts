@@ -580,12 +580,12 @@ describe('persistent runtime services', () => {
     const app = createApp({ services, auth: authOptions() });
     const response = await authenticatedGet(app, `/api/digests/jobs/${queued.jobId}`);
     const partialReport = DigestDetailSchema.parse(await services.reports.get(`v2-report:${queued.jobId}`));
-    expect(partialReport.presentation).toMatchObject({ mode: 'batch', status: 'partial', warnings: ['AI_ANALYSIS_UNAVAILABLE'], signatures: [expect.objectContaining({ occurrences: 1 })] });
+    expect(partialReport.presentation).toMatchObject({ mode: 'batch', status: 'partial', warnings: expect.arrayContaining(['AI_ANALYSIS_UNAVAILABLE']), signatures: [expect.objectContaining({ occurrences: 1 })] });
     expect(JSON.stringify(partialReport)).not.toContain(rawProviderMessage);
     expect(JSON.stringify(partialReport)).not.toContain(AI_SECRET);
     const detailResponse = await authenticatedGet(app, `/api/digests/v2-report:${queued.jobId}`);
     expect(detailResponse.statusCode).toBe(200);
-    expect(detailResponse.json()).toMatchObject({ presentation: { status: 'partial', warnings: ['AI_ANALYSIS_UNAVAILABLE'] } });
+    expect(detailResponse.json()).toMatchObject({ presentation: { status: 'partial', warnings: expect.arrayContaining(['AI_ANALYSIS_UNAVAILABLE']) } });
     expect(JSON.stringify(detailResponse.json())).not.toContain(rawProviderMessage);
     await app.close();
     await services.close?.();

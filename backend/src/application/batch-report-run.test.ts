@@ -40,9 +40,10 @@ describe('BatchReportRun', () => {
       return { summary: context.component, recommendation: 'fix it' };
     });
 
-    await expect(run.run({ runId: 'run-2', slotId: 'slot-2' })).resolves.toEqual({ status: 'partial', warnings: ['AI_ANALYSIS_PARTIAL'], reportId: 'report-id' });
+    await expect(run.run({ runId: 'run-2', slotId: 'slot-2' })).resolves.toEqual({ status: 'partial', warnings: ['AI_ANALYSIS_PARTIAL', 'provider down'], reportId: 'report-id' });
     expect(commits).toHaveLength(1);
-    expect(commits[0]?.report.warnings).toEqual(['AI_ANALYSIS_PARTIAL']);
+    expect(commits[0]?.report.warnings).toEqual(['AI_ANALYSIS_PARTIAL', 'provider down']);
+    expect(commits[0]?.report.failure).toBe('provider down');
     expect(failures).toEqual([]);
   });
 
@@ -100,13 +101,102 @@ describe('BatchReportRun', () => {
     const providerSecret = 'AIzaSyA1B2C3D4E5F6G7H8';
     const { run, commits, failures } = harness(async () => { throw new Error(`Gemini request failed at https://example.test/generate?key=${providerSecret}`); });
 
-    await expect(run.run({ runId: 'run-3', slotId: 'slot-3' })).resolves.toEqual({ status: 'partial', warnings: ['AI_ANALYSIS_UNAVAILABLE'], reportId: 'report-id' });
+    const expectedError = 'Gemini request failed at https://example.test/generate?key=[REDACTED]';
+    await expect(run.run({ runId: 'run-3', slotId: 'slot-3' })).resolves.toEqual({ status: 'partial', warnings: ['AI_ANALYSIS_UNAVAILABLE', expectedError], reportId: 'report-id' });
     expect(commits).toMatchObject([{
       cursor: delta.cursor,
-      report: { status: 'partial', deliveryStatus: 'skipped', findings: [], warnings: ['AI_ANALYSIS_UNAVAILABLE'] }
+      report: { status: 'partial', deliveryStatus: 'skipped', findings: [], warnings: ['AI_ANALYSIS_UNAVAILABLE', expectedError], failure: expectedError }
     }]);
     expect(failures).toEqual([]);
     expect(JSON.stringify(commits)).not.toContain(providerSecret);
+  });
+
+  it('limits reported signatures sent to AI provider to top 10 sorted by occurrences descending', async () => {
+    const manyLines: string[] = [];
+    for (let i = 1; i <= 15; i++) {
+      for (let j = 0; j < i; j++) {
+        manyLines.push(`2026-07-29 12:00:00 ERROR (MainThread) [ha.comp${i}] error message ${i}`);
+      }
+    }
+    const manyEntries = parseHomeAssistantLog(manyLines);
+    const signatureMap = new Map<string, typeof manyEntries>();
+    for (const entry of manyEntries) {
+      const list = signatureMap.get(entry.signature) ?? [];
+      list.push(entry);
+      signatureMap.set(entry.signature, list);
+    }
+    const manyPlan: SignaturePlan = {
+      baselineEntries: [],
+      signatures: Array.from(signatureMap.values()).map((entries) => ({
+        ...entries[0]!,
+        classification: 'new',
+        trend: 'new',
+        occurrences: entries
+      }))
+    };
+
+    const analyzedComponents: string[] = [];
+    const analyze = vi.fn(async (context: { component: string }) => {
+      analyzedComponents.push(context.component);
+      return { summary: context.component, recommendation: 'fix' };
+    });
+
+    const run = new BatchReportRun({
+      log: { read: async () => ({ lines: manyLines, cursor: delta.cursor }) },
+      signatures: { classifyAndStage: async () => manyPlan },
+      provider: { analyze },
+      persistence: {
+        commit: async () => 'top-10-report',
+        claimDeliveryAttempt: async () => ({ status: 'pending', shouldSend: false }),
+        updateDeliveryStatus: async () => undefined,
+        fail: async () => undefined
+      }
+    });
+
+    await run.run({ runId: 'run-top-10', slotId: 'slot-top-10' });
+
+    expect(analyze).toHaveBeenCalledTimes(10);
+    expect(analyzedComponents).toEqual([
+      'ha.comp15', 'ha.comp14', 'ha.comp13', 'ha.comp12', 'ha.comp11',
+      'ha.comp10', 'ha.comp9', 'ha.comp8', 'ha.comp7', 'ha.comp6'
+    ]);
+  });
+
+  it('preserves explicit AI provider error messages when AI fails with 429 or other errors', async () => {
+    const events: unknown[] = [];
+    const commits: Parameters<BatchPersistence['commit']>[0][] = [];
+    const analyze = vi.fn(async () => {
+      throw new Error('HTTP 429 Rate limit exceeded: Too Many Requests');
+    });
+
+    const run = new BatchReportRun({
+      log: { read: async () => delta },
+      signatures: { classifyAndStage: async () => plan },
+      provider: { analyze },
+      persistence: {
+        commit: async (value) => { commits.push(value); return 'report-429'; },
+        claimDeliveryAttempt: async () => ({ status: 'pending', shouldSend: false }),
+        updateDeliveryStatus: async () => undefined,
+        fail: async () => undefined
+      },
+      eventReporter: (event) => { events.push(event); }
+    });
+
+    const outcome = await run.run({ runId: 'run-429', slotId: 'slot-429' });
+
+    expect(outcome).toEqual({
+      status: 'partial',
+      warnings: ['AI_ANALYSIS_UNAVAILABLE', 'HTTP 429 Rate limit exceeded: Too Many Requests'],
+      reportId: 'report-429'
+    });
+    expect(commits[0]?.report.failure).toBe('HTTP 429 Rate limit exceeded: Too Many Requests');
+    expect(commits[0]?.report.warnings).toEqual(['AI_ANALYSIS_UNAVAILABLE', 'HTTP 429 Rate limit exceeded: Too Many Requests']);
+    expect(events).toContainEqual(expect.objectContaining({
+      event: 'report_analysis_completed',
+      analyzedCount: 0,
+      failedCount: 3,
+      error: 'HTTP 429 Rate limit exceeded: Too Many Requests'
+    }));
   });
 
   it('matches signature ignore rules exactly without hiding a sibling from the same component', async () => {

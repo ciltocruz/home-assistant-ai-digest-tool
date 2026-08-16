@@ -29,7 +29,7 @@ export interface BatchNotifier { notify(summary: { findings: Array<{ signature: 
 export type BatchOperationalEvent =
   | { event: 'report_collection_completed'; lineCount: number; signatureCount: number; durationMs: number }
   | { event: 'report_collection_failed' }
-  | { event: 'report_analysis_completed'; analyzedCount: number; failedCount: number; durationMs: number }
+  | { event: 'report_analysis_completed'; analyzedCount: number; failedCount: number; durationMs: number; error?: string }
   | { event: 'report_commit_completed'; reportId: string; status: 'quiet' | 'reported' | 'partial'; signatureCount: number }
   | { event: 'report_commit_failed' }
   | { event: 'ha_snapshot_completed'; integrationCount: number; durationMs: number }
@@ -44,7 +44,14 @@ export type CommitPlan = {
   signatures: SignaturePlan;
   reportedSignatures?: SignaturePlan['signatures'];
   notesBySignature?: Record<string, NoteDto[]>;
-  report: { status: 'quiet' | 'reported' | 'partial'; deliveryStatus?: DeliveryStatus; findings: Array<{ signature: string; analysis: SignatureAnalysis }>; warnings: string[]; integrationStatus?: IntegrationStatusSnapshot };
+  report: {
+    status: 'quiet' | 'reported' | 'partial';
+    deliveryStatus?: DeliveryStatus;
+    findings: Array<{ signature: string; analysis: SignatureAnalysis }>;
+    warnings: string[];
+    failure?: string;
+    integrationStatus?: IntegrationStatusSnapshot;
+  };
 };
 export type FailedRun = { request: RunRequest; code: 'AI_ANALYSIS_UNAVAILABLE'; errorMessage: string };
 export type RunOutcome =
@@ -91,7 +98,9 @@ export class BatchReportRun {
       this.dependencies.ignores?.listActive(now) ?? [],
       this.dependencies.notes?.listWindow({ from: '1970-01-01T00:00:00.000Z', to: now }) ?? []
     ]);
-    const reportedSignatures = plan.signatures.filter((signature) => !isIgnored(signature, rules));
+    const filteredSignatures = plan.signatures.filter((signature) => !isIgnored(signature, rules));
+    const sortedSignatures = [...filteredSignatures].sort((a, b) => b.occurrences.length - a.occurrences.length);
+    const reportedSignatures = sortedSignatures.slice(0, 10);
     this.report({ event: 'report_collection_completed', lineCount: delta.lines.length, signatureCount: reportedSignatures.length, durationMs: this.duration(collectionStarted) });
     const notesBySignature = notesForSignatures(reportedSignatures, notes);
     const integrationStatus = await this.readIntegrationStatus();
@@ -104,25 +113,59 @@ export class BatchReportRun {
     const language = await this.dependencies.language?.() ?? 'en';
     const analysisStarted = this.time();
     const analyses: Array<{ signature: BatchSignature; analysis: SignatureAnalysis | null; error?: unknown }> = [];
+    let firstError: string | undefined;
     for (const signature of reportedSignatures) {
       try {
         const analysis = await this.dependencies.provider.analyze(this.contextFor(signature), new AbortController().signal, language);
         analyses.push({ signature, analysis, error: undefined });
       } catch (error) {
+        if (!firstError) {
+          const rawMessage = error instanceof Error ? error.message : String(error);
+          firstError = redactProviderError(rawMessage);
+        }
         analyses.push({ signature, analysis: null, error });
       }
     }
     const findings = analyses.flatMap(({ signature, analysis }) => analysis ? [{ signature: signature.signature, analysis }] : []);
-    this.report({ event: 'report_analysis_completed', analyzedCount: findings.length, failedCount: analyses.length - findings.length, durationMs: this.duration(analysisStarted) });
+    this.report({
+      event: 'report_analysis_completed',
+      analyzedCount: findings.length,
+      failedCount: analyses.length - findings.length,
+      durationMs: this.duration(analysisStarted),
+      ...(firstError ? { error: firstError } : {})
+    });
     if (findings.length === 0) {
-      const warnings = ['AI_ANALYSIS_UNAVAILABLE'];
-      const reportId = await this.commit({ request, cursor: delta.cursor, signatures: plan, reportedSignatures, notesBySignature, report: { status: 'partial', deliveryStatus: 'skipped', findings: [], warnings, integrationStatus } });
+      const warnings = firstError ? ['AI_ANALYSIS_UNAVAILABLE', firstError] : ['AI_ANALYSIS_UNAVAILABLE'];
+      const reportId = await this.commit({
+        request,
+        cursor: delta.cursor,
+        signatures: plan,
+        reportedSignatures,
+        notesBySignature,
+        report: {
+          status: 'partial',
+          deliveryStatus: 'skipped',
+          findings: [],
+          warnings,
+          ...(firstError ? { failure: firstError } : {}),
+          integrationStatus
+        }
+      });
       this.report({ event: 'report_commit_completed', reportId, status: 'partial', signatureCount: reportedSignatures.length });
       return { status: 'partial', warnings, reportId };
     }
-    const warnings = findings.length === analyses.length ? [] : ['AI_ANALYSIS_PARTIAL'];
+    const warnings = findings.length === analyses.length
+      ? []
+      : (firstError ? ['AI_ANALYSIS_PARTIAL', firstError] : ['AI_ANALYSIS_PARTIAL']);
     const status = warnings.length ? 'partial' : 'reported';
-    const report: CommitPlan['report'] = { status, deliveryStatus: 'pending', findings, warnings, integrationStatus };
+    const report: CommitPlan['report'] = {
+      status,
+      deliveryStatus: 'pending',
+      findings,
+      warnings,
+      ...(firstError ? { failure: firstError } : {}),
+      integrationStatus
+    };
     const reportId = await this.commit({ request, cursor: delta.cursor, signatures: plan, reportedSignatures, notesBySignature, report });
     this.report({ event: 'report_commit_completed', reportId, status, signatureCount: reportedSignatures.length });
     if (await this.dependencies.persistence.getDeliveryStatus?.(reportId) === 'sent') {
