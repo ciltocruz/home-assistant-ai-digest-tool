@@ -187,7 +187,7 @@ function safeBatchSignatures(value: unknown): Array<{
       : undefined;
      const notes = safeNotes(signature.notes);
      const safeExcerpt = safeTraceExcerpt(signature.safeExcerpt);
-    return [{ signature: signature.signature, component: signature.component, level: signature.level, classification: signature.classification, trend: signature.trend, occurrences: signature.occurrences, ...(signature.problemKind === 'endpoint_resolution' ? { problemKind: signature.problemKind } : {}), ...(safeAnalysis ? { analysis: safeAnalysis } : safeExcerpt ? { safeExcerpt } : {}), ...(signature.ignoredForFuture === true ? { ignoredForFuture: true } : {}), ...(notes ? { notes } : {}) }];
+    return [{ signature: signature.signature, component: signature.component, level: signature.level, classification: signature.classification, trend: signature.trend, occurrences: signature.occurrences, ...(signature.problemKind === 'endpoint_resolution' ? { problemKind: signature.problemKind } : {}), ...(safeAnalysis ? { analysis: safeAnalysis } : {}), ...(safeExcerpt ? { safeExcerpt } : {}), ...(signature.ignoredForFuture === true ? { ignoredForFuture: true } : {}), ...(notes ? { notes } : {}) }];
   });
 }
 

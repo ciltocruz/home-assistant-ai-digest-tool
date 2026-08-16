@@ -360,7 +360,7 @@ function safeSignatures(value: unknown, analyzed = new Set<string>()): StoredSig
     const occurrenceCount = safePositiveCount(signature.occurrenceCount) ?? rawOccurrences.length;
     if (occurrenceCount < 1) return [];
     const firstOccurrence = asRecord(rawOccurrences[0]);
-    const safeExcerpt = analyzed.has(signature.signature) ? undefined : sanitizeTraceExcerpt(signature.safeExcerpt ?? firstOccurrence.safeExcerpt);
+    const safeExcerpt = sanitizeTraceExcerpt(signature.safeExcerpt ?? firstOccurrence.safeExcerpt);
     return [{ signature: signature.signature, component: signature.component, level: signature.level, ...(signature.problemKind === 'endpoint_resolution' ? { problemKind: signature.problemKind } : {}), classification: signature.classification, trend: signature.trend, occurrenceCount, ...(safeExcerpt ? { safeExcerpt } : {}) }];
   });
 }
@@ -413,7 +413,7 @@ function detailFor(row: V2ReportRow, apiKey?: string, ignoredSignatures = new Se
   return {
     id: row.id, summary: summaryFor(row, apiKey), rendered: { format: 'markdown', body: '' },
      presentation: { version: 2, mode: 'batch', status: row.status as 'quiet' | 'reported' | 'partial' | 'failed', warnings: safeWarnings(value.report?.warnings, apiKey), ...(integrationStatus ? { integrationStatus } : {}),
-        signatures: signatures.map((item) => ({ signature: item.signature, component: item.component, level: item.level, classification: item.classification, trend: item.trend, ...(item.problemKind ? { problemKind: item.problemKind } : {}), occurrences: item.occurrenceCount, ...(analyses.has(item.signature) ? { analysis: analyses.get(item.signature) } : item.safeExcerpt ? { safeExcerpt: item.safeExcerpt } : {}), ...(ignoredSignatures.has(item.signature) ? { ignoredForFuture: true } : {}), ...(safeNotes(value.notesBySignature)?.[item.signature] ? { notes: safeNotes(value.notesBySignature)![item.signature] } : {}) })) }
+        signatures: signatures.map((item) => ({ signature: item.signature, component: item.component, level: item.level, classification: item.classification, trend: item.trend, ...(item.problemKind ? { problemKind: item.problemKind } : {}), occurrences: item.occurrenceCount, ...(analyses.has(item.signature) ? { analysis: analyses.get(item.signature) } : {}), ...(item.safeExcerpt ? { safeExcerpt: item.safeExcerpt } : {}), ...(ignoredSignatures.has(item.signature) ? { ignoredForFuture: true } : {}), ...(safeNotes(value.notesBySignature)?.[item.signature] ? { notes: safeNotes(value.notesBySignature)![item.signature] } : {}) })) }
   };
 }
 function invalidSummary(row: V2ReportRow, warning = 'REPORT_PAYLOAD_INVALID'): DigestSummary {
