@@ -134,7 +134,15 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
         const sendable = !id.startsWith('v2-run:') && !(report.presentation?.mode === 'batch' && report.presentation.status === 'failed');
         return sendable ? { ...report, manualTelegram: { configured: await telegramConfigured(), attempts: await manualTelegram.list(id) } } : report;
       },
-      remove: async (id) => await v2Stores.removeReport(id) || await reports.remove(id)
+      remove: async (id) => await v2Stores.removeReport(id) || await reports.remove(id),
+      removeBatch: async (ids: string[]) => {
+        if (ids.length === 0) return 0;
+        let count = 0;
+        for (const id of ids) {
+          if (await v2Stores.removeReport(id) || await reports.remove(id)) count += 1;
+        }
+        return count;
+      }
     },
     notes: v2Stores,
     ignores: {
@@ -386,6 +394,15 @@ class SQLiteReportStore implements ReportStore {
       this.db.exec('rollback');
       throw error;
     }
+  }
+
+  async removeBatch(ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    let count = 0;
+    for (const id of ids) {
+      if (await this.remove(id)) count += 1;
+    }
+    return count;
   }
 
   private async cleanup(retentionDays: number): Promise<void> {

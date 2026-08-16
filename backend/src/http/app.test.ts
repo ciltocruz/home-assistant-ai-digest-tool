@@ -417,6 +417,29 @@ describe('account authentication boundary', () => {
     expect(calls).toEqual([{ reportId: 'v2-report:report-1', actionId }, { reportId: 'v2-report:report-1', actionId }]);
     expect(sent.body).not.toMatch(/target|token|chat|secret|message/i);
   });
+
+  it('deletes multiple reports in batch with POST /api/digests/batch-delete', async () => {
+    const deleted: string[][] = [];
+    const runtimeServices = services();
+    runtimeServices.reports.removeBatch = async (ids) => {
+      deleted.push(ids);
+      return ids.length;
+    };
+    app = createApp({ services: runtimeServices, auth: { sessionTtlMs: 60_000 } });
+    const registered = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: 'long-enough-password', language: 'en' } });
+    const cookie = registered.headers['set-cookie'];
+    const csrfToken = registered.json<{ csrfToken: string }>().csrfToken;
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/digests/batch-delete',
+      headers: { cookie, 'x-csrf-token': csrfToken },
+      payload: { ids: ['report-1', 'report-2'] }
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ deletedCount: 2 });
+    expect(deleted).toEqual([['report-1', 'report-2']]);
+  });
 });
 
 function services(now = Date.now): BackendApiServices {
@@ -433,7 +456,7 @@ function services(now = Date.now): BackendApiServices {
       loginAllowed: async () => attempts < 5, recordFailedLogin: async () => { attempts += 1; }, clearFailedLogins: async () => { attempts = 0; }, language: async () => language
     },
     onboarding: { get: async () => ({ currentStep: 'home_assistant', completedSteps: [], draft: {}, secretMetadata: {}, completed: false }), save: async () => ({ currentStep: 'home_assistant', completedSteps: [], draft: {}, secretMetadata: {}, completed: false }), complete: async () => ({ haUrl: settings.homeAssistant.url, ai: { provider: 'gemini', keyMask: '••••ai', ref: 'ai' }, notifiers: [] }) },
-    settings: { get: async () => settings, update: async () => settings }, digestJobs: { enqueue: async () => ({ status: 'queued' as const, jobId: 'job' }), get: async () => null, retryFailed: async () => null }, reports: { list: async () => [], get: async () => null, remove: async () => false }, notes: { add: async (input) => ({ id: 'note', ...input, createdAt: new Date(now()).toISOString() }), listWindow: async () => [] }, ignores: { add: async (input) => ({ id: 'ignore', ...input, createdAt: new Date(now()).toISOString() }), remove: async () => undefined, listActive: async () => [] }, notifiers: { test: async () => ({ status: 'success' as const, message: 'ok', checkedAt: new Date(now()).toISOString() }), send: async (input) => ({ status: 'skipped' as const, targetRef: input.targetRef }) }
+    settings: { get: async () => settings, update: async () => settings }, digestJobs: { enqueue: async () => ({ status: 'queued' as const, jobId: 'job' }), get: async () => null, retryFailed: async () => null }, reports: { list: async () => [], get: async () => null, remove: async () => false, removeBatch: async () => 0 }, notes: { add: async (input) => ({ id: 'note', ...input, createdAt: new Date(now()).toISOString() }), listWindow: async () => [] }, ignores: { add: async (input) => ({ id: 'ignore', ...input, createdAt: new Date(now()).toISOString() }), remove: async () => undefined, listActive: async () => [] }, notifiers: { test: async () => ({ status: 'success' as const, message: 'ok', checkedAt: new Date(now()).toISOString() }), send: async (input) => ({ status: 'skipped' as const, targetRef: input.targetRef }) }
   };
 }
 function note() { return { text: 'Operator note', occurredAt: '2026-08-03T10:00:00.000Z', tags: [] }; }

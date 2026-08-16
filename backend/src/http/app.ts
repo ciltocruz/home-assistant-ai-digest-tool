@@ -1,6 +1,6 @@
 import fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import {
-  DigestHistoryResponseSchema, DigestWindowSchema, EditableSettingsDtoSchema, ExactProblemIgnoreResultSchema, IgnoreRuleCreateSchema, ManualTelegramSendRequestSchema, ManualTelegramSendResultSchema, NoteCreateSchema, NotifierTestRequestSchema, OnboardingProgressSchema, OnboardingStepCommandSchema, SettingsUpdateCommandSchema,
+  BatchDeleteReportsRequestSchema, BatchDeleteReportsResponseSchema, DigestHistoryResponseSchema, DigestWindowSchema, EditableSettingsDtoSchema, ExactProblemIgnoreResultSchema, IgnoreRuleCreateSchema, ManualTelegramSendRequestSchema, ManualTelegramSendResultSchema, NoteCreateSchema, NotifierTestRequestSchema, OnboardingProgressSchema, OnboardingStepCommandSchema, SettingsUpdateCommandSchema,
   RunDigestRequestSchema, SendDigestRequestSchema,
   type DeliveryResult, type DigestDetail, type DigestHistoryResponse, type IgnoreRuleCreate, type IgnoreRuleDto, type MaskedSettings,
   type DigestJobStatus, type EditableSettingsDto, type NoteDto, type NotifierTestRequest, type OnboardingProgress, type OnboardingStepCommand, type RunDigestRequest, type RunDigestResponse, type SettingsUpdateCommand,
@@ -21,7 +21,7 @@ export type BackendApiServices = {
   settings: { get(): Promise<EditableSettingsDto>; update(input: SettingsUpdateCommand): Promise<EditableSettingsDto>; notificationTarget?(channel: 'telegram'): Promise<string> };
   digestJobs: Pick<DigestJobStore, 'enqueue' | 'get' | 'retryFailed'>;
   digestWorker?: { wake(): void };
-  reports: { save?: ReportStore['save']; list(): Promise<DigestHistoryResponse>; get(id: string): Promise<DigestDetail | null>; remove(id: string): Promise<boolean> };
+  reports: { save?: ReportStore['save']; list(): Promise<DigestHistoryResponse>; get(id: string): Promise<DigestDetail | null>; remove(id: string): Promise<boolean>; removeBatch(ids: string[]): Promise<number> };
   notes: Pick<NoteStore, 'add' | 'listWindow'>;
   ignores: Pick<IgnoreRuleStore, 'add' | 'remove' | 'listActive'>;
   manualTelegram?: { send(reportId: string, actionId: string): Promise<import('@ha-digest/shared').ManualTelegramSendResult> };
@@ -228,6 +228,11 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
   app.delete('/api/digests/:id', async (request, reply) => {
     const removed = await options.services.reports.remove(String((request.params as { id: string }).id));
     return removed ? reply.code(204).send() : sendError(reply, 404, 'NOT_FOUND', 'Digest not found.', request.id);
+  });
+  app.post('/api/digests/batch-delete', async (request, reply) => {
+    const { ids } = BatchDeleteReportsRequestSchema.parse(request.body);
+    const deletedCount = await options.services.reports.removeBatch(ids);
+    return reply.code(200).send(BatchDeleteReportsResponseSchema.parse({ deletedCount }));
   });
   app.post('/api/digests/:reportId/problems/:signature/ignore', async (request, reply) => {
     if (Object.keys(asRecord(request.body)).length > 0) return sendError(reply, 400, 'VALIDATION_FAILED', 'This action does not accept a match value.', request.id);

@@ -22,6 +22,7 @@ export interface ReportStore {
   list(): Promise<DigestSummary[]>;
   get(id: string): Promise<{ id: string; rendered: RenderedDigest; summary: DigestSummary } | null>;
   remove(id: string): Promise<boolean>;
+  removeBatch(ids: string[]): Promise<number>;
 }
 
 export interface NoteStore {
