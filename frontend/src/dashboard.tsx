@@ -47,8 +47,10 @@ export function Dashboard({ api, state: initialState, activeReport, refreshKey =
   }, [api, initialState, refreshKey, retryKey]);
 
   return <section className="dashboard-overview" aria-label={t('dashboard.ariaLabel')}>
-    <h1 className="dashboard-title">{t('shell.dashboard')}</h1>
-    <section className="panel dashboard-state" data-dashboard-section="current-state" aria-live="polite">
+    <div className="dashboard-header-row">
+      <h1 className="dashboard-title">{t('shell.dashboard')}</h1>
+    </div>
+    <section className="panel dashboard-state hero-status-banner" data-dashboard-section="current-state" aria-live="polite">
       <p className="eyebrow">{t('dashboard.currentState.eyebrow')}</p>
       {renderCurrentState(state, () => setRetryKey((value) => value + 1))}
     </section>
@@ -56,16 +58,18 @@ export function Dashboard({ api, state: initialState, activeReport, refreshKey =
       <h2 id="active-report-title">{t('dashboard.activeReport.title')}</h2>
       {activeReport}
     </section>
-    <section className="panel dashboard-latest-report" data-dashboard-section="latest-report" aria-labelledby="latest-report-title">
-      <p className="eyebrow">{t('dashboard.latestReport.eyebrow')}</p>
-      <h2 id="latest-report-title">{t('dashboard.latestReport.title')}</h2>
-      {renderLatestReport(state, timeZone)}
-    </section>
-    <section className="panel dashboard-history-preview" data-dashboard-section="history-preview" aria-labelledby="history-preview-title">
-      <p className="eyebrow">{t('dashboard.historyPreview.eyebrow')}</p>
-      <h2 id="history-preview-title">{t('dashboard.historyPreview.title')}</h2>
-      {renderHistoryPreview(state, timeZone)}
-    </section>
+    <div className="dashboard-main-grid">
+      <section className="panel dashboard-latest-report" data-dashboard-section="latest-report" aria-labelledby="latest-report-title">
+        <p className="eyebrow">{t('dashboard.latestReport.eyebrow')}</p>
+        <h2 id="latest-report-title">{t('dashboard.latestReport.title')}</h2>
+        {renderLatestReport(state, timeZone)}
+      </section>
+      <section className="panel dashboard-history-preview" data-dashboard-section="history-preview" aria-labelledby="history-preview-title">
+        <p className="eyebrow">{t('dashboard.historyPreview.eyebrow')}</p>
+        <h2 id="history-preview-title">{t('dashboard.historyPreview.title')}</h2>
+        {renderHistoryPreview(state, timeZone)}
+      </section>
+    </div>
   </section>;
 }
 

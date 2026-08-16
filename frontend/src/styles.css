@@ -989,39 +989,48 @@ button, input, select, textarea { font: inherit; }
 .dashboard-overview {
   background: transparent;
   border: none;
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
   min-width: 0;
   padding: 0;
 }
 
-@media (min-width: 992px) {
-  .dashboard-overview {
-    grid-template-columns: 7fr 5fr;
-  }
-  
-  .dashboard-state,
-  .dashboard-history-preview {
-    grid-column: 2 !important;
-  }
-
-  .dashboard-active-report,
-  .dashboard-latest-report {
-    grid-column: 1 !important;
-  }
+.dashboard-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .dashboard-title {
-  background: transparent;
-  border: none;
+  background: transparent !important;
+  border: none !important;
   color: var(--text-primary);
-  font-size: 1.6rem;
+  font-size: 1.75rem !important;
   font-weight: 800;
-  grid-column: 1 / -1 !important;
   letter-spacing: -0.02em;
-  margin: 0 0 0.25rem 0;
-  padding: 0;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.hero-status-banner {
+  background: linear-gradient(135deg, rgba(255, 122, 0, 0.08) 0%, rgba(20, 24, 33, 0.95) 100%) !important;
+  border: 1px solid rgba(255, 122, 0, 0.25) !important;
+  border-radius: var(--radius-xl) !important;
+  padding: 1.5rem !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+}
+
+.dashboard-main-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.25rem;
+}
+
+@media (min-width: 900px) {
+  .dashboard-main-grid {
+    grid-template-columns: 7fr 5fr;
+  }
 }
 
 .dashboard-state,
