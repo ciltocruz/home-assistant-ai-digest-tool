@@ -46,6 +46,26 @@ docker compose logs app
 
 The default Compose service uses Docker's `json-file` driver with three 10 MB files. The existing `/data/logs/runtime.log` remains available for bounded compatibility failure records. Node's SQLite experimental warning may still appear during startup; other warnings are not suppressed.
 
+## Inspect and move the log-read cursor
+
+The runtime persists a read cursor (`v2_log_cursor`: device, inode, size, byte offset) so each run reads only the new bytes of the mounted log. For debugging, the `log-cursor` CLI inspects and moves that cursor; it ships inside the image and opens the database with the same idempotent migrations.
+
+```bash
+pnpm debug:cursor status              # cursor + log file + delta the next run will read
+pnpm debug:cursor reset               # forget the cursor: next run re-reads the whole file
+pnpm debug:cursor to-end              # skip everything: nothing read until the file grows
+pnpm debug:cursor set 50000           # jump to an offset, aligned to the next complete line
+pnpm debug:cursor signatures reset    # clear signature memory (debug only; re-reads become "new")
+```
+
+Inside the container (for example on the deployment host):
+
+```bash
+docker compose exec app node backend/dist/scripts/log-cursor.js status
+```
+
+`set` clamps to the file size and aligns forward to a line boundary so the reader never starts mid-line. `signatures reset` deletes the permanent signature store and is intended for debugging classification only. The cursor alone does not change classification: re-read lines are still judged by timestamp against the lookback and reactivation windows.
+
 ## Complete protected onboarding and run a report
 
 On first visit, choose a language, create the admin account, and complete the protected onboarding with the Home Assistant URL, dedicated long-lived token, provider, optional Telegram target, required schedule, timezone, and privacy settings. The first report is queued immediately; later reports can be launched from the dashboard. The server accepts only authenticated, CSRF-protected requests.
