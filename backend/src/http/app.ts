@@ -1,15 +1,16 @@
 import fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import {
   BatchDeleteReportsRequestSchema, BatchDeleteReportsResponseSchema, DigestHistoryResponseSchema, DigestWindowSchema, EditableSettingsDtoSchema, ExactProblemIgnoreResultSchema, IgnoreRuleCreateSchema, ManualTelegramSendRequestSchema, ManualTelegramSendResultSchema, NoteCreateSchema, NotifierTestRequestSchema, OnboardingProgressSchema, OnboardingStepCommandSchema, SettingsUpdateCommandSchema,
-  RunDigestRequestSchema, SendDigestRequestSchema,
+  RunDigestRequestSchema, SendDigestRequestSchema, StaleEntitiesResponseSchema,
   type DeliveryResult, type DigestDetail, type DigestHistoryResponse, type IgnoreRuleCreate, type IgnoreRuleDto, type MaskedSettings,
   type DigestJobStatus, type EditableSettingsDto, type NoteDto, type NotifierTestRequest, type OnboardingProgress, type OnboardingStepCommand, type RunDigestRequest, type RunDigestResponse, type SettingsUpdateCommand,
-  type SendDigestRequest, type SetupValidationRequest, type TestResult
+  type SendDigestRequest, type SetupValidationRequest, type StaleEntitiesResponse, type TestResult
 } from '@ha-digest/shared';
 import type { DigestJobStore } from '../domain/jobs.js';
 import type { IgnoreRuleStore, NoteStore, ReportStore } from '../domain/stores.js';
 import { projectLegacyReportPresentation, projectReportPresentation, redactReportDetail } from '../application/report-presentation.js';
 import { redactProviderError } from '../domain/safe-error.js';
+import { auditEntityStates } from '../adapters/ha/entity-auditor.js';
 
 export type BackendApiServices = {
   health?: { check(): Promise<{ ok: true } | { ok: false; reason: string }> };
@@ -28,6 +29,9 @@ export type BackendApiServices = {
   notifiers: {
     test(input: NotifierTestRequest): Promise<TestResult>;
     send(input: SendDigestRequest): Promise<DeliveryResult>;
+  };
+  ha?: {
+    getStates?(): Promise<Array<{ entity_id: string; state: string; last_updated?: string; last_changed?: string; attributes?: { friendly_name?: string; [key: string]: unknown } }>>;
   };
 };
 
@@ -274,6 +278,12 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     const window = parseRequest(DigestWindowSchema, request.query, reply, request.id);
     if (!window.ok) return window.response;
     return options.services.notes.listWindow(window.value);
+  });
+
+  app.get('/api/entities/stale', async (): Promise<StaleEntitiesResponse> => {
+    const rawStates = options.services.ha?.getStates ? await options.services.ha.getStates() : [];
+    const audited = auditEntityStates(rawStates, now());
+    return StaleEntitiesResponseSchema.parse(audited);
   });
 
   app.get('/api/ignores', async (): Promise<IgnoreRuleDto[]> => options.services.ignores.listActive(now()));

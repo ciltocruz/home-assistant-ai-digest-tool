@@ -12,6 +12,7 @@ import type { BackendApiServices } from './http/app.js';
 import type { ReportStore } from './domain/stores.js';
 import type { ExecutionContext } from './domain/execution.js';
 import { HomeAssistantLogDeltaReader } from './adapters/ha/log-reader.js';
+import { HomeAssistantRestClient } from './adapters/ha/rest-client.js';
 import { HomeAssistantWebSocketClient, type HomeAssistantSocket } from './adapters/ha/websocket-client.js';
 import { createSignatureProvider, type ProviderHttpClient } from './adapters/ai/providers.js';
 import { TelegramNotifier, type NotifierHttpClient } from './adapters/notifiers/notifiers.js';
@@ -172,6 +173,24 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
           return new TelegramNotifier({ now }).send({ format: 'markdown', body: report.rendered.body }, target);
         } catch {
           return { status: 'failed', targetRef: input.targetRef, message: 'Could not resolve Telegram credentials.' };
+        }
+      }
+    },
+    ha: {
+      async getStates() {
+        const current = await settingsStore.get();
+        if (!current.secretRefs?.haTokenRef || current.secretRefs.haTokenRef.startsWith('unconfigured:')) {
+          return [];
+        }
+        try {
+          const client = new HomeAssistantRestClient({
+            haUrl: current.haUrl,
+            haTokenRef: current.secretRefs.haTokenRef,
+            secrets: secretStore
+          });
+          return await client.listStates();
+        } catch {
+          return [];
         }
       }
     }

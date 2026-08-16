@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { DigestDetailSchema, DigestHistoryResponseSchema, type DigestDetail } from '@ha-digest/shared';
+import { DigestDetailSchema, DigestHistoryResponseSchema, StaleEntitiesResponseSchema, type DigestDetail } from '@ha-digest/shared';
 import type { FastifyInstance } from 'fastify';
 import type { BackendApiServices } from './app.js';
 import { createApp } from './app.js';
@@ -464,6 +464,69 @@ describe('account authentication boundary', () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ deletedCount: 2 });
     expect(deleted).toEqual([['report-1', 'report-2']]);
+  });
+});
+
+describe('GET /api/entities/stale endpoint', () => {
+  let app: FastifyInstance | undefined;
+  afterEach(async () => { await app?.close(); app = undefined; });
+
+  it('rejects unauthenticated requests with 401', async () => {
+    app = createApp({ services: services(), auth: { sessionTtlMs: 60_000 } });
+    const response = await app.inject({ method: 'GET', url: '/api/entities/stale' });
+    expect(response.statusCode).toBe(401);
+  });
+
+  it('returns 200 OK with audited stale and unavailable entities for authenticated sessions', async () => {
+    const mockServices: BackendApiServices = {
+      ...services(),
+      ha: {
+        async getStates() {
+          return [
+            {
+              entity_id: 'sensor.living_room_temp',
+              state: 'unavailable',
+              last_updated: '2026-08-16T10:00:00.000Z',
+              attributes: { friendly_name: 'Living Room Temp' }
+            },
+            {
+              entity_id: 'light.kitchen_light',
+              state: 'on',
+              last_updated: '2026-08-10T10:00:00.000Z',
+              attributes: { friendly_name: 'Kitchen Light' }
+            },
+            {
+              entity_id: 'sun.sun',
+              state: 'above_horizon'
+            }
+          ];
+        }
+      }
+    };
+    app = createApp({ services: mockServices, auth: { sessionTtlMs: 60_000 } });
+    const registered = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { password: 'long-enough-password', language: 'en' }
+    });
+    const cookie = registered.headers['set-cookie'];
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/entities/stale',
+      headers: { cookie }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const parsed = StaleEntitiesResponseSchema.parse(response.json());
+    expect(parsed.totalAudited).toBe(2);
+    expect(parsed.unavailableCount).toBe(1);
+    expect(parsed.staleCount).toBe(1);
+    expect(parsed.entities).toHaveLength(2);
+    expect(parsed.entities[0].entityId).toBe('sensor.living_room_temp');
+    expect(parsed.entities[0].issueType).toBe('unavailable');
+    expect(parsed.entities[1].entityId).toBe('light.kitchen_light');
+    expect(parsed.entities[1].issueType).toBe('stale');
   });
 });
 
