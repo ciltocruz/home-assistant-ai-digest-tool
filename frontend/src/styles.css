@@ -990,8 +990,37 @@ button, input, select, textarea { font: inherit; }
   background: transparent;
   border: none;
   display: grid;
-  gap: 1.25rem;
+  grid-template-columns: 1fr;
+  gap: 1.5rem;
   min-width: 0;
+  padding: 0;
+}
+
+@media (min-width: 992px) {
+  .dashboard-overview {
+    grid-template-columns: 7fr 5fr;
+  }
+  
+  .dashboard-state,
+  .dashboard-history-preview {
+    grid-column: 2 !important;
+  }
+
+  .dashboard-active-report,
+  .dashboard-latest-report {
+    grid-column: 1 !important;
+  }
+}
+
+.dashboard-title {
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 1.6rem;
+  font-weight: 800;
+  grid-column: 1 / -1 !important;
+  letter-spacing: -0.02em;
+  margin: 0 0 0.25rem 0;
   padding: 0;
 }
 
@@ -1005,18 +1034,42 @@ button, input, select, textarea { font: inherit; }
   box-shadow: var(--shadow-sm);
   min-width: 0;
   padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
-.dashboard-title {
-  background: transparent;
-  border: none;
-  color: var(--text-primary);
-  font-size: 1.5rem;
-  font-weight: 800;
-  grid-column: 1 / -1;
-  letter-spacing: -0.02em;
-  margin: 0 0 0.25rem 0;
-  padding: 0;
+/* Remove double nested card borders inside latest report */
+.dashboard-latest-report .history-item {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+}
+
+/* Action panel manual trigger button */
+.action-panel button {
+  background: var(--ha-orange);
+  border: 1px solid var(--ha-orange);
+  border-radius: var(--radius-pill);
+  color: #ffffff;
+  cursor: pointer;
+  font-weight: 700;
+  padding: 0.75rem 1.5rem;
+  transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), filter var(--dur-fast);
+  margin-top: 0.5rem;
+  align-self: flex-start;
+}
+
+.action-panel button:hover:not(:disabled) {
+  box-shadow: var(--shadow-glow);
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.action-panel button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .dashboard-active-report > h2,
