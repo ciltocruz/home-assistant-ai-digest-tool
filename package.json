@@ -12,7 +12,8 @@
     "test:focused": "node scripts/check-focused-tests.mjs",
     "verify:docker:preflight": "bash scripts/verify-docker-runtime.sh --preflight",
     "verify:docker": "bash scripts/verify-docker-runtime.sh",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "debug:cursor": "node backend/dist/scripts/log-cursor.js"
   },
   "devDependencies": {
     "@playwright/test": "^1.57.0",
