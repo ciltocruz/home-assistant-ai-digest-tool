@@ -496,5 +496,10 @@ describe('BatchDeleteReports DTOs', () => {
     expect(() => BatchDeleteReportsResponseSchema.parse({ deletedCount: -1 })).toThrow();
     expect(() => BatchDeleteReportsResponseSchema.parse({ deletedCount: 1.5 })).toThrow();
   });
+
+  it('rejects extra properties in request and response DTOs due to strict mode', () => {
+    expect(() => BatchDeleteReportsRequestSchema.parse({ ids: ['report-1'], extra: 'unallowed' })).toThrow();
+    expect(() => BatchDeleteReportsResponseSchema.parse({ deletedCount: 1, extra: 'unallowed' })).toThrow();
+  });
 });
 

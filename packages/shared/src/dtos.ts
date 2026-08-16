@@ -649,10 +649,10 @@ export type ErrorDto = z.infer<typeof ErrorDtoSchema>;
 
 export const BatchDeleteReportsRequestSchema = z.object({
   ids: z.array(z.string().min(1)).min(1)
-});
+}).strict();
 export type BatchDeleteReportsRequest = z.infer<typeof BatchDeleteReportsRequestSchema>;
 
 export const BatchDeleteReportsResponseSchema = z.object({
   deletedCount: z.number().int().min(0)
-});
+}).strict();
 export type BatchDeleteReportsResponse = z.infer<typeof BatchDeleteReportsResponseSchema>;
