@@ -418,7 +418,7 @@ describe('account authentication boundary', () => {
     expect(sent.body).not.toMatch(/target|token|chat|secret|message/i);
   });
 
-  it('deletes multiple reports in batch with POST /api/digests/batch-delete', async () => {
+  it('deletes multiple reports in batch with POST /api/digests/batch-delete and enforces authentication, CSRF, and validation', async () => {
     const deleted: string[][] = [];
     const runtimeServices = services();
     runtimeServices.reports.removeBatch = async (ids) => {
@@ -429,6 +429,31 @@ describe('account authentication boundary', () => {
     const registered = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: 'long-enough-password', language: 'en' } });
     const cookie = registered.headers['set-cookie'];
     const csrfToken = registered.json<{ csrfToken: string }>().csrfToken;
+
+    const unauthenticated = await app.inject({
+      method: 'POST',
+      url: '/api/digests/batch-delete',
+      headers: { 'x-csrf-token': csrfToken },
+      payload: { ids: ['report-1'] }
+    });
+    expect(unauthenticated.statusCode).toBe(401);
+
+    const missingCsrf = await app.inject({
+      method: 'POST',
+      url: '/api/digests/batch-delete',
+      headers: { cookie },
+      payload: { ids: ['report-1'] }
+    });
+    expect(missingCsrf.statusCode).toBe(403);
+
+    const invalidBody = await app.inject({
+      method: 'POST',
+      url: '/api/digests/batch-delete',
+      headers: { cookie, 'x-csrf-token': csrfToken },
+      payload: {}
+    });
+    expect(invalidBody.statusCode).toBe(400);
+    expect(invalidBody.json()).toMatchObject({ code: 'VALIDATION_FAILED' });
 
     const response = await app.inject({
       method: 'POST',

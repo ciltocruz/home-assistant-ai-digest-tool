@@ -230,8 +230,9 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     return removed ? reply.code(204).send() : sendError(reply, 404, 'NOT_FOUND', 'Digest not found.', request.id);
   });
   app.post('/api/digests/batch-delete', async (request, reply) => {
-    const { ids } = BatchDeleteReportsRequestSchema.parse(request.body);
-    const deletedCount = await options.services.reports.removeBatch(ids);
+    const input = parseRequest(BatchDeleteReportsRequestSchema, request.body, reply, request.id);
+    if (!input.ok) return input.response;
+    const deletedCount = await options.services.reports.removeBatch(input.value.ids);
     return reply.code(200).send(BatchDeleteReportsResponseSchema.parse({ deletedCount }));
   });
   app.post('/api/digests/:reportId/problems/:signature/ignore', async (request, reply) => {
