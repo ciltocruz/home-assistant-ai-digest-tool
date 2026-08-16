@@ -193,6 +193,24 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
           console.error('[HA getStates Error]', error);
           return [];
         }
+      },
+      async getDeviceMap() {
+        const current = await settingsStore.get();
+        if (!current.secretRefs?.haTokenRef || current.secretRefs.haTokenRef.startsWith('unconfigured:')) {
+          return new Map();
+        }
+        try {
+          const wsClient = new HomeAssistantWebSocketClient({
+            haUrl: current.haUrl,
+            haTokenRef: current.secretRefs.haTokenRef,
+            secrets: secretStore,
+            webSocketFactory: options.haWebSocketFactory
+          });
+          return await wsClient.fetchDeviceRegistryMap();
+        } catch (error) {
+          console.error('[HA getDeviceMap Error]', error);
+          return new Map();
+        }
       }
     }
   };

@@ -2860,6 +2860,16 @@ button.btn-legacy:disabled { opacity: 0.55; cursor: not-allowed; }
   color: var(--text-muted);
 }
 
+.stale-device-tag {
+  font-size: 0.75rem;
+  color: var(--ha-teal, #36cfc9);
+  background: rgba(54, 207, 201, 0.12);
+  border: 1px solid rgba(54, 207, 201, 0.25);
+  border-radius: var(--radius-sm, 4px);
+  padding: 0.1rem 0.4rem;
+  font-weight: 600;
+}
+
 .stale-entity-info {
   display: flex;
   flex-direction: column;

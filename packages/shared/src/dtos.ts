@@ -663,7 +663,9 @@ export const EntityIssueDtoSchema = z.object({
   domain: z.string(),
   state: z.string(),
   issueType: z.enum(['unavailable', 'stale']),
-  lastUpdated: z.string()
+  lastUpdated: z.string(),
+  deviceName: z.string().optional(),
+  deviceId: z.string().optional()
 }).strict();
 export type EntityIssueDto = z.infer<typeof EntityIssueDtoSchema>;
 

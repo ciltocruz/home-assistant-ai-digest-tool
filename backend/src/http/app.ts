@@ -32,6 +32,7 @@ export type BackendApiServices = {
   };
   ha?: {
     getStates?(): Promise<Array<{ entity_id: string; state: string; last_updated?: string; last_changed?: string; attributes?: { friendly_name?: string; [key: string]: unknown } }>>;
+    getDeviceMap?(): Promise<Map<string, { deviceId?: string; deviceName?: string }>>;
   };
 };
 
@@ -282,7 +283,8 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
 
   app.get('/api/entities/stale', async (): Promise<StaleEntitiesResponse> => {
     const rawStates = options.services.ha?.getStates ? await options.services.ha.getStates() : [];
-    const audited = auditEntityStates(rawStates, now());
+    const deviceMap = options.services.ha?.getDeviceMap ? await options.services.ha.getDeviceMap() : undefined;
+    const audited = auditEntityStates(rawStates, now(), 24, deviceMap);
     return StaleEntitiesResponseSchema.parse(audited);
   });
 

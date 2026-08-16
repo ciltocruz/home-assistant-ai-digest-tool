@@ -23,10 +23,13 @@ const STALE_DOMAINS = new Set([
 
 const SYSTEM_DOMAINS = new Set(['sun', 'zone']);
 
+export type DeviceInfoMap = Map<string, { deviceId?: string; deviceName?: string }>;
+
 export function auditEntityStates(
   rawStates: RawEntityState[],
   nowIso: string,
-  maxStaleHours = 24
+  maxStaleHours = 24,
+  deviceMap?: DeviceInfoMap
 ): StaleEntitiesResponse {
   const nowMs = Date.parse(nowIso);
   let totalAudited = 0;
@@ -43,6 +46,7 @@ export function auditEntityStates(
     const stateLower = raw.state.toLowerCase();
     const isUnavailable = stateLower === 'unavailable' || stateLower === 'unknown';
     const lastUpdatedTs = raw.last_updated || raw.last_changed || nowIso;
+    const device = deviceMap?.get(raw.entity_id);
 
     if (isUnavailable) {
       const name = raw.attributes?.friendly_name || raw.entity_id;
@@ -52,7 +56,9 @@ export function auditEntityStates(
         domain,
         state: raw.state,
         issueType: 'unavailable',
-        lastUpdated: lastUpdatedTs
+        lastUpdated: lastUpdatedTs,
+        ...(device?.deviceName ? { deviceName: device.deviceName } : {}),
+        ...(device?.deviceId ? { deviceId: device.deviceId } : {})
       });
     } else if (STALE_DOMAINS.has(domain)) {
       if (lastUpdatedTs) {
@@ -67,7 +73,9 @@ export function auditEntityStates(
               domain,
               state: raw.state,
               issueType: 'stale',
-              lastUpdated: lastUpdatedTs
+              lastUpdated: lastUpdatedTs,
+              ...(device?.deviceName ? { deviceName: device.deviceName } : {}),
+              ...(device?.deviceId ? { deviceId: device.deviceId } : {})
             });
           }
         }

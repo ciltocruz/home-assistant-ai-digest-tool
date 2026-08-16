@@ -8,7 +8,7 @@ export type AuditPageApi = {
 };
 
 type FilterTab = 'all' | 'unavailable' | 'stale';
-type ViewMode = 'flat' | 'grouped';
+type ViewMode = 'flat' | 'grouped' | 'devices';
 type PageSize = 20 | 50 | 100;
 
 export function formatRelativeTimeAudit(isoString: string, now: Date = new Date(), locale: string = currentLocale()): string {
@@ -92,7 +92,11 @@ export function AuditPage({ api }: { api?: AuditPageApi }) {
       if (selectedDomain && entity.domain.toLowerCase() !== selectedDomain.toLowerCase()) return false;
       if (search.trim()) {
         const q = search.toLowerCase().trim();
-        if (!entity.name.toLowerCase().includes(q) && !entity.entityId.toLowerCase().includes(q) && !entity.domain.toLowerCase().includes(q)) return false;
+        const matchesName = entity.name.toLowerCase().includes(q);
+        const matchesEntityId = entity.entityId.toLowerCase().includes(q);
+        const matchesDomain = entity.domain.toLowerCase().includes(q);
+        const matchesDevice = entity.deviceName ? entity.deviceName.toLowerCase().includes(q) : false;
+        if (!matchesName && !matchesEntityId && !matchesDomain && !matchesDevice) return false;
       }
       return true;
     });
@@ -110,6 +114,19 @@ export function AuditPage({ api }: { api?: AuditPageApi }) {
       const existing = map.get(entity.domain) ?? [];
       existing.push(entity);
       map.set(entity.domain, existing);
+    }
+    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [filteredEntities, viewMode]);
+
+  // Devices view: group filteredEntities by deviceName
+  const groupedByDevice = useMemo(() => {
+    if (viewMode !== 'devices') return null;
+    const map = new Map<string, EntityIssueDto[]>();
+    for (const entity of filteredEntities) {
+      const key = entity.deviceName || t('audit.noDevice');
+      const existing = map.get(key) ?? [];
+      existing.push(entity);
+      map.set(key, existing);
     }
     return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [filteredEntities, viewMode]);
@@ -203,6 +220,14 @@ export function AuditPage({ api }: { api?: AuditPageApi }) {
               >
                 {t('audit.viewGrouped')}
               </button>
+              <button
+                type="button"
+                id="audit-view-devices"
+                className={`stale-tab${viewMode === 'devices' ? ' stale-tab--active' : ''}`}
+                onClick={() => setViewMode('devices')}
+              >
+                {t('audit.viewDevices')}
+              </button>
             </div>
 
             <div className="stale-search-container">
@@ -295,8 +320,24 @@ export function AuditPage({ api }: { api?: AuditPageApi }) {
                 </nav>
               )}
             </>
+          ) : viewMode === 'devices' ? (
+            <div className="audit-grouped-list">
+              {groupedByDevice?.map(([deviceName, entities]) => (
+                <div key={deviceName} className="audit-domain-group">
+                  <div className="audit-domain-group-header">
+                    <h2 className="audit-domain-group-name">📱 {deviceName}</h2>
+                    <span className="audit-domain-group-count">{entities.length}</span>
+                  </div>
+                  <ul className="stale-entity-list">
+                    {entities.map((entity) => (
+                      <EntityRow key={entity.entityId} entity={entity} />
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
           ) : (
-            // Grouped view
+            // Grouped view by domain
             <div className="audit-grouped-list">
               {groupedByDomain?.map(([domain, entities]) => (
                 <div key={domain} className="audit-domain-group">
@@ -327,6 +368,9 @@ function EntityRow({ entity }: { entity: EntityIssueDto }) {
           {entity.issueType === 'unavailable' ? 'unavailable' : 'stale'}
         </span>
         <span className="stale-domain-tag">{formatDomainNameAudit(entity.domain)}</span>
+        {entity.deviceName ? (
+          <span className="stale-device-tag">📱 {entity.deviceName}</span>
+        ) : null}
       </div>
       <div className="stale-entity-info">
         <span className="stale-entity-name">{entity.name || entity.entityId}</span>

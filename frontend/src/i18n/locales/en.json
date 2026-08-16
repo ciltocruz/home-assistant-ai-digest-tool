@@ -363,6 +363,8 @@
   "audit": {
     "viewFlat": "Entities",
     "viewGrouped": "By domain",
+    "viewDevices": "By device",
+    "noDevice": "No device assigned",
     "showing": "Showing {shown} of {total}",
     "perPage": "Per page:",
     "noResults": "No results for the selected filters.",
