@@ -174,6 +174,7 @@ function ProblemCard({ item, onIgnoreProblem }: { item: Extract<NonNullable<Dige
       <div className="report-problem-heading"><p className="report-item-title"><span>{item.problemKind ? t(`report.batch.problemKinds.${item.problemKind}.title`) : t(`report.batch.classification.${item.classification}`)}</span> <code className="report-component-badge" translate="no" dir="ltr">{item.component}</code></p><span className={`severity-badge severity-badge--${severityForLevel(item.level)}`}>{severityLabel(severityForLevel(item.level))}</span></div>
       <p className="report-problem-stats"><span>{item.occurrences === 1 ? t('report.batch.occurrencesSingular') : t('report.batch.occurrencesPlural').replace('{count}', String(item.occurrences))}</span></p>
       {item.problemKind ? <div className="report-ai-content"><div><p className="report-field-label">{t('report.batch.connectionExplanation')}</p><p>{t(`report.batch.problemKinds.${item.problemKind}.copy`)}</p></div><div><p className="report-field-label">{t('report.batch.nextStep')}</p><p>{t(`report.batch.problemKinds.${item.problemKind}.action`)}</p></div></div> : item.analysis ? <div className="report-ai-content"><div><p className="report-field-label">{t('report.batch.aiExplanation')}</p><p>{item.analysis.summary}</p></div><div><p className="report-field-label">{t('report.batch.aiRecommendation')}</p><p>{item.analysis.recommendation}</p></div></div> : <><p className="muted-copy">{t('report.batch.analysisUnavailable')}</p>{item.safeExcerpt ? <details className="report-trace-detail"><summary>{t('report.batch.trace.action')}</summary><p>{t('report.batch.trace.warning')}</p><pre><code dir="ltr" translate="no">{item.safeExcerpt.lines.join('\n')}</code></pre></details> : <p className="muted-copy">{t('report.batch.trace.unavailable')}</p>}</>}
+      {item.safeExcerpt && item.analysis ? <details className="report-trace-detail report-trace-detail--secondary"><summary>{t('report.batch.trace.actionSource')}</summary><pre><code dir="ltr" translate="no">{item.safeExcerpt.lines.join('\n')}{item.safeExcerpt.truncated ? '\n… (truncated)' : ''}</code></pre></details> : null}
       <details className="report-technical-detail"><summary>{t('report.batch.component')}: <span translate="no">{item.component}</span></summary><dl><div><dt>{t('report.batch.technicalId')}</dt><dd><code translate="no" dir="ltr">{item.signature}</code></dd></div></dl></details>
       {item.notes?.length ? <div className="report-operator-notes"><p className="report-field-label">{t('report.batch.operatorNotes')}</p><ul>{item.notes.map((note) => <li key={note.id}>{note.text}</li>)}</ul></div> : null}
       <div className="report-problem-actions">{ignoreState === 'ignored' ? <span className="report-action-state" role="status">{t('report.ignore.success')}</span> : onIgnoreProblem ? <button type="button" className="secondary-action" disabled={ignoreState === 'pending'} onClick={() => setIgnoreState('confirming')}>{ignoreState === 'pending' ? t('report.ignore.pending') : t('report.ignore.action')}</button> : null}</div>
@@ -237,20 +238,30 @@ function capitalize(value: DigestDetail['summary']['deliveryStatus']): 'Sent' | 
 }
 
 function warningLabel(code: string): string {
+  if (code.includes('429') || code.includes('quota') || code.includes('Quota') || code.includes('billing')) {
+    return `⚠️ Límite de cuota de IA superado (HTTP 429 - Free Tier): ${code}`;
+  }
+  if (code.startsWith('Gemini') || code.startsWith('OpenAI') || code.startsWith('AIProviderError')) {
+    return `⚠️ Error de proveedor de IA: ${code}`;
+  }
   if (code === 'AI_ANALYSIS_PARTIAL') return t('report.batch.warningPartial');
   if (code === 'AI_ANALYSIS_UNAVAILABLE') return t('report.batch.warningUnavailable');
   if (code === 'REPORT_CORRUPT' || code === 'REPORT_PAYLOAD_INVALID' || code === 'REPORT_MISSING') return t('report.batch.warningCorrupt');
-  return t('report.batch.warningGeneric');
+  return code;
 }
 
 function failureLabel(message?: string): string {
+  if (!message) return t('report.batch.failureGeneric');
+  if (message.includes('429') || message.includes('quota') || message.includes('Quota') || message.includes('billing')) {
+    return `Límite de cuota o ratio de peticiones gratuito superado (HTTP 429). Espera 1 minuto antes de generar otro informe. (${message})`;
+  }
   if (message === 'invalid signature analysis'
     || message === 'OpenAI provider returned an invalid signature analysis'
     || message === 'Gemini provider returned an invalid signature analysis'
     || message === 'Ollama provider returned an invalid signature analysis') {
     return t('report.batch.failureInvalidAnalysis');
   }
-  return t('report.batch.failureGeneric');
+  return message;
 }
 
 function severityForLevel(level: 'ERROR' | 'CRITICAL' | 'WARNING'): 'critical' | 'warning' {

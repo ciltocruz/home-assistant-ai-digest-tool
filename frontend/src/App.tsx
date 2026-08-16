@@ -10,13 +10,15 @@ import { OnboardingFlow, createInitialOnboardingState, restoreOnboardingState, t
 import { ReportDetail } from './report-detail.js';
 import type { AppRoute } from './router.js';
 import { SettingsPanel, type SettingsApi } from './settings.js';
-import type { DigestDetail, EditableSettingsDto, ExactProblemIgnoreResult, ManualTelegramSendResult, RunDigestRequest, RunDigestResponse } from '@ha-digest/shared';
+import { AuditPage, type AuditPageApi } from './audit-page.js';
+import type { DigestDetail, EditableSettingsDto, ExactProblemIgnoreResult, ManualTelegramSendResult, RunDigestRequest, RunDigestResponse, StaleEntitiesResponse } from '@ha-digest/shared';
 
 type AppApi = Partial<OnboardingApi & DashboardApi & JobLifecycleApi & {
   getDigest(id: string): Promise<DigestDetail>;
   deleteDigest(id: string): Promise<void>;
   ignoreReportProblem(reportId: string, signature: string): Promise<ExactProblemIgnoreResult>;
   sendReportViaTelegram(reportId: string, actionId: string): Promise<ManualTelegramSendResult>;
+  getStaleEntities(): Promise<StaleEntitiesResponse>;
 }>;
 type TimeZoneApi = Pick<SettingsApi, 'getSettings'>;
 type SessionApi = { getSession(): Promise<{ language: 'en' | 'es' }>; getAuthStatus(): Promise<{ hasAdmin: boolean }>; register(password: string, language: 'en' | 'es'): Promise<{ language: 'en' | 'es' }>; login(password: string): Promise<{ language: 'en' | 'es' }> };
@@ -73,6 +75,10 @@ function OperationalRoute({ route, api, settingsApi, timeZoneApi, dashboardApi, 
   if (route.kind === 'report') return <ReportsWorkspace api={api} reportId={route.reportId} refreshKey={historyRevision} onChanged={onCompleted} timeZone={timeZone} />;
   if (route.kind === 'settings') return <SettingsPanel api={settingsApi} section={route.section} />;
   if (route.kind === 'reports') return <ReportsWorkspace api={api} refreshKey={historyRevision} onChanged={onCompleted} timeZone={timeZone} />;
+  if (route.kind === 'audit') {
+    const auditApi: AuditPageApi | undefined = typeof api?.getStaleEntities === 'function' ? (api as AuditPageApi) : undefined;
+    return <AuditPage api={auditApi} />;
+  }
 
   return <Dashboard
     api={dashboardApi}

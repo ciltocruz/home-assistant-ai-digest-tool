@@ -1,6 +1,7 @@
 export type AppRoute =
   | { kind: 'dashboard' }
   | { kind: 'setup' }
+  | { kind: 'audit' }
   | { kind: 'reports' }
   | { kind: 'report'; reportId: string }
   | { kind: 'settings'; section?: string };
@@ -8,6 +9,7 @@ export type AppRoute =
 export function parseAppRoute(pathname: string, search = ''): AppRoute {
   if (pathname === '/setup') return { kind: 'setup' };
   if (pathname === '/' || pathname === '/dashboard') return { kind: 'dashboard' };
+  if (pathname === '/audit') return { kind: 'audit' };
   if (pathname === '/reports') return { kind: 'reports' };
 
   const report = /^\/reports\/([^/]+)$/.exec(pathname);
@@ -23,6 +25,7 @@ export function parseAppRoute(pathname: string, search = ''): AppRoute {
 
 export function canonicalPath(route: AppRoute): string {
   if (route.kind === 'setup') return '/setup';
+  if (route.kind === 'audit') return '/audit';
   if (route.kind === 'reports') return '/reports';
   if (route.kind === 'report') return `/reports/${encodeURIComponent(route.reportId)}`;
   if (route.kind === 'settings') return route.section ? `/settings?section=${encodeURIComponent(route.section)}` : '/settings';

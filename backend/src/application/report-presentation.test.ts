@@ -211,6 +211,12 @@ One condition needs review.
           { category: 'authentication_error', reason: 'authentication_failed', count: 1 },
           { category: 'migration_error', reason: 'unknown', count: 1 },
           { category: 'failed_unload', reason: 'unknown', count: 1 }
+        ],
+        issues: [
+          { domain: 'private_retry', state: 'setup_retry', title: 'Private retry' },
+          { domain: 'private_url', state: 'setup_error', reason: 'invalid_auth' },
+          { domain: 'private_migration', state: 'migration_error', title: 'Private migration' },
+          { domain: 'private_device', state: 'failed_unload' }
         ]
       }
     }));

@@ -189,7 +189,8 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
             secrets: secretStore
           });
           return await client.listStates();
-        } catch {
+        } catch (error) {
+          console.error('[HA getStates Error]', error);
           return [];
         }
       }

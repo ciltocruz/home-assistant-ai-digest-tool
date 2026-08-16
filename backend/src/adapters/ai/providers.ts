@@ -54,7 +54,7 @@ export class AIProviderError extends Error {
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
-const DEFAULT_GEMINI_MODEL = 'gemini-flash-latest';
+const DEFAULT_GEMINI_MODEL = 'gemini-flash-lite-latest';
 const DEFAULT_PROVIDER_TIMEOUT_MS = 30_000;
 
 abstract class SignatureHttpProvider implements SignatureProvider {

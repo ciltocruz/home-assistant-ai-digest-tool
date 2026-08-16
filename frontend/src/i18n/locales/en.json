@@ -92,6 +92,7 @@
     },
     "activeReport": { "title": "Active report" },
     "staleEntities": {
+      "eyebrow": "Device health",
       "title": "Device & Entity Audit",
       "subtitle": "Real-time health of Home Assistant integrations and sensors",
       "all": "All",
@@ -102,7 +103,8 @@
       "refresh": "Refresh audit",
       "noIssues": "All good! All devices are responding and reporting state normally.",
       "loading": "Loading entity audit…",
-      "error": "Failed to load entity audit."
+      "error": "Failed to load entity audit.",
+      "unavailableCopy": "Entity audit is not available in this session."
     },
     "latestReport": {
       "eyebrow": "Latest result",
@@ -226,7 +228,7 @@
     }
   },
   "account": { "loading": "Checking secure access…", "firstRun": "First run", "welcomeBack": "Welcome back", "createTitle": "Create your administrator account", "signInTitle": "Sign in", "language": "Language", "english": "English", "spanish": "Español", "password": "Password", "createAction": "Create account", "signInAction": "Sign in", "signInFailed": "Sign-in failed.", "securityCheck": "Access check", "bootstrapErrorTitle": "Secure access could not be checked", "bootstrapErrorCopy": "The session could not be validated. Check the backend connection and try again.", "retry": "Retry" },
-  "shell": { "skipToContent": "Skip to main content", "navigationLabel": "Primary navigation", "homeLabel": "Go to dashboard", "brandSubtitle": "Control panel", "dashboard": "Dashboard", "reports": "Reports", "settings": "Settings", "loadingSetup": "Loading saved setup…" },
+  "shell": { "skipToContent": "Skip to main content", "navigationLabel": "Primary navigation", "homeLabel": "Go to dashboard", "brandSubtitle": "Control panel", "dashboard": "Dashboard", "audit": "Audit", "reports": "Reports", "settings": "Settings", "loadingSetup": "Loading saved setup…" },
   "settings": { "title": "Settings", "signIn": "Sign in to review and update configuration.", "loading": "Loading saved settings…", "loadError": "Settings could not be loaded. Check the session and try again.", "review": "Review the highlighted fields before saving.", "saving": "Saving settings…", "saved": "Settings saved successfully.", "saveError": "Settings could not be saved. Check the fields and try again.", "noteSaved": "Note saved successfully.", "noteError": "The note could not be saved. Review the text and try again.", "ignoreSaved": "Warning added to ignored items.", "ignoreError": "The ignored warning could not be saved. Review the value and try again.", "ignoreRemoved": "Ignored warning removed successfully.", "ignoreRemoveError": "The ignored warning could not be removed. It is still available; try again.", "testingTelegram": "Sending Telegram test…", "telegramSent": "Telegram test sent successfully.", "telegramError": "Telegram test could not be sent. Review the configuration and try again.", "eyebrow": "Settings", "heading": "Connections, schedule, and privacy", "secretDescription": "Current secrets are masked. You can keep them or explicitly replace them.", "navigation": "Settings sections", "retryRemoval": "Retry removal", "homeAssistant": "Home Assistant", "homeAssistantUrl": "Home Assistant URL", "homeAssistantToken": "Home Assistant token", "ai": "AI provider", "provider": "Provider", "providerKey": "Provider key", "notifications": "Notifications", "channel": "Channel", "noNotifications": "Do not send notifications", "telegramChat": "Telegram chat", "telegramBotToken": "Telegram bot token", "sendTelegramTest": "Send Telegram test", "schedule": "Schedule", "frequency": "Frequency", "daily": "Daily", "weekly": "Weekly", "time": "Time", "timezone": "Timezone", "dayOfWeek": "Day of the week", "weekdays": ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], "enableSchedule": "Enable this schedule", "privacyRetention": "Privacy and retention", "detailLevel": "Detail level", "minimal": "Minimal", "balanced": "Balanced", "detailed": "Detailed", "retentionDays": "Retention days", "save": "Save settings", "cancel": "Discard changes", "changesDiscarded": "Unsaved changes were discarded.", "context": "Context", "contextTitle": "Notes and ignored warnings", "contextDescription": "Keep operational context with configuration to avoid duplicate panel changes.", "operatorNotes": "Operator notes", "addNote": "Add note", "note": "Note", "saveNote": "Save note", "savingNote": "Saving note…", "notesUnavailable": "Notes are unavailable in this session.", "noNotes": "No saved notes.", "ignoredWarnings": "Ignored warnings", "addIgnoredWarning": "Add ignored warning", "match": "Match", "ignoreWarning": "Ignore warning", "savingWarning": "Saving warning…", "ignoresUnavailable": "Ignored warnings are unavailable in this session.", "noIgnores": "No ignored warnings.", "noReason": "No reason recorded", "remove": "Remove", "removeIgnoredTitle": "Remove ignored warning", "removeIgnoredDescription": "The warning “{match}” will appear again in upcoming reports.", "loadNotesError": "Notes could not be loaded. Try again.", "loadIgnoresError": "Ignored warnings could not be loaded. Try again.", "configured": "Configured: {mask}", "notConfigured": "Not configured yet.", "keepCurrent": "Keep current value", "replace": "Replace with a new value", "newValue": "New value", "loadingContext": "Loading…", "validHomeAssistantUrl": "Enter a valid Home Assistant URL.", "validTime": "Enter a valid time.", "validTimezone": "Enter a valid timezone.", "validRetention": "Use between 1 and {max} retention days." },
   "report": {
     "eyebrow": "Saved report",
@@ -328,7 +330,7 @@
       "connectionExplanation": "Connection explanation",
       "nextStep": "Next step",
       "analysisUnavailable": "AI could not explain this problem.",
-      "trace": { "action": "View redacted error trace", "warning": "Secrets and private values are hidden, and this excerpt is shortened.", "unavailable": "A privacy-safe trace excerpt is unavailable for this problem." },
+      "trace": { "action": "View redacted error trace", "actionSource": "View source log lines", "warning": "Secrets and private values are hidden, and this excerpt is shortened.", "unavailable": "A privacy-safe trace excerpt is unavailable for this problem." },
       "component": "Component",
       "technicalId": "Technical ID",
       "operatorNotes": "Operator notes",
@@ -356,6 +358,23 @@
       "evidence": { "title": "Evidence" },
       "severity": { "critical": "Critical", "warning": "Warning", "info": "Information" },
         "legacy": { "title": "Imported report (older format)", "copy": "This report was produced by a previous version and does not contain structured AI analysis for each detected problem. Only a new report can provide that analysis.", "disclosure": "Show the original report content", "protectedData": "Protected data redacted" }
+    }
+  },
+  "audit": {
+    "viewFlat": "Entities",
+    "viewGrouped": "By domain",
+    "showing": "Showing {shown} of {total}",
+    "perPage": "Per page:",
+    "noResults": "No results for the selected filters.",
+    "prev": "Previous",
+    "next": "Next",
+    "pageOf": "Page {page} of {total}",
+    "paginationLabel": "Pagination",
+    "accessCard": {
+      "eyebrow": "Device health",
+      "title": "Device & Entity Audit",
+      "copy": "View the real-time health status of all Home Assistant entities.",
+      "action": "Open audit"
     }
   }
 }

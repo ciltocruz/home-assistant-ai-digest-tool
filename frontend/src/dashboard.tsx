@@ -6,7 +6,6 @@ import { formatDateTime } from './date-time.js';
 
 export { DashboardHistory, loadDigestHistory, type DashboardApi, type DashboardHistoryState } from './report-history.js';
 import { DashboardHistory, loadDigestHistory, type DashboardApi, type DashboardHistoryState } from './report-history.js';
-import { StaleEntitiesCard, type StaleEntitiesApi } from './stale-entities.js';
 
 export function Dashboard({ api, state: initialState, activeReport, refreshKey = 0, timeZone }: { api?: DashboardApi; state?: DashboardHistoryState; activeReport: ReactNode; refreshKey?: number; timeZone?: string }) {
   const [state, setState] = useState<DashboardHistoryState>(initialState ?? (api ? { status: 'loading' } : { status: 'unavailable' }));
@@ -35,7 +34,7 @@ export function Dashboard({ api, state: initialState, activeReport, refreshKey =
       <p className="eyebrow">{t('dashboard.currentState.eyebrow')}</p>
       {renderCurrentState(state, () => setRetryKey((value) => value + 1))}
     </section>
-    <StaleEntitiesCard api={api?.getStaleEntities ? (api as StaleEntitiesApi) : undefined} refreshKey={refreshKey} />
+    <AuditAccessCard />
     <section className="dashboard-active-report" data-dashboard-section="active-report" aria-labelledby="active-report-title">
       <h2 id="active-report-title">{t('dashboard.activeReport.title')}</h2>
       {activeReport}
@@ -181,4 +180,21 @@ function analysisWindowLabel(item: DigestSummary, timeZone?: string): string {
 
 function deliveryDiagnosticCopy(messageKey: NonNullable<DigestSummary['deliveryDiagnostic']>['messageKey']): string {
   return t(`report.outcomes.deliveryDiagnostics.${messageKey}.copy`);
+}
+
+function AuditAccessCard() {
+  return (
+    <section className="panel audit-access-card" aria-labelledby="audit-access-title">
+      <div className="audit-access-content">
+        <div>
+          <p className="eyebrow">{t('audit.accessCard.eyebrow')}</p>
+          <h2 id="audit-access-title">{t('audit.accessCard.title')}</h2>
+          <p>{t('audit.accessCard.copy')}</p>
+        </div>
+        <a className="audit-access-link" href="/audit" id="audit-access-btn">
+          <span>📡</span> {t('audit.accessCard.action')}
+        </a>
+      </div>
+    </section>
+  );
 }

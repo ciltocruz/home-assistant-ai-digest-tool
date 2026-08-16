@@ -180,7 +180,7 @@ describe('Report History Batch Selection and Deletion', () => {
     });
 
     // Confirm in modal
-    const confirmBtn = Array.from(container.querySelectorAll('.confirm-dialog button')).find((b) => b.textContent === 'Eliminar informes');
+    const confirmBtn = Array.from(container.querySelectorAll<HTMLButtonElement>('.confirm-dialog button')).find((b) => b.textContent === 'Eliminar informes');
     expect(confirmBtn).toBeDefined();
 
     // Mock backend state change on delete

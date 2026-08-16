@@ -88,7 +88,7 @@ describe('AI provider adapters', () => {
 
     expect(digest.attentionItems[0]?.title).toBe('Kitchen sensor');
     expect(requests).toHaveLength(1);
-    expect(requests[0]?.url).toContain('https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent');
+    expect(requests[0]?.url).toContain('https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent');
     expect(requests[0]?.url).toContain('key=gemini-test-secret');
     const body = JSON.stringify(requests[0]?.body);
     expect(body).toContain('redacted incident context');
@@ -208,7 +208,7 @@ describe('AI provider adapters', () => {
       }
     });
 
-    await expect(provider.generate(input)).rejects.toThrow("Gemini unavailable: model 'gemini-flash-latest' failed (classification: other)");
+    await expect(provider.generate(input)).rejects.toThrow("Gemini unavailable: model 'gemini-flash-lite-latest' failed (classification: other)");
     await expect(provider.generate(input)).rejects.toThrow('network failed for');
     await expect(provider.generate(input)).rejects.not.toThrow('gemini-test-secret');
   });
@@ -250,7 +250,7 @@ describe('AI provider adapters', () => {
 
     const error = await result;
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain("Gemini unavailable: model 'gemini-flash-latest' failed (classification: timeout)");
+    expect((error as Error).message).toContain("Gemini unavailable: model 'gemini-flash-lite-latest' failed (classification: timeout)");
     expect((error as Error).message).toContain('aborted');
     expect((error as Error).message).not.toContain('gemini-test-secret');
   });
@@ -270,7 +270,7 @@ describe('AI provider adapters', () => {
 
   it.each([
     ['openai', 'https://fake.openai/v1/chat/completions', { choices: [{ message: { content: JSON.stringify({ summary: 'OpenAI summary', recommendation: 'Restart it' }) } }] }],
-    ['gemini', 'https://fake.gemini/gemini-flash-latest:generateContent?key=provider-secret', { candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'Gemini summary', recommendation: 'Check it' }) }] } }] }],
+    ['gemini', 'https://fake.gemini/gemini-flash-lite-latest:generateContent?key=provider-secret', { candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'Gemini summary', recommendation: 'Check it' }) }] } }] }],
     ['ollama', 'http://fake.ollama/api/chat', { message: { content: JSON.stringify({ summary: 'Ollama summary', recommendation: 'Inspect it' }) } }]
   ] as const)('uses bounded redacted per-signature %s requests', async (kind, url, response) => {
     const requests: HttpRequest[] = [];

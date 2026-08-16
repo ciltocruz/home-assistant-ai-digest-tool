@@ -36,6 +36,12 @@ describe('HomeAssistantWebSocketClient', () => {
         { category: 'authentication_error', reason: 'authentication_failed', count: 1 },
         { category: 'migration_error', reason: 'unknown', count: 1 },
         { category: 'failed_unload', reason: 'unknown', count: 1 }
+      ],
+      issues: [
+        { domain: 'private_retry_service', state: 'setup_retry', title: 'Retrying account' },
+        { domain: 'private_url_service', state: 'setup_error', reason: 'invalid_auth' },
+        { domain: 'private_migration_service', state: 'migration_error', title: 'Private migration' },
+        { domain: 'private_device_service', state: 'failed_unload' }
       ]
     });
     for (const sentinel of ['owner@example.test', '192.0.2.10', 'https://private.example.test', 'Bedroom private device', 'private_email_service']) {

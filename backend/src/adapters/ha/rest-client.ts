@@ -12,8 +12,8 @@ export type HomeAssistantRestClientOptions = {
   fetch?: typeof fetch;
 };
 
-const DEFAULT_MAX_STATES = 500;
-const DEFAULT_MAX_RESPONSE_BYTES = 1_000_000;
+const DEFAULT_MAX_STATES = 10_000;
+const DEFAULT_MAX_RESPONSE_BYTES = 25_000_000;
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 export class HomeAssistantRestClient implements HomeAssistantApiClient {

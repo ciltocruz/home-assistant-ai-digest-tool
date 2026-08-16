@@ -135,7 +135,7 @@ function createPreviewServices(now = () => new Date().toISOString()): BackendApi
       async get() { return null; },
       async retryFailed() { return null; }
     },
-    reports: { async list() { return []; }, async get() { return null; }, async remove() { return false; } },
+    reports: { async list() { return []; }, async get() { return null; }, async remove() { return false; }, async removeBatch() { return 0; } },
     notes: {
       async add(input) { return { id: 'preview-note', ...input, createdAt: now() }; },
       async listWindow() { return []; }

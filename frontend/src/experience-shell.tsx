@@ -109,6 +109,14 @@ export function ExperienceShell({
             </a>
             <a
               className="app-nav-item"
+              href="/audit"
+              aria-current={operationalRoute.kind === 'audit' ? 'page' : undefined}
+            >
+              <span className="app-nav-icon" aria-hidden="true">📡</span>
+              {t('shell.audit')}
+            </a>
+            <a
+              className="app-nav-item"
               href="/reports"
               aria-current={
                 operationalRoute.kind === 'reports' || operationalRoute.kind === 'report'
