@@ -12,8 +12,10 @@ import {
   ScheduleSchema,
   SettingsUpdateCommandSchema,
   SetupValidationRequestSchema,
-  SetupValidationResponseSchema
-} from './dtos';
+  SetupValidationResponseSchema,
+  BatchDeleteReportsRequestSchema,
+  BatchDeleteReportsResponseSchema
+} from './dtos.js';
 
 describe('shared DTOs', () => {
   it('accepts resumable onboarding progress without serializing secret values or references', () => {
@@ -317,9 +319,73 @@ describe('shared DTOs', () => {
       inProgress: 2,
       retrying: 1,
       errors: 3,
-      unknown: 3
+      unknown: 3,
+      errorGroups: [
+        { category: 'authentication_error', reason: 'authentication_failed', count: 1 },
+        { category: 'migration_error', reason: 'unknown', count: 1 },
+        { category: 'failed_unload', reason: 'unknown', count: 1 }
+      ]
     });
     expect(JSON.stringify(status)).not.toMatch(/owner@example|192\.0\.2\.10|Bedroom|private\.example|private retry|invalid_auth/);
+  });
+
+  it('groups integration errors through exact category and reason allowlists without private fields', () => {
+    const privateValues = ['owner@example.test', '192.0.2.10', 'https://private.example.test/account', 'Bedroom private device', 'entry-private-id', 'arbitrary private reason'];
+    const status = projectIntegrationStatus({
+      available: true,
+      integrations: [
+        { state: 'loaded', title: privateValues[0], domain: 'private_domain' },
+        { state: 'setup_error', title: privateValues[1], entry_id: privateValues[4], reason: 'invalid_auth' },
+        { state: 'setup_error', title: privateValues[2], reason: 'cannot_connect' },
+        { state: 'setup_error', title: privateValues[3], reason: privateValues[5] },
+        { state: 'migration_error', domain: 'private_domain', reason: 'timeout' },
+        { state: 'failed_unload', domain: 'private_domain', reason: 'dependency_not_ready' }
+      ]
+    });
+
+    expect(status).toEqual({
+      available: true,
+      total: 6,
+      loaded: 1,
+      notLoaded: 0,
+      inProgress: 0,
+      retrying: 0,
+      errors: 5,
+      unknown: 0,
+      errorGroups: [
+        { category: 'authentication_error', reason: 'authentication_failed', count: 1 },
+        { category: 'setup_error', reason: 'connection_failed', count: 1 },
+        { category: 'setup_error', reason: 'unknown', count: 1 },
+        { category: 'migration_error', reason: 'timed_out', count: 1 },
+        { category: 'failed_unload', reason: 'dependency_unavailable', count: 1 }
+      ]
+    });
+    const serialized = JSON.stringify(status);
+    for (const privateValue of privateValues) expect(serialized).not.toContain(privateValue);
+    expect(serialized).not.toContain('private_domain');
+    expect(serialized).not.toContain('invalid_auth');
+  });
+
+  it('bounds integration error groups while preserving the aggregate error count', () => {
+    const states = ['setup_error', 'migration_error', 'failed_unload'] as const;
+    const reasons = ['invalid_auth', 'cannot_connect', 'timeout', 'dependency_not_ready', 'invalid_config', 'unknown-safe-token'] as const;
+    const integrations = states.flatMap((state) => reasons.map((reason) => ({ state, reason })));
+
+    const status = projectIntegrationStatus({ available: true, integrations });
+
+    expect(status?.available).toBe(true);
+    if (!status?.available) throw new Error('Expected available status');
+    expect(status.errorGroups).toHaveLength(12);
+    expect(status.errorGroups?.reduce((sum, group) => sum + group.count, 0)).toBe(status.errors);
+    expect(status.errorGroups?.at(-1)).toMatchObject({ category: 'other', reason: 'unknown' });
+  });
+
+  it('rejects public integration error groups whose counts disagree with aggregate errors', async () => {
+    const { IntegrationStatusSummarySchema } = await import('./dtos');
+    expect(() => IntegrationStatusSummarySchema.parse({
+      available: true, total: 2, loaded: 0, notLoaded: 0, inProgress: 0, retrying: 0, errors: 2, unknown: 0,
+      errorGroups: [{ category: 'setup_error', reason: 'unknown', count: 1 }]
+    })).toThrow();
   });
 
   it('returns field-safe errors without secret values', () => {
@@ -372,6 +438,25 @@ describe('shared DTOs', () => {
     expect(old.deliveryDiagnostic?.errorCode).toBe('TELEGRAM_REJECTED');
   });
 
+  it('accepts exact signature ignore rules without weakening existing rule types', async () => {
+    const { ExactProblemIgnoreResultSchema, IgnoreRuleCreateSchema } = await import('./dtos');
+    expect(IgnoreRuleCreateSchema.parse({ match: '0123456789abcdef01234567', type: 'signature' })).toEqual({ match: '0123456789abcdef01234567', type: 'signature' });
+    expect(IgnoreRuleCreateSchema.parse({ match: 'recorder', type: 'message' })).toEqual({ match: 'recorder', type: 'message' });
+    expect(ExactProblemIgnoreResultSchema.parse({ rule: { id: 'rule-1', match: '0123456789abcdef01234567', type: 'signature', createdAt: '2026-08-14T12:00:00.000Z' }, alreadyIgnored: true })).toMatchObject({ alreadyIgnored: true });
+  });
+
+  it('accepts only confirmed UUID manual Telegram actions and safe attempt responses', async () => {
+    const { ManualTelegramSendRequestSchema, ManualTelegramSendResultSchema } = await import('./dtos');
+    const actionId = '11111111-1111-4111-8111-111111111111';
+    expect(ManualTelegramSendRequestSchema.parse({ actionId, confirmed: true })).toEqual({ actionId, confirmed: true });
+    expect(() => ManualTelegramSendRequestSchema.parse({ actionId, confirmed: false })).toThrow();
+    expect(() => ManualTelegramSendRequestSchema.parse({ actionId, confirmed: true, targetRef: 'private-target' })).toThrow();
+    expect(ManualTelegramSendResultSchema.parse({
+      attempt: { actionId, status: 'indeterminate', diagnostic: { channel: 'telegram', stage: 'response', errorCode: 'TELEGRAM_INVALID_RESPONSE', messageKey: 'telegram_invalid_response', recordedAt: '2026-08-14T12:00:01.000Z' }, requestedAt: '2026-08-14T12:00:00.000Z', completedAt: '2026-08-14T12:00:01.000Z' },
+      alreadyRequested: false
+    })).toMatchObject({ attempt: { status: 'indeterminate' } });
+  });
+
   it('rejects raw secret fields in response DTOs', () => {
     expect(() =>
       SetupValidationResponseSchema.parse({
@@ -388,5 +473,21 @@ describe('shared DTOs', () => {
         }
       })
     ).toThrow();
+  });
+});
+
+describe('BatchDeleteReports DTOs', () => {
+  it('validates valid batch delete request', () => {
+    const valid = BatchDeleteReportsRequestSchema.parse({ ids: ['report-1', 'report-2'] });
+    expect(valid.ids).toEqual(['report-1', 'report-2']);
+  });
+
+  it('rejects empty or invalid batch delete request', () => {
+    expect(() => BatchDeleteReportsRequestSchema.parse({ ids: [] })).toThrow();
+  });
+
+  it('validates batch delete response', () => {
+    const valid = BatchDeleteReportsResponseSchema.parse({ deletedCount: 2 });
+    expect(valid.deletedCount).toBe(2);
   });
 });

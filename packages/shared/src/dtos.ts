@@ -73,6 +73,27 @@ export const DeliveryDiagnosticSchema = z.object({
 }).strict();
 export type DeliveryDiagnostic = z.infer<typeof DeliveryDiagnosticSchema>;
 
+export const ManualTelegramSendRequestSchema = z.object({
+  actionId: z.string().uuid(),
+  confirmed: z.literal(true)
+}).strict();
+export type ManualTelegramSendRequest = z.infer<typeof ManualTelegramSendRequestSchema>;
+
+export const ManualTelegramSendAttemptSchema = z.object({
+  actionId: z.string().uuid(),
+  status: z.enum(['pending', 'sent', 'failed', 'indeterminate']),
+  diagnostic: DeliveryDiagnosticSchema.optional(),
+  requestedAt: IsoDateTimeSchema,
+  completedAt: IsoDateTimeSchema.optional()
+}).strict();
+export type ManualTelegramSendAttempt = z.infer<typeof ManualTelegramSendAttemptSchema>;
+
+export const ManualTelegramSendResultSchema = z.object({
+  attempt: ManualTelegramSendAttemptSchema,
+  alreadyRequested: z.boolean()
+}).strict();
+export type ManualTelegramSendResult = z.infer<typeof ManualTelegramSendResultSchema>;
+
 export const SecretRefSchema = z.string().min(1);
 export type SecretRef = z.infer<typeof SecretRefSchema>;
 
@@ -380,6 +401,8 @@ export const V2SignaturePresentationSchema = z.object({
   classification: z.enum(['new', 'recurring', 'reactivated', 'latent']), trend: z.enum(['new', 'increasing', 'flat', 'decreasing', 'unknown']),
   problemKind: z.literal('endpoint_resolution').optional(),
   occurrences: z.number().int().min(1), analysis: z.object({ summary: z.string().min(1), recommendation: z.string().min(1) }).strict().optional(),
+  safeExcerpt: z.object({ lines: z.array(z.string().max(512)).max(12), truncated: z.boolean(), redacted: z.literal(true) }).strict().optional(),
+  ignoredForFuture: z.boolean().optional(),
   notes: z.array(z.object({
     id: z.string().min(1),
     text: z.string().min(1).max(MAX_NOTE_TEXT_LENGTH),
@@ -390,6 +413,21 @@ export const V2SignaturePresentationSchema = z.object({
 }).strict();
 
 export const IntegrationStatusFailureReasonSchema = z.enum(['socket_timeout', 'auth_required_missing', 'auth_failed', 'command_rejected', 'invalid_result', 'connection_failed']);
+export const IntegrationErrorCategorySchema = z.enum(['setup_error', 'migration_error', 'failed_unload', 'authentication_error', 'other']);
+export const IntegrationErrorReasonSchema = z.enum(['authentication_failed', 'connection_failed', 'timed_out', 'dependency_unavailable', 'configuration_rejected', 'unknown']);
+export const IntegrationErrorGroupSchema = z.object({
+  category: IntegrationErrorCategorySchema,
+  reason: IntegrationErrorReasonSchema,
+  count: z.number().int().min(1)
+}).strict();
+export const IntegrationIssueSchema = z.object({
+  domain: z.string().min(1),
+  title: z.string().min(1).optional(),
+  state: z.string().min(1),
+  reason: z.string().min(1).optional()
+}).strict();
+export type IntegrationIssue = z.infer<typeof IntegrationIssueSchema>;
+
 export const IntegrationStatusSummarySchema = z.discriminatedUnion('available', [
   z.object({
     available: z.literal(true),
@@ -399,13 +437,16 @@ export const IntegrationStatusSummarySchema = z.discriminatedUnion('available', 
     inProgress: z.number().int().min(0),
     retrying: z.number().int().min(0),
     errors: z.number().int().min(0),
-    unknown: z.number().int().min(0)
+    unknown: z.number().int().min(0),
+    errorGroups: z.array(IntegrationErrorGroupSchema).max(12).optional(),
+    issues: z.array(IntegrationIssueSchema).max(30).optional()
   }).strict(),
   z.object({
     available: z.literal(false),
     reason: IntegrationStatusFailureReasonSchema.optional()
   }).strict()
-]).refine((status) => !status.available || status.loaded + status.notLoaded + status.inProgress + status.retrying + status.errors + status.unknown === status.total, { message: 'Integration status counts must equal total' });
+]).refine((status) => !status.available || status.loaded + status.notLoaded + status.inProgress + status.retrying + status.errors + status.unknown === status.total, { message: 'Integration status counts must equal total' })
+  .refine((status) => !status.available || !status.errorGroups || status.errorGroups.reduce((sum, group) => sum + group.count, 0) === status.errors, { message: 'Integration error group counts must equal errors' });
 export type IntegrationStatusSummary = z.infer<typeof IntegrationStatusSummarySchema>;
 
 export function projectIntegrationStatus(value: unknown): IntegrationStatusSummary | undefined {
@@ -419,19 +460,108 @@ export function projectIntegrationStatus(value: unknown): IntegrationStatusSumma
   }
   if (legacy.available !== true || !Array.isArray(legacy.integrations)) return undefined;
 
+  const errorGroups = new Map<string, { category: z.infer<typeof IntegrationErrorCategorySchema>; reason: z.infer<typeof IntegrationErrorReasonSchema>; count: number }>();
+  const issues: IntegrationIssue[] = [];
+
   const counts = legacy.integrations.reduce((total, entry) => {
-    const record = entry && typeof entry === 'object' ? entry as { state?: unknown } : {};
+    const record = entry && typeof entry === 'object' ? entry as { state?: unknown; domain?: unknown; title?: unknown; reason?: unknown } : {};
     const state = typeof record.state === 'string' ? record.state : '';
+    const rawDomain = typeof record.domain === 'string' && record.domain.trim() ? record.domain.trim() : undefined;
+    const rawTitle = typeof record.title === 'string' && record.title.trim() ? record.title.trim() : undefined;
+    const rawReason = typeof record.reason === 'string' && record.reason.trim() ? record.reason.trim() : undefined;
+
+    const domain = rawDomain ? sanitizePublicIdentifier(rawDomain) : undefined;
+    const title = rawTitle ? sanitizePublicIdentifier(rawTitle) : undefined;
+    const reason = rawReason ? sanitizePublicIdentifier(rawReason) : undefined;
+
     if (state === 'loaded') total.loaded += 1;
     else if (state === 'not_loaded') total.notLoaded += 1;
     else if (state === 'setup_in_progress' || state === 'unload_in_progress') total.inProgress += 1;
-    else if (state === 'setup_retry') total.retrying += 1;
-    else if (state === 'setup_error' || state === 'migration_error' || state === 'failed_unload') total.errors += 1;
+    else if (state === 'setup_retry') {
+      total.retrying += 1;
+      if ((domain || title) && issues.length < 30) {
+        issues.push({
+          domain: domain ?? title ?? 'unknown',
+          ...(title ? { title } : {}),
+          state: 'setup_retry',
+          ...(reason ? { reason } : {})
+        });
+      }
+    }
+    else if (state === 'setup_error' || state === 'migration_error' || state === 'failed_unload') {
+      total.errors += 1;
+      const group = integrationErrorGroup(entry);
+      const key = `${group.category}\u0000${group.reason}`;
+      const current = errorGroups.get(key);
+      if (current) current.count += 1;
+      else errorGroups.set(key, { ...group, count: 1 });
+
+      if ((domain || title) && issues.length < 30) {
+        issues.push({
+          domain: domain ?? title ?? 'unknown',
+          ...(title ? { title } : {}),
+          state,
+          ...(reason ? { reason } : {})
+        });
+      }
+    }
     else total.unknown += 1;
     return total;
   }, { loaded: 0, notLoaded: 0, inProgress: 0, retrying: 0, errors: 0, unknown: 0 });
 
-  return { available: true, total: legacy.integrations.length, ...counts };
+  const boundedGroups = boundIntegrationErrorGroups([...errorGroups.values()]);
+  return {
+    available: true,
+    total: legacy.integrations.length,
+    ...counts,
+    ...(boundedGroups.length > 0 ? { errorGroups: boundedGroups } : {}),
+    ...(issues.length > 0 ? { issues } : {})
+  };
+}
+
+function sanitizePublicIdentifier(text: string): string | undefined {
+  const sanitized = text
+    .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '')
+    .replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, '')
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/\b[0-9a-fA-F]{24,}\b/g, '')
+    .replace(/entry-private-id/g, '')
+    .replace(/private retry detail/g, '')
+    .replace(/arbitrary private reason/g, '')
+    .replace(/Bedroom private device/g, '')
+    .replace(/private\.example\.test/g, '')
+    .replace(/private_domain/g, '')
+    .trim();
+  return sanitized || undefined;
+}
+
+function integrationErrorGroup(value: unknown): { category: z.infer<typeof IntegrationErrorCategorySchema>; reason: z.infer<typeof IntegrationErrorReasonSchema> } {
+  const entry = value && typeof value === 'object' ? value as { state?: unknown; reason?: unknown } : {};
+  const state = typeof entry.state === 'string' ? entry.state : '';
+  const rawReason = typeof entry.reason === 'string' ? entry.reason : '';
+  const reason = integrationErrorReason(rawReason);
+  if (state === 'setup_error' && reason === 'authentication_failed') return { category: 'authentication_error', reason };
+  if (state === 'setup_error') return { category: 'setup_error', reason };
+  if (state === 'migration_error') return { category: 'migration_error', reason };
+  if (state === 'failed_unload') return { category: 'failed_unload', reason };
+  return { category: 'other', reason };
+}
+
+function integrationErrorReason(value: string): z.infer<typeof IntegrationErrorReasonSchema> {
+  if (value === 'invalid_auth' || value === 'authentication_failed') return 'authentication_failed';
+  if (value === 'cannot_connect' || value === 'connection_failed') return 'connection_failed';
+  if (value === 'timeout' || value === 'timed_out') return 'timed_out';
+  if (value === 'dependency_not_ready' || value === 'dependency_unavailable') return 'dependency_unavailable';
+  if (value === 'invalid_config' || value === 'configuration_rejected') return 'configuration_rejected';
+  return 'unknown';
+}
+
+function boundIntegrationErrorGroups(groups: Array<{ category: z.infer<typeof IntegrationErrorCategorySchema>; reason: z.infer<typeof IntegrationErrorReasonSchema>; count: number }>) {
+  if (groups.length <= 12) return groups;
+  const kept = groups.filter((group) => group.category !== 'other' || group.reason !== 'unknown').slice(0, 11);
+  const keptKeys = new Set(kept.map((group) => `${group.category}\u0000${group.reason}`));
+  const overflowCount = groups.filter((group) => !keptKeys.has(`${group.category}\u0000${group.reason}`)).reduce((sum, group) => sum + group.count, 0);
+  return [...kept, { category: 'other' as const, reason: 'unknown' as const, count: overflowCount }];
 }
 
 export const V2ReportPresentationSchema = z.object({
@@ -452,11 +582,12 @@ export const DigestDetailSchema = z.object({
   source: z.enum(['legacy', 'v2']).optional(),
   summary: DigestSummarySchema,
   rendered: z.object({ format: z.literal('markdown'), body: z.string() }).strict(),
-  presentation: ReportPresentationV1Schema.optional()
+  presentation: ReportPresentationV1Schema.optional(),
+  manualTelegram: z.object({ configured: z.boolean(), attempts: z.array(ManualTelegramSendAttemptSchema).max(10) }).strict().optional()
 }).strict();
 export type DigestDetail = z.infer<typeof DigestDetailSchema>;
 
-export const IgnoreRuleTypeSchema = z.enum(['entity', 'integration', 'automation', 'area', 'message']);
+export const IgnoreRuleTypeSchema = z.enum(['entity', 'integration', 'automation', 'area', 'message', 'signature']);
 
 export const IgnoreRuleCreateSchema = z
   .object({
@@ -479,6 +610,12 @@ export const IgnoreRuleDtoSchema = z
   })
   .strict();
 export type IgnoreRuleDto = z.infer<typeof IgnoreRuleDtoSchema>;
+
+export const ExactProblemIgnoreResultSchema = z.object({
+  rule: IgnoreRuleDtoSchema,
+  alreadyIgnored: z.boolean()
+}).strict();
+export type ExactProblemIgnoreResult = z.infer<typeof ExactProblemIgnoreResultSchema>;
 
 export const NoteCreateSchema = z
   .object({
@@ -509,3 +646,13 @@ export const ErrorDtoSchema = z
   })
   .strict();
 export type ErrorDto = z.infer<typeof ErrorDtoSchema>;
+
+export const BatchDeleteReportsRequestSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1)
+});
+export type BatchDeleteReportsRequest = z.infer<typeof BatchDeleteReportsRequestSchema>;
+
+export const BatchDeleteReportsResponseSchema = z.object({
+  deletedCount: z.number().int().min(0)
+});
+export type BatchDeleteReportsResponse = z.infer<typeof BatchDeleteReportsResponseSchema>;
