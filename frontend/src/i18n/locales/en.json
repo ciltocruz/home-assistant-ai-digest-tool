@@ -91,6 +91,19 @@
       "ready": { "title": "Current state", "clear": "No incidents require attention.", "attention": "{count} incidents require attention" }
     },
     "activeReport": { "title": "Active report" },
+    "staleEntities": {
+      "title": "Device & Entity Audit",
+      "subtitle": "Real-time health of Home Assistant integrations and sensors",
+      "all": "All",
+      "unavailable": "Unavailable",
+      "stale": "Inactive (+24h)",
+      "audited": "Audited",
+      "searchPlaceholder": "Search by name, entity, or domain…",
+      "refresh": "Refresh audit",
+      "noIssues": "All good! All devices are responding and reporting state normally.",
+      "loading": "Loading entity audit…",
+      "error": "Failed to load entity audit."
+    },
     "latestReport": {
       "eyebrow": "Latest result",
       "title": "Latest report",

@@ -21,6 +21,7 @@ import {
   RunDigestRequestSchema,
   RunDigestResponseSchema,
   SendDigestRequestSchema,
+  StaleEntitiesResponseSchema,
   TestResultSchema,
   type BatchDeleteReportsResponse,
   type DeliveryResult,
@@ -42,6 +43,7 @@ import {
   type SendDigestRequest,
   type SetupValidationRequest,
   type SetupValidationResponse, type SettingsUpdateCommand,
+  type StaleEntitiesResponse,
   type TestResult
 } from '@ha-digest/shared';
 import { z } from 'zod';
@@ -149,7 +151,8 @@ export function createApiClient(options: ApiClientOptions = {}) {
     sendDigest: (digestId: string, targetRef: string): Promise<DeliveryResult> => {
       const payload: SendDigestRequest = SendDigestRequestSchema.parse({ digestId, targetRef });
       return request('/api/notifiers/send', DeliveryResultSchema, { method: 'POST', body: JSON.stringify(payload) });
-    }
+    },
+    getStaleEntities: (): Promise<StaleEntitiesResponse> => request('/api/entities/stale', StaleEntitiesResponseSchema)
   };
 }
 

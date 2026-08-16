@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { type BatchDeleteReportsResponse, type DigestHistoryResponse, type DigestSummary } from '@ha-digest/shared';
+import { type BatchDeleteReportsResponse, type DigestHistoryResponse, type DigestSummary, type StaleEntitiesResponse } from '@ha-digest/shared';
 import { ApiClientError, redactSensitiveText } from './api-client.js';
 import { t } from './i18n/index.js';
 import { formatDateTime } from './date-time.js';
@@ -8,6 +8,7 @@ export type DashboardApi = {
   listHistory(): Promise<DigestHistoryResponse>;
   deleteDigestsBatch?(ids: string[]): Promise<BatchDeleteReportsResponse>;
   deleteDigest?(id: string): Promise<void>;
+  getStaleEntities?(): Promise<StaleEntitiesResponse>;
 };
 
 export type DashboardHistoryState =

@@ -91,6 +91,19 @@
       "ready": { "title": "Estado actual", "clear": "No hay incidencias que requieran atención.", "attention": "{count} incidencias requieren atención" }
     },
     "activeReport": { "title": "Informe activo" },
+    "staleEntities": {
+      "title": "Auditoría de Dispositivos y Entidades",
+      "subtitle": "Estado en tiempo real de integraciones y sensores Home Assistant",
+      "all": "Todos",
+      "unavailable": "Sin respuesta",
+      "stale": "Inactivos (+24h)",
+      "audited": "Auditados",
+      "searchPlaceholder": "Buscar por nombre, entidad o dominio…",
+      "refresh": "Actualizar auditoría",
+      "noIssues": "¡Todo correcto! Todos los dispositivos responden y reportan estado normalmente.",
+      "loading": "Cargando auditoría de entidades…",
+      "error": "No se pudo cargar la auditoría de entidades."
+    },
     "latestReport": {
       "eyebrow": "Último resultado",
       "title": "Último informe",
