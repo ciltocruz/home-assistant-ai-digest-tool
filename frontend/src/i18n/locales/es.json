@@ -287,6 +287,11 @@
       "integrationUnknownHelp": "Estado desconocido significa que Home Assistant devolvió un estado que esta versión no puede clasificar. Genera otro informe tras actualizar si persiste.",
       "integrationErrorsHelp": "Solo las integraciones con errores requieren actuar ahora. Ábrelas en Home Assistant para revisarlas y corregirlas.",
       "integrationClear": "No se detectaron estados de integración que requieran actuar.",
+      "integrationGroupExplanation": "A continuación solo se agrupan las integraciones que requieren atención. No se conservan nombres, dominios ni datos privados.",
+      "integrationGroupAction": "Abre Home Assistant → Configuración → Dispositivos y servicios para identificar y corregir las integraciones afectadas.",
+      "integrationGroupsUnavailable": "Las categorías de error no se conservaron en este informe anterior.",
+      "integrationCategories": { "setup_error": "Error de configuración", "migration_error": "Error de migración", "failed_unload": "Error de descarga", "authentication_error": "Error de autenticación", "other": "Otro error" },
+      "integrationErrorReasons": { "authentication_failed": "Autenticación fallida", "connection_failed": "Conexión fallida", "timed_out": "Tiempo de espera agotado", "dependency_unavailable": "Dependencia no disponible", "configuration_rejected": "Configuración rechazada", "unknown": "Fallo en arranque (sin detalle explícito en HA)" },
       "problems": "Problemas detectados",
       "groupingExplanation": "Los mensajes repetidos del mismo problema se agrupan para que el informe sea más fácil de leer.",
       "failure": "Qué ocurrió",
@@ -300,6 +305,7 @@
       "connectionExplanation": "Explicación de la conexión",
       "nextStep": "Siguiente paso",
       "analysisUnavailable": "La IA no pudo explicar este problema.",
+      "trace": { "action": "Ver traza de error redactada", "warning": "Los secretos y valores privados están ocultos, y este extracto está recortado.", "unavailable": "No hay disponible un extracto de traza seguro para la privacidad de este problema." },
       "component": "Componente",
       "technicalId": "ID técnico",
       "operatorNotes": "Notas del operador",
@@ -307,6 +313,8 @@
       "problemKinds": { "endpoint_resolution": { "title": "Problema de resolución del punto de conexión", "copy": "Home Assistant no pudo resolver el punto de conexión de Plex en los eventos registrados.", "action": "Revisa el DNS y la conectividad si el problema se repite o Plex no está disponible en Home Assistant." } },
       "trendValues": { "new": "nuevo", "increasing": "en aumento", "flat": "estable", "decreasing": "en descenso", "unknown": "no disponible" }
     },
+    "ignore": { "action": "Ignorar este problema", "title": "Ignorar este problema", "description": "Solo se ocultará esta huella técnica exacta en informes futuros. Esta tarjeta histórica seguirá visible.", "cancel": "Cancelar", "pending": "Ignorando problema…", "success": "Ignorado para informes futuros", "error": "No se pudo ignorar el problema. Vuelve a intentarlo." },
+    "telegram": { "action": "Enviar de nuevo por Telegram", "title": "Enviar de nuevo por Telegram", "description": "Telegram puede recibir un duplicado si un envío anterior llegó sin confirmación.", "cancel": "Cancelar", "pending": "Enviando por Telegram…", "error": "No se pudo completar el envío manual por Telegram. Comprueba el estado del intento antes de repetirlo.", "statusTitle": "Envío manual de Telegram", "none": "No se han solicitado envíos manuales por Telegram para este informe.", "status": { "pending": "Pendiente", "sent": "Enviado", "failed": "Fallido", "indeterminate": "Sin confirmación" } },
     "delete": {
       "action": "Eliminar informe",
       "title": "Eliminar informe",
