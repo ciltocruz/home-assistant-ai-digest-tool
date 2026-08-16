@@ -987,13 +987,12 @@ button, input, select, textarea { font: inherit; }
 }
 
 .dashboard-overview {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-xl);
+  background: transparent;
+  border: none;
   display: grid;
   gap: 1.25rem;
   min-width: 0;
-  padding: clamp(1rem, 2.5vw, 2rem);
+  padding: 0;
 }
 
 .dashboard-state,
@@ -1002,23 +1001,22 @@ button, input, select, textarea { font: inherit; }
 .dashboard-history-preview {
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   box-shadow: var(--shadow-sm);
   min-width: 0;
-  padding: clamp(1rem, 2vw, 1.5rem);
+  padding: 1.5rem;
 }
 
 .dashboard-title {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
+  background: transparent;
+  border: none;
   color: var(--text-primary);
-  font-size: clamp(1.6rem, 3vw, 2.25rem);
+  font-size: 1.5rem;
   font-weight: 800;
   grid-column: 1 / -1;
-  letter-spacing: -0.03em;
-  margin: 0;
-  padding: 1rem 1.25rem;
+  letter-spacing: -0.02em;
+  margin: 0 0 0.25rem 0;
+  padding: 0;
 }
 
 .dashboard-active-report > h2,
@@ -2292,8 +2290,28 @@ button.btn-legacy:disabled { opacity: 0.55; cursor: not-allowed; }
 }
 
 .field-error { color: #ff7875; font-weight: 600; font-size: 0.82rem; }
-.report-link { color: var(--ha-orange); font-weight: 700; text-underline-offset: 0.2em; }
-.report-link:hover { filter: brightness(1.15); }
+.report-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-medium);
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 0.85rem;
+  padding: 0.55rem 1.1rem;
+  border-radius: var(--radius-pill);
+  text-decoration: none;
+  transition: all var(--dur-fast);
+  margin-top: 0.75rem;
+  width: fit-content;
+}
+.report-link:hover {
+  background: rgba(255, 122, 0, 0.12);
+  border-color: var(--ha-orange);
+  color: var(--ha-orange);
+  transform: translateY(-1px);
+}
 
 /* Loading skeleton shimmer */
 @keyframes shimmer {
