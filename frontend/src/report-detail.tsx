@@ -201,7 +201,24 @@ function IntegrationSummary({ heading: Heading, status }: { heading: 'h2' | 'h3'
     {status.retrying > 0 ? <p className="integration-neutral-note">{t('report.batch.integrationRetryingHelp')}</p> : null}
     {status.unknown > 0 ? <p className="integration-neutral-note">{t('report.batch.integrationUnknownHelp')}</p> : null}
     {status.errors > 0 ? <p className="integration-attention">{t('report.batch.integrationErrorsHelp')}</p> : <p className="integration-clear">{t('report.batch.integrationClear')}</p>}
-    {status.errorGroups?.length ? <div className="integration-error-groups"><p>{t('report.batch.integrationGroupExplanation')}</p><ul>{status.errorGroups.map((group) => <li key={`${group.category}:${group.reason}`}><span>{t(`report.batch.integrationCategories.${group.category}`)}</span><span>{t(`report.batch.integrationErrorReasons.${group.reason}`)}</span><strong>{group.count}</strong></li>)}</ul><p>{t('report.batch.integrationGroupAction')}</p></div> : status.errors > 0 ? <p className="integration-neutral-note">{t('report.batch.integrationGroupsUnavailable')}</p> : null}
+    {status.issues?.length ? (
+      <div className="integration-issues-list">
+        <p className="integration-issues-title">Integraciones afectadas y su motivo:</p>
+        <ul>
+          {status.issues.map((issue, idx) => (
+            <li key={`${issue.domain}:${issue.state}:${idx}`} className="integration-issue-item">
+              <span className={`integration-issue-badge integration-issue-badge--${issue.state === 'setup_retry' ? 'retry' : 'error'}`}>{issue.state === 'setup_retry' ? 'Reintentando' : 'Error'}</span>
+              <strong translate="no" dir="ltr">{issue.title ? `${issue.title} (${issue.domain})` : issue.domain}</strong>
+              {issue.reason ? <span className="integration-issue-reason">— {issue.reason}</span> : null}
+            </li>
+          ))}
+        </ul>
+      </div>
+    ) : status.errorGroups?.length ? (
+      <div className="integration-error-groups"><p>{t('report.batch.integrationGroupExplanation')}</p><ul>{status.errorGroups.map((group) => <li key={`${group.category}:${group.reason}`}><span>{t(`report.batch.integrationCategories.${group.category}`)}</span><span>{t(`report.batch.integrationErrorReasons.${group.reason}`)}</span><strong>{group.count}</strong></li>)}</ul><p>{t('report.batch.integrationGroupAction')}</p></div>
+    ) : status.errors > 0 ? (
+      <p className="integration-neutral-note">{t('report.batch.integrationGroupsUnavailable')}</p>
+    ) : null}
   </section>;
 }
 

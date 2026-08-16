@@ -17,10 +17,10 @@ describe('SQLite migrations', () => {
       .map((row) => (row as { name: string }).name);
 
     expect(tables).toEqual(
-      expect.arrayContaining(['admin_accounts', 'auth_sessions', 'deliveries', 'digest_jobs', 'ignore_rules', 'login_attempts', 'notes', 'onboarding_state', 'reports', 'schedule_state', 'secrets', 'settings', 'v2_log_cursor', 'v2_reports', 'v2_report_delivery_attempts', 'v2_runs', 'v2_signatures'])
+      expect.arrayContaining(['admin_accounts', 'auth_sessions', 'deliveries', 'digest_jobs', 'ignore_rules', 'login_attempts', 'manual_telegram_sends', 'notes', 'onboarding_state', 'reports', 'schedule_state', 'secrets', 'settings', 'v2_log_cursor', 'v2_reports', 'v2_report_delivery_attempts', 'v2_runs', 'v2_signatures'])
     );
       expect(db.prepare('select version from schema_migrations').all().map((row) => ({ ...(row as { version: number }) }))).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }
     ]);
   });
 
@@ -44,7 +44,7 @@ describe('SQLite migrations', () => {
     runMigrations(db);
 
     expect(db.prepare('select version from schema_migrations').all().map((row) => ({ ...(row as { version: number }) }))).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }
     ]);
   });
 
@@ -264,6 +264,29 @@ describe('SQLite migrations', () => {
 
     runMigrations(db);
     expect(reportRows(db)).toEqual(firstRepair);
+  });
+
+  it('creates privacy-safe manual Telegram attempts with cleanup for legacy and v2 parents', async () => {
+    const db = await openTestDatabase();
+    runMigrations(db);
+    const columns = (db.prepare('pragma table_info(manual_telegram_sends)').all() as Array<{ name: string }>).map(({ name }) => name);
+
+    expect(columns).toEqual(['report_id', 'report_source', 'action_id', 'status', 'diagnostic_error_code', 'diagnostic_message_key', 'diagnostic_stage', 'requested_at', 'completed_at']);
+    expect(columns).not.toEqual(expect.arrayContaining(['target_ref', 'token', 'chat_id', 'message', 'response_body', 'request_url', 'ip']));
+
+    db.prepare('insert into reports(id, window_from, window_to, severity_counts_json, rendered_markdown, created_at) values (?, ?, ?, ?, ?, ?)')
+      .run('legacy-parent', '2026-08-14T11:00:00.000Z', '2026-08-14T12:00:00.000Z', '{}', '', '2026-08-14T12:00:00.000Z');
+    db.prepare('insert into v2_runs(id, slot_id, status, created_at) values (?, ?, ?, ?)').run('v2-parent-run', 'v2-parent-slot', 'reported', '2026-08-14T12:00:00.000Z');
+    db.prepare('insert into v2_reports(id, run_id, status, payload_json, created_at) values (?, ?, ?, ?, ?)').run('v2-report:v2-parent-run', 'v2-parent-run', 'reported', '{}', '2026-08-14T12:00:00.000Z');
+    db.prepare('insert into manual_telegram_sends(report_id, report_source, action_id, status, requested_at) values (?, ?, ?, ?, ?)')
+      .run('legacy-parent', 'legacy', '11111111-1111-4111-8111-111111111111', 'pending', '2026-08-14T12:01:00.000Z');
+    db.prepare('insert into manual_telegram_sends(report_id, report_source, action_id, status, requested_at) values (?, ?, ?, ?, ?)')
+      .run('v2-report:v2-parent-run', 'v2', '22222222-2222-4222-8222-222222222222', 'sent', '2026-08-14T12:01:00.000Z');
+
+    db.prepare('delete from reports where id = ?').run('legacy-parent');
+    db.prepare('delete from v2_reports where id = ?').run('v2-report:v2-parent-run');
+
+    expect(db.prepare('select count(*) as count from manual_telegram_sends').get()).toEqual({ count: 0 });
   });
 });
 

@@ -256,7 +256,7 @@ describe('ReportDetail', () => {
     }} />);
 
     expect(html).toContain(copy);
-    expect(html).toContain(action);
+    expect(html).toContain(action.replace('&', '&amp;'));
     expect(html).not.toContain(code);
   });
 
@@ -298,17 +298,19 @@ describe('ReportDetail', () => {
 
   test('uses honest localized outcome copy when no report was generated', () => {
     setLocale('en');
-    const html = renderToStaticMarkup(<ReportDetail report={{
+    const html = renderToStaticMarkup(<ReportDetail onManualTelegramSend={async () => undefined} report={{
       id: 'v2-run:failed-report',
       source: 'v2',
       summary: { id: 'v2-run:failed-report', window: { from: '2026-08-01T09:59:59.999Z', to: '2026-08-01T10:00:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-08-01T10:00:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'failed', warningCodes: ['AI_ANALYSIS_UNAVAILABLE'] },
       rendered: { format: 'markdown', body: '' },
-      presentation: { version: 2, mode: 'batch', status: 'failed', warnings: ['AI_ANALYSIS_UNAVAILABLE'], signatures: [], failure: 'The AI analysis was unavailable.' }
+      presentation: { version: 2, mode: 'batch', status: 'failed', warnings: ['AI_ANALYSIS_UNAVAILABLE'], signatures: [], failure: 'The AI analysis was unavailable.' },
+      manualTelegram: { configured: true, attempts: [] }
     }} />);
 
     expect(html).toContain('Report not generated');
     expect(html).toContain('AI analysis unavailable');
     expect(html).toContain('Not sent (skipped or not configured)');
+    expect(html).not.toContain('Send again via Telegram');
   });
 
   test.each([
@@ -421,5 +423,80 @@ describe('ReportDetail', () => {
     expect(html).toContain('Home Assistant no respondió a tiempo al consultar las integraciones.');
     expect(html).toContain('Comprueba que Home Assistant esté accesible y vuelve a generar el informe.');
     expect(html).not.toContain('socket_timeout');
+  });
+
+  test.each([
+    { locale: 'en' as const, category: 'Authentication error', reason: 'Authentication failed', action: 'Home Assistant → Settings → Devices & services' },
+    { locale: 'es' as const, category: 'Error de autenticación', reason: 'Autenticación fallida', action: 'Home Assistant → Configuración → Dispositivos y servicios' }
+  ])('shows only privacy-safe actionable integration groups in $locale', ({ locale, category, reason, action }) => {
+    setLocale(locale);
+    const sentinels = ['owner@example.test', '192.0.2.10', 'https://private.example.test', 'Bedroom private device', 'entry-private-id', 'arbitrary private reason'];
+    const html = renderToStaticMarkup(<ReportDetail report={{
+      id: 'safe-integration-groups', source: 'v2',
+      summary: { id: 'safe-integration-groups', window: { from: '2026-08-14T11:00:00.000Z', to: '2026-08-14T12:00:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-08-14T12:00:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'quiet' },
+      rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'quiet', warnings: [], integrationStatus: { available: true, total: 8, loaded: 2, notLoaded: 1, inProgress: 1, retrying: 1, errors: 2, unknown: 1, errorGroups: [
+        { category: 'authentication_error', reason: 'authentication_failed', count: 1 },
+        { category: 'setup_error', reason: 'unknown', count: 1 }
+      ] }, signatures: [] }
+    }} />);
+
+    expect(html).toContain(category);
+    expect(html).toContain(reason);
+    expect(html).toContain(action.replace('&', '&amp;'));
+    expect(html).toContain(locale === 'en' ? '<dt>Active</dt><dd>2</dd>' : '<dt>Activas</dt><dd>2</dd>');
+    for (const sentinel of sentinels) expect(html).not.toContain(sentinel);
+  });
+
+  test.each([
+    { locale: 'en' as const, expected: 'Error categories were not retained for this older report.' },
+    { locale: 'es' as const, expected: 'Las categorías de error no se conservaron en este informe anterior.' }
+  ])('explains missing historical integration groups in $locale', ({ locale, expected }) => {
+    setLocale(locale);
+    const html = renderToStaticMarkup(<ReportDetail report={{
+      id: 'old-integration-errors', source: 'v2',
+      summary: { id: 'old-integration-errors', window: { from: '2026-08-14T11:00:00.000Z', to: '2026-08-14T12:00:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-08-14T12:00:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'quiet' },
+      rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'quiet', warnings: [], integrationStatus: { available: true, total: 1, loaded: 0, notLoaded: 0, inProgress: 0, retrying: 0, errors: 1, unknown: 0 }, signatures: [] }
+    }} />);
+
+    expect(html).toContain(expected);
+  });
+
+  test('renders only a collapsed redacted trace for an AI-unexplained problem', () => {
+    setLocale('en');
+    const sentinels = ['owner@example.test', '192.0.2.10', 'private-token', 'sensor.private_room'];
+    const html = renderToStaticMarkup(<ReportDetail report={{
+      id: 'safe-trace-report', source: 'v2',
+      summary: { id: 'safe-trace-report', window: { from: '2026-08-14T11:00:00.000Z', to: '2026-08-14T12:00:00.000Z' }, severityCounts: { critical: 0, warning: 1, info: 0 }, createdAt: '2026-08-14T12:00:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'partial' },
+      rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'partial', warnings: ['AI_ANALYSIS_UNAVAILABLE'], signatures: [{
+        signature: 'safe-trace-signature', component: 'custom_components.hidden', level: 'ERROR', classification: 'new', trend: 'new', occurrences: 1,
+        safeExcerpt: { lines: ['Traceback (redacted)', 'File "custom_components/[hidden]/coordinator.py", line 42, in async_refresh', 'ConnectionError'], truncated: true, redacted: true }
+      }] }
+    }} />);
+
+    expect(html).toContain('<details class="report-trace-detail">');
+    expect(html).not.toContain('<details class="report-trace-detail" open');
+    expect(html).toContain('View redacted error trace');
+    expect(html).toContain('Secrets and private values are hidden, and this excerpt is shortened.');
+    expect(html).toContain('<pre><code dir="ltr" translate="no">Traceback (redacted)');
+    expect(html).toContain('custom_components/[hidden]/coordinator.py');
+    for (const sentinel of sentinels) expect(html).not.toContain(sentinel);
+    expect(html.toLowerCase()).not.toContain('raw trace');
+    expect(html.toLowerCase()).not.toContain('complete trace');
+  });
+
+  test('states that redacted trace evidence is unavailable for an old unexplained report', () => {
+    setLocale('en');
+    const html = renderToStaticMarkup(<ReportDetail report={{
+      id: 'old-no-trace', source: 'v2',
+      summary: { id: 'old-no-trace', window: { from: '2026-08-14T11:00:00.000Z', to: '2026-08-14T12:00:00.000Z' }, severityCounts: { critical: 0, warning: 1, info: 0 }, createdAt: '2026-08-14T12:00:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'partial' },
+      rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'partial', warnings: ['AI_ANALYSIS_PARTIAL'], signatures: [{ signature: 'old-signature', component: 'mqtt', level: 'ERROR', classification: 'new', trend: 'new', occurrences: 1 }] }
+    }} />);
+
+    expect(html).toContain('A privacy-safe trace excerpt is unavailable for this problem.');
+    expect(html).not.toContain('<pre>');
   });
 });

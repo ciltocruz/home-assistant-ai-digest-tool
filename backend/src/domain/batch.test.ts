@@ -20,6 +20,58 @@ describe('batch log domain', () => {
     expect(parseHomeAssistantLog([line], { includeWarnings: true })[0]).toMatchObject({ normalizedMessage: 'retry id=<number> request=<id>' });
   });
 
+  it('groups a multiline traceback under its timestamped header and keeps the original signature stable', () => {
+    const header = '2026-08-14 12:00:00 ERROR (MainThread) [custom_components.private_domain] Update failed for sensor.private_room';
+    const entries = parseHomeAssistantLog([
+      header,
+      'Traceback (most recent call last):',
+      '  File "/config/custom_components/private_domain/coordinator.py", line 42, in async_refresh',
+      '  File "/config/custom_components/private_domain/device_ABCD12345678.py", line 43, in leak_serial',
+      '  File "/config/custom_components/private_domain/coordinator.py", line 44, in handler_ABCD12345678',
+      '    payload = {"token": "private-token", "email": "owner@example.test"}',
+      'ConnectionError: failed to call https://192.0.2.10/api for device Kitchen Sensor serial ABCD12345678',
+      '2026-08-14 12:01:00 INFO (MainThread) [homeassistant.core] harmless boundary',
+      'unrelated continuation that must not be attached',
+      '2026-08-14 12:02:00 ERROR (MainThread) [custom_components.private_domain] Update failed for sensor.private_room'
+    ]);
+    const headerOnly = parseHomeAssistantLog([header]);
+
+    expect(entries).toHaveLength(2);
+    expect(entries[0]?.signature).toBe(headerOnly[0]?.signature);
+    expect(entries[0]).toMatchObject({
+      safeExcerpt: {
+        lines: [
+          'Traceback (redacted)',
+          'File "custom_components/[hidden]/coordinator.py", line 42, in async_refresh',
+          'ConnectionError'
+        ],
+        truncated: true,
+        redacted: true
+      }
+    });
+    const serialized = JSON.stringify(entries[0]?.safeExcerpt);
+    for (const privateValue of ['private_domain', 'private-token', 'owner@example.test', '192.0.2.10', 'Kitchen Sensor', 'ABCD12345678', 'sensor.private_room']) {
+      expect(serialized).not.toContain(privateValue);
+    }
+  });
+
+  it('bounds structurally safe trace excerpts by lines, characters, and UTF-8 bytes', () => {
+    const lines = ['2026-08-14 12:00:00 CRITICAL [homeassistant.components.private_domain] Failure'];
+    for (let index = 0; index < 20; index += 1) {
+      lines.push(`  File "/usr/src/homeassistant/homeassistant/components/private_domain/${'module'.repeat(120)}${index}.py", line ${index + 1}, in handler_${index}`);
+    }
+    lines.push('RuntimeError: private exception detail');
+
+    const excerpt = parseHomeAssistantLog(lines)[0]?.safeExcerpt;
+
+    expect(excerpt?.lines.length).toBeLessThanOrEqual(12);
+    expect(excerpt?.lines.every((line) => line.length <= 512)).toBe(true);
+    expect(Buffer.byteLength(excerpt?.lines.join('\n') ?? '', 'utf8')).toBeLessThanOrEqual(4096);
+    expect(excerpt).toMatchObject({ truncated: true, redacted: true });
+    expect(JSON.stringify(excerpt)).not.toContain('private_domain');
+    expect(JSON.stringify(excerpt)).not.toContain('private exception detail');
+  });
+
   it('learns old entries silently and neutralizes trends without an equivalent prior window', () => {
     const entries = parseHomeAssistantLog([
       '2026-07-01 12:00:00 ERROR (MainThread) [ha.old] old issue id=1',

@@ -484,10 +484,17 @@ describe('BatchDeleteReports DTOs', () => {
 
   it('rejects empty or invalid batch delete request', () => {
     expect(() => BatchDeleteReportsRequestSchema.parse({ ids: [] })).toThrow();
+    expect(() => BatchDeleteReportsRequestSchema.parse({ ids: [''] })).toThrow();
   });
 
   it('validates batch delete response', () => {
     const valid = BatchDeleteReportsResponseSchema.parse({ deletedCount: 2 });
     expect(valid.deletedCount).toBe(2);
   });
+
+  it('rejects invalid batch delete response with negative or non-integer deletedCount', () => {
+    expect(() => BatchDeleteReportsResponseSchema.parse({ deletedCount: -1 })).toThrow();
+    expect(() => BatchDeleteReportsResponseSchema.parse({ deletedCount: 1.5 })).toThrow();
+  });
 });
+

@@ -103,19 +103,22 @@ export class BatchReportRun {
 
     const language = await this.dependencies.language?.() ?? 'en';
     const analysisStarted = this.time();
-    const analyses = await Promise.all(reportedSignatures.map(async (signature) => {
+    const analyses: Array<{ signature: BatchSignature; analysis: SignatureAnalysis | null; error?: unknown }> = [];
+    for (const signature of reportedSignatures) {
       try {
-        return { signature, analysis: await this.dependencies.provider.analyze(this.contextFor(signature), new AbortController().signal, language), error: undefined };
+        const analysis = await this.dependencies.provider.analyze(this.contextFor(signature), new AbortController().signal, language);
+        analyses.push({ signature, analysis, error: undefined });
       } catch (error) {
-        return { signature, analysis: null, error };
+        analyses.push({ signature, analysis: null, error });
       }
-    }));
+    }
     const findings = analyses.flatMap(({ signature, analysis }) => analysis ? [{ signature: signature.signature, analysis }] : []);
     this.report({ event: 'report_analysis_completed', analyzedCount: findings.length, failedCount: analyses.length - findings.length, durationMs: this.duration(analysisStarted) });
     if (findings.length === 0) {
-      const errorMessage = firstProviderFailureMessage(analyses.map(({ error }) => error));
-      await this.dependencies.persistence.fail({ request, code: 'AI_ANALYSIS_UNAVAILABLE', errorMessage });
-      return { status: 'failed', code: 'AI_ANALYSIS_UNAVAILABLE', errorMessage };
+      const warnings = ['AI_ANALYSIS_UNAVAILABLE'];
+      const reportId = await this.commit({ request, cursor: delta.cursor, signatures: plan, reportedSignatures, notesBySignature, report: { status: 'partial', deliveryStatus: 'skipped', findings: [], warnings, integrationStatus } });
+      this.report({ event: 'report_commit_completed', reportId, status: 'partial', signatureCount: reportedSignatures.length });
+      return { status: 'partial', warnings, reportId };
     }
     const warnings = findings.length === analyses.length ? [] : ['AI_ANALYSIS_PARTIAL'];
     const status = warnings.length ? 'partial' : 'reported';
@@ -200,7 +203,9 @@ export class BatchReportRun {
 
 function isIgnored(signature: BatchSignature, rules: IgnoreRuleDto[]): boolean {
   const haystack = `${signature.signature} ${signature.component} ${signature.normalizedMessage}`.toLowerCase();
-  return rules.some((rule) => haystack.includes(rule.match.toLowerCase()));
+  return rules.some((rule) => rule.type === 'signature'
+    ? signature.signature === rule.match
+    : haystack.includes(rule.match.toLowerCase()));
 }
 
 function notesForSignatures(signatures: BatchSignature[], notes: NoteDto[]): Record<string, NoteDto[]> {
@@ -212,11 +217,6 @@ function notesForSignatures(signatures: BatchSignature[], notes: NoteDto[]): Rec
 
 function redact(value: string): string {
   return redactProviderError(value);
-}
-
-function firstProviderFailureMessage(errors: unknown[]): string {
-  const detail = errors.find((error): error is Error => error instanceof Error && error.message.length > 0)?.message;
-  return redactProviderError(detail ?? 'The AI provider failed without an error message.');
 }
 
 function deliveryDiagnosticFor(result: DeliveryResult, recordedAt: string): DeliveryDiagnostic | undefined {

@@ -1,6 +1,6 @@
 import fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import {
-  DigestHistoryResponseSchema, DigestWindowSchema, EditableSettingsDtoSchema, IgnoreRuleCreateSchema, NoteCreateSchema, NotifierTestRequestSchema, OnboardingProgressSchema, OnboardingStepCommandSchema, SettingsUpdateCommandSchema,
+  DigestHistoryResponseSchema, DigestWindowSchema, EditableSettingsDtoSchema, ExactProblemIgnoreResultSchema, IgnoreRuleCreateSchema, ManualTelegramSendRequestSchema, ManualTelegramSendResultSchema, NoteCreateSchema, NotifierTestRequestSchema, OnboardingProgressSchema, OnboardingStepCommandSchema, SettingsUpdateCommandSchema,
   RunDigestRequestSchema, SendDigestRequestSchema,
   type DeliveryResult, type DigestDetail, type DigestHistoryResponse, type IgnoreRuleCreate, type IgnoreRuleDto, type MaskedSettings,
   type DigestJobStatus, type EditableSettingsDto, type NoteDto, type NotifierTestRequest, type OnboardingProgress, type OnboardingStepCommand, type RunDigestRequest, type RunDigestResponse, type SettingsUpdateCommand,
@@ -24,6 +24,7 @@ export type BackendApiServices = {
   reports: { save?: ReportStore['save']; list(): Promise<DigestHistoryResponse>; get(id: string): Promise<DigestDetail | null>; remove(id: string): Promise<boolean> };
   notes: Pick<NoteStore, 'add' | 'listWindow'>;
   ignores: Pick<IgnoreRuleStore, 'add' | 'remove' | 'listActive'>;
+  manualTelegram?: { send(reportId: string, actionId: string): Promise<import('@ha-digest/shared').ManualTelegramSendResult> };
   notifiers: {
     test(input: NotifierTestRequest): Promise<TestResult>;
     send(input: SendDigestRequest): Promise<DeliveryResult>;
@@ -227,6 +228,34 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
   app.delete('/api/digests/:id', async (request, reply) => {
     const removed = await options.services.reports.remove(String((request.params as { id: string }).id));
     return removed ? reply.code(204).send() : sendError(reply, 404, 'NOT_FOUND', 'Digest not found.', request.id);
+  });
+  app.post('/api/digests/:reportId/problems/:signature/ignore', async (request, reply) => {
+    if (Object.keys(asRecord(request.body)).length > 0) return sendError(reply, 400, 'VALIDATION_FAILED', 'This action does not accept a match value.', request.id);
+    const { reportId, signature } = request.params as { reportId: string; signature: string };
+    const detail = await options.services.reports.get(reportId);
+    if (!detail) return sendError(reply, 404, 'NOT_FOUND', 'Digest not found.', request.id);
+    const owned = detail.presentation?.mode === 'batch' && detail.presentation.status !== 'failed'
+      ? detail.presentation.signatures.find((item) => item.signature === signature)
+      : undefined;
+    if (!owned) return sendError(reply, 404, 'PROBLEM_NOT_FOUND', 'The technical fingerprint does not belong to this report.', request.id);
+    const existing = (await options.services.ignores.listActive(now())).find((rule) => rule.type === 'signature' && rule.match === signature);
+    if (existing) return ExactProblemIgnoreResultSchema.parse({ rule: existing, alreadyIgnored: true });
+    const rule = await options.services.ignores.add({ match: signature, type: 'signature' });
+    return reply.code(201).send(ExactProblemIgnoreResultSchema.parse({ rule, alreadyIgnored: false }));
+  });
+  app.post('/api/digests/:reportId/manual-telegram-sends', async (request, reply) => {
+    const input = parseRequest(ManualTelegramSendRequestSchema, request.body, reply, request.id);
+    if (!input.ok) return input.response;
+    if (!options.services.manualTelegram) return sendError(reply, 503, 'NOTIFIER_UNAVAILABLE', 'Manual Telegram sending is unavailable.', request.id);
+    try {
+      const result = ManualTelegramSendResultSchema.parse(await options.services.manualTelegram.send((request.params as { reportId: string }).reportId, input.value.actionId));
+      return reply.code(result.alreadyRequested ? 200 : 201).send(result);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'REPORT_NOT_FOUND') return sendError(reply, 404, 'NOT_FOUND', 'Digest not found.', request.id);
+      if (error instanceof Error && error.message === 'REPORT_NOT_SENDABLE') return sendError(reply, 409, 'REPORT_NOT_SENDABLE', 'This report cannot be sent.', request.id);
+      if (error instanceof Error && error.message === 'MANUAL_TELEGRAM_SEND_IN_FLIGHT') return sendError(reply, 409, 'SEND_IN_FLIGHT', 'A manual Telegram send is already in progress for this report.', request.id);
+      throw error;
+    }
   });
 
   app.post('/api/notes', async (request, reply): Promise<NoteDto | FastifyReply> => {

@@ -1,6 +1,7 @@
 export function redactProviderError(value: string, apiKey?: string): string {
   const redacted = apiKey ? value.split(apiKey).join('[REDACTED]') : value;
   return redacted
+    .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[REDACTED]')
     .replace(/\bBearer\s+[^\s'"<>,);]+/gi, 'Bearer [REDACTED]')
     .replace(/https?:\/\/[^\s'"<>]+/gi, redactUrl)
     .replace(QUERY_SECRET_PATTERN, '$1[REDACTED]')

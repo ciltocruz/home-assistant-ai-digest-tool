@@ -1,5 +1,6 @@
-import { IsoDateTimeSchema, projectIntegrationStatus, type DigestDetail, type ReportPresentationItem, type ReportPresentationV1 } from '@ha-digest/shared';
+import { IsoDateTimeSchema, ManualTelegramSendAttemptSchema, projectIntegrationStatus, type DigestDetail, type ReportPresentationItem, type ReportPresentationV1 } from '@ha-digest/shared';
 import { redactProviderError } from '../domain/safe-error.js';
+import { sanitizeTraceExcerpt } from '../domain/safe-trace.js';
 
 type ReportSource = Pick<DigestDetail, 'id' | 'summary' | 'rendered'> & { source?: 'legacy' | 'v2' };
 type StructuredSection = 'attention' | 'observations' | 'recommendations' | 'evidence';
@@ -46,11 +47,13 @@ export function projectLegacyReportPresentation(report: ReportSource): ReportPre
 
 export function redactReportDetail(report: DigestDetail): DigestDetail {
   const rendered = { ...report.rendered, body: redactProviderError(report.rendered.body) };
+  const manualTelegram = safeManualTelegram(report.manualTelegram);
   const base = {
     id: report.id,
     ...(report.source === 'legacy' || report.source === 'v2' ? { source: report.source } : {}),
     summary: safeSummary(report.summary),
-    rendered
+    rendered,
+    ...(manualTelegram ? { manualTelegram } : {})
   };
   if (!report.presentation) {
     const presentation = report.source === 'legacy' ? projectLegacyReportPresentation({ ...report, rendered }) : projectReportPresentation({ ...report, rendered });
@@ -169,6 +172,8 @@ function safeBatchSignatures(value: unknown): Array<{
   problemKind?: 'endpoint_resolution';
   occurrences: number;
   analysis?: { summary: string; recommendation: string };
+  safeExcerpt?: { lines: string[]; truncated: boolean; redacted: true };
+  ignoredForFuture?: boolean;
   notes?: Array<{ id: string; text: string; occurredAt: string; createdAt: string; tags: string[] }>;
 }> {
   if (!Array.isArray(value)) return [];
@@ -181,8 +186,24 @@ function safeBatchSignatures(value: unknown): Array<{
       ? { summary: redactProviderError(analysis.summary), recommendation: redactProviderError(analysis.recommendation) }
       : undefined;
      const notes = safeNotes(signature.notes);
-    return [{ signature: signature.signature, component: signature.component, level: signature.level, classification: signature.classification, trend: signature.trend, occurrences: signature.occurrences, ...(signature.problemKind === 'endpoint_resolution' ? { problemKind: signature.problemKind } : {}), ...(safeAnalysis ? { analysis: safeAnalysis } : {}), ...(notes ? { notes } : {}) }];
+     const safeExcerpt = safeTraceExcerpt(signature.safeExcerpt);
+    return [{ signature: signature.signature, component: signature.component, level: signature.level, classification: signature.classification, trend: signature.trend, occurrences: signature.occurrences, ...(signature.problemKind === 'endpoint_resolution' ? { problemKind: signature.problemKind } : {}), ...(safeAnalysis ? { analysis: safeAnalysis } : safeExcerpt ? { safeExcerpt } : {}), ...(signature.ignoredForFuture === true ? { ignoredForFuture: true } : {}), ...(notes ? { notes } : {}) }];
   });
+}
+
+function safeTraceExcerpt(value: unknown): { lines: string[]; truncated: boolean; redacted: true } | undefined {
+  return sanitizeTraceExcerpt(value);
+}
+
+function safeManualTelegram(value: unknown): DigestDetail['manualTelegram'] | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const manual = value as Record<string, unknown>;
+  if (typeof manual.configured !== 'boolean' || !Array.isArray(manual.attempts)) return undefined;
+  const attempts = manual.attempts.flatMap((attempt) => {
+    const parsed = ManualTelegramSendAttemptSchema.safeParse(attempt);
+    return parsed.success ? [parsed.data] : [];
+  }).slice(0, 10);
+  return { configured: manual.configured, attempts };
 }
 
 function safeNotes(value: unknown): Array<{ id: string; text: string; occurredAt: string; createdAt: string; tags: string[] }> | undefined {

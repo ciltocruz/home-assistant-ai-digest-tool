@@ -287,6 +287,11 @@
       "integrationUnknownHelp": "Unknown means Home Assistant returned a state this version cannot classify. Generate another report after updating if it persists.",
       "integrationErrorsHelp": "Only integrations with errors need action now. Open Home Assistant to review and repair them.",
       "integrationClear": "No integration states requiring action were detected.",
+      "integrationGroupExplanation": "Only integrations requiring attention are grouped below. Names, domains, and private details are not retained.",
+      "integrationGroupAction": "Open Home Assistant → Settings → Devices & services to identify and repair the affected integrations.",
+      "integrationGroupsUnavailable": "Error categories were not retained for this older report.",
+      "integrationCategories": { "setup_error": "Setup error", "migration_error": "Migration error", "failed_unload": "Unload error", "authentication_error": "Authentication error", "other": "Other error" },
+      "integrationErrorReasons": { "authentication_failed": "Authentication failed", "connection_failed": "Connection failed", "timed_out": "Timed out", "dependency_unavailable": "Dependency unavailable", "configuration_rejected": "Configuration rejected", "unknown": "Reason unavailable" },
       "problems": "Detected problems",
       "groupingExplanation": "Repeated messages for the same problem are grouped together so the report is easier to read.",
       "failure": "What happened",
@@ -300,6 +305,7 @@
       "connectionExplanation": "Connection explanation",
       "nextStep": "Next step",
       "analysisUnavailable": "AI could not explain this problem.",
+      "trace": { "action": "View redacted error trace", "warning": "Secrets and private values are hidden, and this excerpt is shortened.", "unavailable": "A privacy-safe trace excerpt is unavailable for this problem." },
       "component": "Component",
       "technicalId": "Technical ID",
       "operatorNotes": "Operator notes",
@@ -307,6 +313,8 @@
       "problemKinds": { "endpoint_resolution": { "title": "Endpoint resolution problem", "copy": "Home Assistant could not resolve the Plex endpoint in the recorded events.", "action": "Review DNS and connectivity if the problem repeats or Plex is unavailable in Home Assistant." } },
       "trendValues": { "new": "new", "increasing": "increasing", "flat": "stable", "decreasing": "decreasing", "unknown": "not available" }
     },
+    "ignore": { "action": "Ignore this problem", "title": "Ignore this problem", "description": "Only this exact technical fingerprint will be hidden in future reports. This historical card will remain visible.", "cancel": "Cancel", "pending": "Ignoring problem…", "success": "Ignored for future reports", "error": "The problem could not be ignored. Try again." },
+    "telegram": { "action": "Send again via Telegram", "title": "Send again via Telegram", "description": "Telegram may receive a duplicate if an earlier send arrived without confirmation.", "cancel": "Cancel", "pending": "Sending via Telegram…", "error": "The manual Telegram send could not be completed. Check the attempt status before trying again.", "statusTitle": "Manual Telegram send", "none": "No manual Telegram sends have been requested for this report.", "status": { "pending": "Pending", "sent": "Sent", "failed": "Failed", "indeterminate": "Confirmation unavailable" } },
     "delete": {
       "action": "Delete Report",
       "title": "Delete Report",

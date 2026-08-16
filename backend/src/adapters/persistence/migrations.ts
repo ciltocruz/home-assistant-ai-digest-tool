@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-const MIGRATION_VERSION = 11;
+const MIGRATION_VERSION = 12;
 
 export function runMigrations(db: DatabaseSync): void {
   db.exec('pragma foreign_keys = on');
@@ -129,6 +129,7 @@ function applyMigrations(db: DatabaseSync): void {
   repairOrphanedCompletedV2Jobs(db);
   repairLegacyReportWindows(db);
   addAuthenticationTables(db);
+  addManualTelegramSendTable(db);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(1);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(2);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(3);
@@ -139,7 +140,8 @@ function applyMigrations(db: DatabaseSync): void {
    db.prepare('insert or ignore into schema_migrations(version) values (?)').run(8);
     db.prepare('insert or ignore into schema_migrations(version) values (?)').run(9);
     db.prepare('insert or ignore into schema_migrations(version) values (?)').run(10);
-    db.prepare('insert or ignore into schema_migrations(version) values (?)').run(MIGRATION_VERSION);
+     db.prepare('insert or ignore into schema_migrations(version) values (?)').run(11);
+     db.prepare('insert or ignore into schema_migrations(version) values (?)').run(MIGRATION_VERSION);
   db.prepare(
     `insert or ignore into onboarding_state(singleton, current_step, completed_steps_json, draft_json, secret_refs_json, secret_metadata_json, completed, updated_at)
      select 1,
@@ -213,6 +215,31 @@ function addAuthenticationTables(db: DatabaseSync): void {
       attempted_at text not null
     );
     create index if not exists idx_login_attempts_subject on login_attempts(subject, attempted_at);
+  `);
+}
+
+function addManualTelegramSendTable(db: DatabaseSync): void {
+  db.exec(`
+    create table if not exists manual_telegram_sends (
+      report_id text not null,
+      report_source text not null check (report_source in ('legacy', 'v2')),
+      action_id text not null,
+      status text not null check (status in ('pending', 'sent', 'failed', 'indeterminate')),
+      diagnostic_error_code text,
+      diagnostic_message_key text,
+      diagnostic_stage text,
+      requested_at text not null,
+      completed_at text,
+      primary key(report_id, action_id)
+    );
+    create unique index if not exists idx_manual_telegram_one_pending
+      on manual_telegram_sends(report_id) where status = 'pending';
+    create index if not exists idx_manual_telegram_report_requested
+      on manual_telegram_sends(report_id, requested_at desc);
+    create trigger if not exists trg_manual_telegram_delete_legacy
+      after delete on reports begin delete from manual_telegram_sends where report_source = 'legacy' and report_id = old.id; end;
+    create trigger if not exists trg_manual_telegram_delete_v2
+      after delete on v2_reports begin delete from manual_telegram_sends where report_source = 'v2' and report_id = old.id; end;
   `);
 }
 

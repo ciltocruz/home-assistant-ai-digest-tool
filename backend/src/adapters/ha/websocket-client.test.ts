@@ -31,7 +31,12 @@ describe('HomeAssistantWebSocketClient', () => {
       inProgress: 2,
       retrying: 1,
       errors: 3,
-      unknown: 2
+      unknown: 2,
+      errorGroups: [
+        { category: 'authentication_error', reason: 'authentication_failed', count: 1 },
+        { category: 'migration_error', reason: 'unknown', count: 1 },
+        { category: 'failed_unload', reason: 'unknown', count: 1 }
+      ]
     });
     for (const sentinel of ['owner@example.test', '192.0.2.10', 'https://private.example.test', 'Bedroom private device', 'private_email_service']) {
       expect(JSON.stringify(result)).not.toContain(sentinel);

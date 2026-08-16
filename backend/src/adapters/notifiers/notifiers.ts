@@ -24,6 +24,7 @@ type TelegramNotifierOptions = {
 };
 
 export type TelegramSummary = { findings: Array<{ signature: string; analysis: { summary: string; recommendation: string } }>; reportUrl?: string; language?: 'en' | 'es' };
+export type TelegramManualSummary = { critical: number; warnings: number; detectedProblems: number; reportUrl?: string; language: 'en' | 'es' };
 
 type MarkdownNotifierOptions = {
   write: (entry: { label: string; body: string }) => Promise<string>;
@@ -61,6 +62,15 @@ export class TelegramNotifier implements Notifier {
     return this.postMessage(target, spanish
       ? `*Resumen de Home Assistant*\n${count} incidencia${count === 1 ? '' : 's'} destacada${count === 1 ? '' : 's'}\\. ${first}${link}`
       : `*Home Assistant digest*\n${count} noteworthy finding${count === 1 ? '' : 's'}\\. ${first}${link}`, true);
+  }
+
+  async sendManualSummary(summary: TelegramManualSummary, target: ResolvedTargetConfig): Promise<DeliveryResult> {
+    const spanish = summary.language === 'es';
+    const link = summary.reportUrl ? `\n[${spanish ? 'Abrir informe' : 'Open report'}](${escapeTelegramUrl(summary.reportUrl)})` : '';
+    const text = spanish
+      ? `*Informe de Home Assistant*\n${summary.detectedProblems} problemas detectados: ${summary.critical} críticos, ${summary.warnings} avisos\\.${link}`
+      : `*Home Assistant report*\n${summary.detectedProblems} detected problems: ${summary.critical} critical, ${summary.warnings} warnings\\.${link}`;
+    return this.postMessage(target, text, true);
   }
 
   private async postMessage(target: ResolvedTargetConfig, text: string, isMarkdown = false): Promise<DeliveryResult> {

@@ -87,6 +87,65 @@ describe('SQLiteV2Stores', () => {
     expect(JSON.stringify(detail)).toContain('API key rotation documented');
   });
 
+  it('persists only occurrence counts and safe excerpts for AI-unexplained signatures', async () => {
+    const db = await openTestDatabase();
+    runMigrations(db);
+    const stores = new SQLiteV2Stores(db, 10, () => '2026-08-14T12:30:00.000Z');
+    const privateValues = ['owner@example.test', '192.0.2.10', 'private-token', 'sensor.private_room'];
+    const entries = parseHomeAssistantLog([
+      '2026-08-14 12:00:00 ERROR [custom_components.private_domain] Update failed for sensor.private_room',
+      'Traceback (most recent call last):',
+      '  File "/config/custom_components/private_domain/coordinator.py", line 42, in async_refresh',
+      '    token = "private-token"',
+      'ConnectionError: owner@example.test could not reach 192.0.2.10'
+    ]);
+    const plan = await stores.classifyAndStage(entries, '2026-08-14T12:30:00.000Z');
+
+    const reportId = await stores.commit({
+      request: { runId: 'safe-trace-run', slotId: 'safe-trace-slot' },
+      cursor: { dev: 1, ino: 2, size: 100, offset: 100 },
+      signatures: plan,
+      reportedSignatures: plan.signatures,
+      report: { status: 'partial', findings: [], warnings: ['AI_ANALYSIS_UNAVAILABLE'], deliveryStatus: 'skipped' }
+    });
+
+    const row = db.prepare('select payload_json from v2_reports where id = ?').get(reportId) as { payload_json: string };
+    const detail = DigestDetailSchema.parse(await stores.getReport(reportId));
+    expect(row.payload_json).not.toContain('message');
+    expect(row.payload_json).not.toContain('normalizedMessage');
+    expect(row.payload_json).not.toContain('occurrences":[{');
+    expect(row.payload_json).toContain('occurrenceCount');
+    expect(db.prepare('select status from v2_report_delivery_attempts where report_id = ?').get(reportId)).toEqual({ status: 'skipped' });
+    expect(detail.presentation).toMatchObject({ signatures: [{ occurrences: 1, safeExcerpt: { lines: ['Traceback (redacted)', 'File "custom_components/[hidden]/coordinator.py", line 42, in async_refresh', 'ConnectionError'], redacted: true } }] });
+    for (const value of privateValues) {
+      expect(row.payload_json).not.toContain(value);
+      expect(JSON.stringify(detail)).not.toContain(value);
+    }
+  });
+
+  it('never reconstructs a safe excerpt from raw fields in an older persisted report', async () => {
+    const db = await openTestDatabase();
+    runMigrations(db);
+    const stores = new SQLiteV2Stores(db);
+    db.prepare('insert into v2_runs(id, slot_id, status, error_code, created_at) values (?, ?, ?, ?, ?)')
+      .run('old-raw-trace-run', 'old-raw-trace-slot', 'partial', null, '2026-08-14T12:30:00.000Z');
+    db.prepare('insert into v2_reports(id, run_id, status, payload_json, created_at) values (?, ?, ?, ?, ?)')
+      .run('v2-report:old-raw-trace-run', 'old-raw-trace-run', 'partial', JSON.stringify({
+        report: { status: 'partial', findings: [], warnings: ['AI_ANALYSIS_PARTIAL'] },
+        signatures: [{
+          signature: 'old-raw-signature', component: 'custom_components.private_domain', level: 'ERROR', classification: 'new', trend: 'new',
+          normalizedMessage: 'owner@example.test at 192.0.2.10',
+          occurrences: [{ at: '2026-08-14T12:00:00.000Z', level: 'ERROR', component: 'custom_components.private_domain', message: 'token=private-token', normalizedMessage: 'token=private-token', signature: 'old-raw-signature' }]
+        }]
+      }), '2026-08-14T12:30:00.000Z');
+
+    const detail = DigestDetailSchema.parse(await stores.getReport('v2-report:old-raw-trace-run'));
+
+    expect(detail.presentation).toMatchObject({ signatures: [{ signature: 'old-raw-signature', occurrences: 1 }] });
+    expect(JSON.stringify(detail)).not.toMatch(/owner@example|192\.0\.2\.10|private-token|normalizedMessage|message/);
+    expect((detail.presentation as { signatures: Array<{ safeExcerpt?: unknown }> }).signatures[0]?.safeExcerpt).toBeUndefined();
+  });
+
   it('strictly persists and presents only safe v2 finding fields with the configured key', async () => {
     const db = await openTestDatabase();
     runMigrations(db);
@@ -344,6 +403,37 @@ describe('SQLiteV2Stores', () => {
     expect(serialized).not.toContain('providerControlled');
     expect(serialized).not.toContain('providerWarning');
     expect(serialized).not.toContain('opaque');
+  });
+
+  it('persists only bounded integration error groups and drops private source fields', async () => {
+    const db = await openTestDatabase();
+    runMigrations(db);
+    const stores = new SQLiteV2Stores(db, 10, () => '2026-08-14T12:30:00.000Z');
+    const entries = parseHomeAssistantLog(['2026-08-14 12:00:00 ERROR [homeassistant.components.demo] Failure']);
+    const plan = await stores.classifyAndStage(entries, '2026-08-14T12:30:00.000Z');
+    const privateValues = ['owner@example.test', '192.0.2.10', 'https://private.example.test', 'entry-private-id', 'arbitrary private reason', 'private_domain'];
+
+    const reportId = await stores.commit({
+      request: { runId: 'safe-integration-groups-run', slotId: 'safe-integration-groups-slot' }, cursor: { dev: 1, ino: 2, size: 1, offset: 1 }, signatures: plan,
+      report: { status: 'reported', findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [], integrationStatus: { available: true, integrations: [
+        { state: 'setup_error', title: privateValues[0], domain: privateValues[5], entry_id: privateValues[3], reason: 'invalid_auth' },
+        { state: 'setup_error', title: privateValues[1], reason: privateValues[4] },
+        { state: 'migration_error', title: privateValues[2], reason: 'timeout' }
+      ] } as never }
+    });
+
+    const row = db.prepare('select payload_json from v2_reports where id = ?').get(reportId) as { payload_json: string };
+    const detail = await stores.getReport(reportId);
+    expect(JSON.parse(row.payload_json)).toMatchObject({ report: { integrationStatus: { errors: 3, errorGroups: [
+      { category: 'authentication_error', reason: 'authentication_failed', count: 1 },
+      { category: 'setup_error', reason: 'unknown', count: 1 },
+      { category: 'migration_error', reason: 'timed_out', count: 1 }
+    ] } } });
+    expect(detail?.presentation).toMatchObject({ integrationStatus: { errors: 3, errorGroups: expect.any(Array) } });
+    for (const value of privateValues) {
+      expect(row.payload_json).not.toContain(value);
+      expect(JSON.stringify(detail)).not.toContain(value);
+    }
   });
 
   it('does not auto-send an old pending v2 report whose delivery attempt is unknown', async () => {
@@ -807,6 +897,27 @@ describe('SQLiteV2Stores', () => {
     expect(db.prepare('select count(*) as count from notes').get()).toEqual({ count: 1 });
     expect(db.prepare('select count(*) as count from digest_jobs').get()).toEqual({ count: 1 });
     expect(db.prepare('select count(*) as count from v2_runs').get()).toEqual({ count: 2 });
+  });
+
+  it('adds exact signature ignores idempotently and projects current ignore state without changing report history', async () => {
+    const db = await openTestDatabase();
+    runMigrations(db);
+    const stores = new SQLiteV2Stores(db, 10, () => '2026-08-14T12:30:00.000Z');
+    const entries = parseHomeAssistantLog(['2026-08-14 12:00:00 ERROR [homeassistant.components.demo] Failure']);
+    const plan = await stores.classifyAndStage(entries, '2026-08-14T12:30:00.000Z');
+    const reportId = await stores.commit({
+      request: { runId: 'exact-ignore-store-run', slotId: 'exact-ignore-store-slot' }, cursor: { dev: 1, ino: 2, size: 1, offset: 1 }, signatures: plan,
+      report: { status: 'reported', findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [] }
+    });
+
+    const first = await stores.addIgnore({ match: entries[0]!.signature, type: 'signature' });
+    const duplicate = await stores.addIgnore({ match: entries[0]!.signature, type: 'signature' });
+    const detail = DigestDetailSchema.parse(await stores.getReport(reportId));
+
+    expect(duplicate).toEqual(first);
+    expect(db.prepare("select count(*) as count from ignore_rules where type = 'signature'").get()).toEqual({ count: 1 });
+    expect(detail.presentation).toMatchObject({ signatures: [{ signature: entries[0]!.signature, ignoredForFuture: true }] });
+    expect(db.prepare('select payload_json from v2_reports where id = ?').get(reportId)).not.toHaveProperty('ignoredForFuture');
   });
 });
 

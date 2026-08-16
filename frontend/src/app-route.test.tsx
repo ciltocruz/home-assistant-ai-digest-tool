@@ -209,6 +209,63 @@ describe('App report route', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('No se pudo eliminar el informe. Sigue disponible; vuelve a intentarlo.');
   });
 
+  test('confirms an exact future ignore while keeping the historical problem card visible', async () => {
+    history.pushState({}, '', '/reports/v2-report-ignore');
+    let ignored = false;
+    const ignoreReportProblem = vi.fn(async () => { ignored = true; return { rule: { id: 'rule-1', match: 'signature-one', type: 'signature' as const, createdAt: '2026-08-14T12:00:00.000Z' }, alreadyIgnored: false }; });
+    const report = () => ({
+      id: 'v2-report-ignore', source: 'v2' as const,
+      summary: { id: 'v2-report-ignore', window: { from: '2026-08-14T11:00:00.000Z', to: '2026-08-14T12:00:00.000Z' }, severityCounts: { critical: 0, warning: 1, info: 0 }, createdAt: '2026-08-14T12:00:00.000Z', deliveryStatus: 'skipped' as const, source: 'v2' as const, runStatus: 'reported' as const },
+      rendered: { format: 'markdown' as const, body: '' },
+      presentation: { version: 2 as const, mode: 'batch' as const, status: 'reported' as const, warnings: [], signatures: [{ signature: 'signature-one', component: 'homeassistant.components.demo', level: 'ERROR' as const, classification: 'new' as const, trend: 'new' as const, occurrences: 1, ...(ignored ? { ignoredForFuture: true } : {}) }] }
+    });
+    const container = document.createElement('div'); document.body.append(container); const root = createRoot(container); mountedRoots.push(root);
+    await act(async () => { root.render(<App api={{ getOnboarding: async () => ({ currentStep: 'first_report', completedSteps: [], draft: {}, secretMetadata: {}, completed: true }), getDigest: async () => report(), ignoreReportProblem }} />); await Promise.resolve(); });
+
+    const action = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Ignorar este problema');
+    await act(async () => action?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('Solo se ocultará esta huella técnica exacta en informes futuros. Esta tarjeta histórica seguirá visible.');
+    const confirm = Array.from(container.querySelector('[role="dialog"]')?.querySelectorAll('button') ?? []).find((button) => button.textContent === 'Ignorar este problema');
+    await act(async () => { confirm?.dispatchEvent(new MouseEvent('click', { bubbles: true })); await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(ignoreReportProblem).toHaveBeenCalledWith('v2-report-ignore', 'signature-one');
+    expect(container.textContent).toContain('Ignorado para informes futuros');
+    expect(container.textContent).toContain('Problema nuevo');
+  });
+
+  test('authorizes a fresh manual Telegram send and refreshes separate attempt status', async () => {
+    history.pushState({}, '', '/reports/v2-report-send');
+    let attempts: Array<{ actionId: string; status: 'sent'; requestedAt: string; completedAt: string }> = [];
+    const sendReportViaTelegram = vi.fn(async (_reportId: string, actionId: string) => {
+      attempts = [{ actionId, status: 'sent', requestedAt: '2026-08-14T12:00:00.000Z', completedAt: '2026-08-14T12:00:01.000Z' }];
+      return { attempt: attempts[0]!, alreadyRequested: false };
+    });
+    const getDigest = vi.fn(async () => ({
+      id: 'v2-report-send', source: 'v2' as const,
+      summary: { id: 'v2-report-send', window: { from: '2026-08-14T11:00:00.000Z', to: '2026-08-14T12:00:00.000Z' }, severityCounts: { critical: 0, warning: 1, info: 0 }, createdAt: '2026-08-14T12:00:00.000Z', deliveryStatus: 'sent' as const, source: 'v2' as const, runStatus: 'reported' as const },
+      rendered: { format: 'markdown' as const, body: '' },
+      presentation: { version: 2 as const, mode: 'batch' as const, status: 'reported' as const, warnings: [], signatures: [{ signature: 'one', component: 'mqtt', level: 'ERROR' as const, classification: 'new' as const, trend: 'new' as const, occurrences: 1 }] },
+      manualTelegram: { configured: true, attempts }
+    }));
+    const container = document.createElement('div'); document.body.append(container); const root = createRoot(container); mountedRoots.push(root);
+    await act(async () => { root.render(<App api={{ getOnboarding: async () => ({ currentStep: 'first_report', completedSteps: [], draft: {}, secretMetadata: {}, completed: true }), getDigest, sendReportViaTelegram }} />); await Promise.resolve(); });
+
+    const action = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Enviar de nuevo por Telegram');
+    await act(async () => action?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(container.querySelector('[role="dialog"]')?.textContent).toContain('Telegram puede recibir un duplicado si un envío anterior llegó sin confirmación.');
+    const confirm = Array.from(container.querySelector('[role="dialog"]')?.querySelectorAll('button') ?? []).find((button) => button.textContent === 'Enviar de nuevo por Telegram');
+    await act(async () => { confirm?.dispatchEvent(new MouseEvent('click', { bubbles: true })); await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(sendReportViaTelegram).toHaveBeenCalledTimes(1);
+    expect(sendReportViaTelegram.mock.calls[0]?.[1]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(getDigest).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain('Envío manual de Telegram');
+    expect(container.textContent).toContain('Enviado');
+    expect(container.textContent).toContain('Notificación de TelegramEnviada');
+  });
+
   test('keeps the completed lifecycle card visible long enough to follow its report link', async () => {
     const container = document.createElement('div');
     document.body.append(container);

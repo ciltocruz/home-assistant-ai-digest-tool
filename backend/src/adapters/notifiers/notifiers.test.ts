@@ -191,6 +191,17 @@ describe('notifier adapters', () => {
     expect(JSON.stringify(requests[0]?.body)).not.toContain(TELEGRAM_BOT_TOKEN_SENTINEL);
   });
 
+  it('sends a compact manual report summary without persisted report content', async () => {
+    const requests: HttpRequest[] = [];
+    const notifier = new TelegramNotifier({ httpClient: async (request) => { requests.push(request); return { status: 200, json: async () => ({ ok: true }) }; } });
+    const target = { channel: 'telegram' as const, label: 'Telegram', config: { botToken: TELEGRAM_BOT_TOKEN_SENTINEL, chatId: '4242' } };
+
+    await notifier.sendManualSummary({ critical: 1, warnings: 2, detectedProblems: 3, reportUrl: 'https://digest.test/reports/r1', language: 'en' }, target);
+
+    expect(requests[0]?.body).toMatchObject({ text: '*Home Assistant report*\n3 detected problems: 1 critical, 2 warnings\\.\n[Open report](https://digest.test/reports/r1)' });
+    expect(JSON.stringify(requests[0]?.body)).not.toMatch(/private|component|trace|recommendation/i);
+  });
+
   it.each([
     {
       label: 'English singular without a URL',

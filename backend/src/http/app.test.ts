@@ -234,6 +234,31 @@ describe('account authentication boundary', () => {
     expect(response.body).not.toContain('drop-top-level-field');
   });
 
+  it('re-sanitizes trace excerpts and manual attempts at the final HTTP detail seam', async () => {
+    const privateValues = ['owner@example.test', '192.0.2.10', 'private-token', 'private-response-body'];
+    const detail = {
+      id: 'v2-http-safe-evidence', source: 'v2',
+      summary: { id: 'v2-http-safe-evidence', window: { from: '2026-08-14T11:00:00.000Z', to: '2026-08-14T12:00:00.000Z' }, severityCounts: { critical: 0, warning: 1, info: 0 }, createdAt: '2026-08-14T12:00:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'partial' },
+      rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'partial', warnings: ['AI_ANALYSIS_UNAVAILABLE'], signatures: [{
+        signature: 'safe-evidence-signature', component: 'mqtt', level: 'ERROR', classification: 'new', trend: 'new', occurrences: 1,
+        safeExcerpt: { lines: ['Traceback (redacted)', 'token=private-token owner@example.test 192.0.2.10', 'ConnectionError: private-response-body'], truncated: false, redacted: true }
+      }] },
+      manualTelegram: { configured: true, attempts: [{ actionId: '11111111-1111-4111-8111-111111111111', status: 'sent', requestedAt: '2026-08-14T12:00:00.000Z', completedAt: '2026-08-14T12:00:01.000Z', responseBody: privateValues[3] }] }
+    } as never;
+    const runtimeServices = services();
+    runtimeServices.reports.get = async () => detail;
+    app = createApp({ services: runtimeServices, auth: { sessionTtlMs: 60_000 } });
+    const registered = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: 'long-enough-password', language: 'en' } });
+
+    const response = await app.inject({ method: 'GET', url: '/api/digests/v2-http-safe-evidence', headers: { cookie: registered.headers['set-cookie'] } });
+
+    expect(response.statusCode).toBe(200);
+    expect(DigestDetailSchema.parse(response.json())).toMatchObject({ presentation: { signatures: [{ safeExcerpt: { lines: ['Traceback (redacted)', 'ConnectionError'], redacted: true } }] }, manualTelegram: { attempts: [] } });
+    for (const value of privateValues) expect(response.body).not.toContain(value);
+    expect(response.body).not.toContain('responseBody');
+  });
+
   it('returns a schema-valid corrupt v2 detail when status, timestamps, and notes are malformed', async () => {
     const detail = {
       id: 'v2-http-corrupt-detail',
@@ -322,6 +347,75 @@ describe('account authentication boundary', () => {
     expect(removedResponse.statusCode).toBe(204);
     expect(absentResponse.statusCode).toBe(404);
     expect(removed).toEqual(['report-to-delete', 'missing-report']);
+  });
+
+  it('creates only a report-owned exact signature ignore with authentication, CSRF, and idempotency', async () => {
+    const runtimeServices = services();
+    const rules = new Map<string, { id: string; match: string; type: 'signature'; createdAt: string }>();
+    runtimeServices.reports.get = async (id) => id === 'report-with-signature' ? {
+      id,
+      source: 'v2',
+      summary: { id, window: { from: '2026-08-14T11:00:00.000Z', to: '2026-08-14T12:00:00.000Z' }, severityCounts: { critical: 0, warning: 2, info: 0 }, createdAt: '2026-08-14T12:00:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'reported' },
+      rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'reported', warnings: [], signatures: [
+        { signature: 'signature-one', component: 'homeassistant.components.demo', level: 'ERROR', classification: 'new', trend: 'new', occurrences: 1 },
+        { signature: 'signature-two', component: 'homeassistant.components.demo', level: 'ERROR', classification: 'new', trend: 'new', occurrences: 1 }
+      ] }
+    } : null;
+    runtimeServices.ignores.add = async (input) => {
+      const existing = rules.get(input.match);
+      if (existing) return existing;
+      const rule = { id: `rule-${rules.size + 1}`, match: input.match, type: 'signature' as const, createdAt: '2026-08-14T12:30:00.000Z' };
+      rules.set(input.match, rule);
+      return rule;
+    };
+    runtimeServices.ignores.listActive = async () => [...rules.values()];
+    app = createApp({ services: runtimeServices, auth: { sessionTtlMs: 60_000 } });
+    const registered = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: 'long-enough-password', language: 'en' } });
+    const cookie = registered.headers['set-cookie'];
+    const csrfToken = registered.json<{ csrfToken: string }>().csrfToken;
+    const url = '/api/digests/report-with-signature/problems/signature-one/ignore';
+
+    expect((await app.inject({ method: 'POST', url, headers: { 'x-csrf-token': csrfToken }, payload: {} })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'POST', url, headers: { cookie }, payload: {} })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'POST', url: '/api/digests/missing/problems/signature-one/ignore', headers: { cookie, 'x-csrf-token': csrfToken }, payload: {} })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'POST', url: '/api/digests/report-with-signature/problems/not-in-report/ignore', headers: { cookie, 'x-csrf-token': csrfToken }, payload: {} })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'POST', url, headers: { cookie, 'x-csrf-token': csrfToken }, payload: { match: 'signature-two' } })).statusCode).toBe(400);
+
+    const created = await app.inject({ method: 'POST', url, headers: { cookie, 'x-csrf-token': csrfToken }, payload: {} });
+    const duplicate = await app.inject({ method: 'POST', url, headers: { cookie, 'x-csrf-token': csrfToken }, payload: {} });
+    expect(created.statusCode).toBe(201);
+    expect(created.json()).toMatchObject({ rule: { match: 'signature-one', type: 'signature' }, alreadyIgnored: false });
+    expect(duplicate.statusCode).toBe(200);
+    expect(duplicate.json()).toMatchObject({ rule: { id: created.json<{ rule: { id: string } }>().rule.id }, alreadyIgnored: true });
+    expect([...rules.values()]).toHaveLength(1);
+  });
+
+  it('accepts only confirmed manual Telegram actions behind authentication and CSRF', async () => {
+    const runtimeServices = services();
+    const calls: Array<{ reportId: string; actionId: string }> = [];
+    const actionId = '11111111-1111-4111-8111-111111111111';
+    runtimeServices.manualTelegram = { send: async (reportId, requestedActionId) => {
+      calls.push({ reportId, actionId: requestedActionId });
+      return { attempt: { actionId: requestedActionId, status: 'sent', requestedAt: '2026-08-14T12:00:00.000Z', completedAt: '2026-08-14T12:00:01.000Z' }, alreadyRequested: calls.length > 1 };
+    } };
+    app = createApp({ services: runtimeServices, auth: { sessionTtlMs: 60_000 } });
+    const registered = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: 'long-enough-password', language: 'en' } });
+    const cookie = registered.headers['set-cookie'];
+    const csrfToken = registered.json<{ csrfToken: string }>().csrfToken;
+    const url = '/api/digests/v2-report%3Areport-1/manual-telegram-sends';
+
+    expect((await app.inject({ method: 'POST', url, payload: { actionId, confirmed: true } })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'POST', url, headers: { cookie }, payload: { actionId, confirmed: true } })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'POST', url, headers: { cookie, 'x-csrf-token': csrfToken }, payload: { actionId, confirmed: false } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'POST', url, headers: { cookie, 'x-csrf-token': csrfToken }, payload: { actionId, confirmed: true, targetRef: 'private-target' } })).statusCode).toBe(400);
+
+    const sent = await app.inject({ method: 'POST', url, headers: { cookie, 'x-csrf-token': csrfToken }, payload: { actionId, confirmed: true } });
+    const duplicate = await app.inject({ method: 'POST', url, headers: { cookie, 'x-csrf-token': csrfToken }, payload: { actionId, confirmed: true } });
+    expect(sent.statusCode).toBe(201);
+    expect(duplicate.statusCode).toBe(200);
+    expect(calls).toEqual([{ reportId: 'v2-report:report-1', actionId }, { reportId: 'v2-report:report-1', actionId }]);
+    expect(sent.body).not.toMatch(/target|token|chat|secret|message/i);
   });
 });
 

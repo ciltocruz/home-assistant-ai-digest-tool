@@ -16,6 +16,7 @@ import { HomeAssistantWebSocketClient, type HomeAssistantSocket } from './adapte
 import { createSignatureProvider, type ProviderHttpClient } from './adapters/ai/providers.js';
 import { TelegramNotifier, type NotifierHttpClient } from './adapters/notifiers/notifiers.js';
 import { SQLiteV2Stores } from './adapters/persistence/sqlite-v2-stores.js';
+import { SQLiteManualTelegramSendStore } from './adapters/persistence/sqlite-manual-telegram-send-store.js';
 import { SQLiteAuthStore } from './adapters/persistence/sqlite-auth-store.js';
 import { BatchReportRun } from './application/batch-report-run.js';
 import { DigestWorker, type DigestWorkerFailureEvent } from './application/digest-worker.js';
@@ -23,6 +24,7 @@ import type { RuntimeOperationalEvent } from './runtime-logging.js';
 import { SettingsService, type SecretReplacement } from './application/settings.js';
 import { projectLegacyReportPresentation } from './application/report-presentation.js';
 import { redactProviderError } from './domain/safe-error.js';
+import { ManualTelegramSendService } from './application/manual-telegram-send.js';
 
 export type PersistentRuntimeOptions = {
   dataDir?: string;
@@ -66,6 +68,41 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
     if (current.secretRefs.aiKeyRef.startsWith('unconfigured:')) return undefined;
     return secretStore.resolve(current.secretRefs.aiKeyRef);
   });
+  const manualTelegramAttempts = new SQLiteManualTelegramSendStore(db, now);
+  const getUnifiedReport = async (id: string) => {
+    const v2Report = await v2Stores.getReport(id);
+    if (v2Report) return { ...v2Report, source: 'v2' as const };
+    const legacyReport = await reports.get(id);
+    if (!legacyReport) return null;
+    const rendered = { ...legacyReport.rendered, body: redactProviderError(legacyReport.rendered.body) };
+    return { ...legacyReport, source: 'legacy' as const, rendered, presentation: projectLegacyReportPresentation({ ...legacyReport, rendered }) };
+  };
+  const telegramConfigured = async () => {
+    const current = await settingsStore.get();
+    const targetRef = current.secretRefs.notifierRefs?.telegram;
+    return Boolean(targetRef && !targetRef.startsWith('unconfigured:'));
+  };
+  const manualTelegram = new ManualTelegramSendService({
+    reports: { get: getUnifiedReport },
+    attempts: manualTelegramAttempts,
+    notifier: {
+      configured: telegramConfigured,
+      send: async (summary) => {
+        const current = await settingsStore.get();
+        const targetRef = current.secretRefs.notifierRefs?.telegram;
+        if (!targetRef || targetRef.startsWith('unconfigured:')) return { status: 'failed', targetRef: 'telegram:unconfigured', errorCode: 'configuration_failed' };
+        try {
+          const creds = JSON.parse(await secretStore.resolve(targetRef)) as { botToken: string; chatId: string };
+          return await new TelegramNotifier({ now, httpClient: options.telegramHttpClient }).sendManualSummary(summary, { channel: 'telegram', label: 'Telegram', config: creds });
+        } catch {
+          return { status: 'failed', targetRef: 'telegram:configured', errorCode: 'configuration_failed' };
+        }
+      }
+    },
+    reportUrl: options.reportUrl,
+    language: () => auth.language(),
+    now
+  });
   let worker: DigestWorker | undefined;
   const services: BackendApiServices = {
     close: async () => { await worker?.stop(); db.close(); },
@@ -92,12 +129,10 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
       save: reports.save.bind(reports),
       list: async () => [...await v2Stores.listReports(), ...await reports.list()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
       get: async (id) => {
-        const v2Report = await v2Stores.getReport(id);
-        if (v2Report) return { ...v2Report, source: 'v2' as const };
-        const legacyReport = await reports.get(id);
-        if (!legacyReport) return null;
-        const rendered = { ...legacyReport.rendered, body: redactProviderError(legacyReport.rendered.body) };
-        return { ...legacyReport, source: 'legacy' as const, rendered, presentation: projectLegacyReportPresentation({ ...legacyReport, rendered }) };
+        const report = await getUnifiedReport(id);
+        if (!report) return null;
+        const sendable = !id.startsWith('v2-run:') && !(report.presentation?.mode === 'batch' && report.presentation.status === 'failed');
+        return sendable ? { ...report, manualTelegram: { configured: await telegramConfigured(), attempts: await manualTelegram.list(id) } } : report;
       },
       remove: async (id) => await v2Stores.removeReport(id) || await reports.remove(id)
     },
@@ -107,6 +142,7 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
       remove: (id) => v2Stores.remove(id),
       listActive: (at) => v2Stores.listActive(at)
     },
+    manualTelegram: { send: (reportId, actionId) => manualTelegram.send(reportId, actionId) },
     notifiers: {
       async test(input) {
         try {

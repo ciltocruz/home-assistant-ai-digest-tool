@@ -4,6 +4,7 @@ import { DeliveryDiagnosticSchema, IsoDateTimeSchema, projectIntegrationStatus, 
 import type { BatchPersistence, CommitPlan, FailedRun, SignatureAnalysis, SignatureMemory } from '../../application/batch-report-run.js';
 import { classifySignatures, type LogCursor, type ParsedLogEntry, type SignaturePlan } from '../../domain/batch.js';
 import { redactProviderError } from '../../domain/safe-error.js';
+import { sanitizeTraceExcerpt, type SafeTraceExcerpt } from '../../domain/safe-trace.js';
 import type { NoteStore } from '../../domain/stores.js';
 
 export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteStore {
@@ -57,11 +58,13 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
       };
       this.db.prepare(
         'insert into v2_reports(id, run_id, status, payload_json, created_at) values (?, ?, ?, ?, ?)'
-      ).run(reportId, runId, plan.report.status, JSON.stringify({ report: storedReport, signatures: safeSignatures(plan.reportedSignatures ?? plan.signatures.signatures), notesBySignature: safeNotes(plan.notesBySignature) ?? {} }), createdAt);
+      ).run(reportId, runId, plan.report.status, JSON.stringify({ report: storedReport, signatures: safeSignatures(plan.reportedSignatures ?? plan.signatures.signatures, new Set(findings.map((finding) => finding.signature))), notesBySignature: safeNotes(plan.notesBySignature) ?? {} }), createdAt);
       if (plan.report.status !== 'quiet') {
-        const attemptStatus = existingRun
-          ? existingRun.status === 'failed' && !previousDeliveryStatus ? 'ready' : previousDeliveryStatus ?? 'pending'
-          : 'ready';
+        const attemptStatus = deliveryStatus === 'sent' || deliveryStatus === 'skipped'
+          ? deliveryStatus
+          : existingRun
+            ? existingRun.status === 'failed' && !previousDeliveryStatus ? 'ready' : previousDeliveryStatus ?? 'pending'
+            : 'ready';
         this.db.prepare('insert into v2_report_delivery_attempts(report_id, status, created_at, updated_at) values (?, ?, ?, ?)')
           .run(reportId, attemptStatus, createdAt, createdAt);
       }
@@ -88,7 +91,7 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
       }
       const storedReport = safeReport(stored.value.report, status, apiKey);
       this.db.prepare('update v2_reports set payload_json = ? where id = ?')
-        .run(JSON.stringify({ report: storedReport, signatures: safeSignatures(stored.value.signatures), notesBySignature: safeNotes(stored.value.notesBySignature) ?? {} }), reportId);
+        .run(JSON.stringify({ report: storedReport, signatures: safeSignatures(stored.value.signatures, new Set(storedReport.findings.map((finding) => finding.signature))), notesBySignature: safeNotes(stored.value.notesBySignature) ?? {} }), reportId);
       const safeDiagnostic = deliveryDiagnosticValue(diagnostic);
       this.db.prepare(`update v2_report_delivery_attempts
         set status = ?, updated_at = ?, diagnostic_error_code = ?, diagnostic_message_key = ?, diagnostic_stage = ?, diagnostic_at = ?
@@ -207,7 +210,9 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
       return run ? failedDetail(run) : null;
     }
     const row = this.db.prepare(`${REPORT_SELECT} where v2_reports.id = ?`).get(id) as V2ReportRow | undefined;
-    return row ? detailFor(row, await this.apiKey?.()) : null;
+    if (!row) return null;
+    const ignoredSignatures = new Set((this.db.prepare("select match from ignore_rules where removed_at is null and type = 'signature' and (expires_at is null or expires_at > ?)").all(this.now()) as Array<{ match: string }>).map(({ match }) => match));
+    return detailFor(row, await this.apiKey?.(), ignoredSignatures);
   }
 
   async removeReport(id: string): Promise<boolean> {
@@ -233,8 +238,14 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
 
   async addIgnore(input: IgnoreRuleCreate): Promise<IgnoreRuleDto> {
     const rule = { id: randomUUID(), match: input.match, type: input.type, reason: input.reason, expiresAt: input.expiresAt, createdAt: this.now() };
-    this.db.prepare('insert into ignore_rules(id, match, type, reason, expires_at, created_at) values (?, ?, ?, ?, ?, ?)')
+    const result = this.db.prepare('insert or ignore into ignore_rules(id, match, type, reason, expires_at, created_at) values (?, ?, ?, ?, ?, ?)')
       .run(rule.id, rule.match, rule.type ?? null, rule.reason ?? null, rule.expiresAt ?? null, rule.createdAt);
+    if (result.changes === 0) {
+      const existing = this.db.prepare(`select id, match, type, reason, expires_at, created_at
+        from ignore_rules where removed_at is null and match = ? and coalesce(type, '') = coalesce(?, '') and coalesce(expires_at, '') = coalesce(?, '')`)
+        .get(rule.match, rule.type ?? null, rule.expiresAt ?? null) as { id: string; match: string; type: IgnoreRuleDto['type']; reason: string | null; expires_at: string | null; created_at: string } | undefined;
+      if (existing) return { id: existing.id, match: existing.match, ...(existing.type ? { type: existing.type } : {}), ...(existing.reason ? { reason: existing.reason } : {}), ...(existing.expires_at ? { expiresAt: existing.expires_at } : {}), createdAt: existing.created_at };
+    }
     return rule;
   }
 
@@ -307,6 +318,16 @@ const REPORT_SELECT = `select v2_reports.id, v2_reports.status, v2_reports.paylo
 type V2ReportRow = { id: string; status: string; run_status?: string | null; run_delivery_status?: string | null; payload_json: string; created_at: string; diagnostic_error_code?: string | null; diagnostic_message_key?: string | null; diagnostic_stage?: string | null; diagnostic_at?: string | null };
 type FailedRunRow = { id: string; status: string; error_code: string | null; error_message: string | null; created_at: string };
 type V2Payload = { report?: Partial<CommitPlan['report']>; signatures?: unknown; notesBySignature?: unknown };
+type StoredSignature = {
+  signature: string;
+  component: string;
+  level: SignaturePlan['signatures'][number]['level'];
+  problemKind?: 'endpoint_resolution';
+  classification: SignaturePlan['signatures'][number]['classification'];
+  trend: SignaturePlan['signatures'][number]['trend'];
+  occurrenceCount: number;
+  safeExcerpt?: SafeTraceExcerpt;
+};
 function safeSignatureAnalysis(value: unknown, apiKey?: string): SignatureAnalysis | null {
   const analysis = asRecord(value);
   if (typeof analysis.summary !== 'string' || analysis.summary.trim().length === 0 || typeof analysis.recommendation !== 'string' || analysis.recommendation.trim().length === 0) return null;
@@ -321,13 +342,17 @@ function payload(row: Pick<V2ReportRow, 'payload_json'>): { value: V2Payload; va
     return { value: {}, valid: false };
   }
 }
-function safeSignatures(value: unknown): SignaturePlan['signatures'] {
+function safeSignatures(value: unknown, analyzed = new Set<string>()): StoredSignature[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
     const signature = asRecord(item);
-    if (typeof signature.signature !== 'string' || signature.signature.trim().length === 0 || typeof signature.component !== 'string' || signature.component.trim().length === 0 || !isLevel(signature.level) || !isClassification(signature.classification) || !isTrend(signature.trend) || !Array.isArray(signature.occurrences)) return [];
-    const occurrences = signature.occurrences.flatMap((item) => { const occurrence = safeOccurrence(item); return occurrence ? [occurrence] : []; });
-    return occurrences.length > 0 ? [{ signature: signature.signature, component: signature.component, level: signature.level, normalizedMessage: typeof signature.normalizedMessage === 'string' ? signature.normalizedMessage : '', ...(signature.problemKind === 'endpoint_resolution' ? { problemKind: signature.problemKind } : {}), classification: signature.classification, trend: signature.trend, occurrences }] : [];
+    if (typeof signature.signature !== 'string' || signature.signature.trim().length === 0 || typeof signature.component !== 'string' || signature.component.trim().length === 0 || !isLevel(signature.level) || !isClassification(signature.classification) || !isTrend(signature.trend)) return [];
+    const rawOccurrences = Array.isArray(signature.occurrences) ? signature.occurrences : [];
+    const occurrenceCount = safePositiveCount(signature.occurrenceCount) ?? rawOccurrences.length;
+    if (occurrenceCount < 1) return [];
+    const firstOccurrence = asRecord(rawOccurrences[0]);
+    const safeExcerpt = analyzed.has(signature.signature) ? undefined : sanitizeTraceExcerpt(signature.safeExcerpt ?? firstOccurrence.safeExcerpt);
+    return [{ signature: signature.signature, component: signature.component, level: signature.level, ...(signature.problemKind === 'endpoint_resolution' ? { problemKind: signature.problemKind } : {}), classification: signature.classification, trend: signature.trend, occurrenceCount, ...(safeExcerpt ? { safeExcerpt } : {}) }];
   });
 }
 function safeFindings(value: unknown, apiKey?: string): Array<{ signature: string; analysis: SignatureAnalysis }> {
@@ -356,10 +381,10 @@ function safeReport(value: unknown, deliveryStatus: DeliveryStatus, apiKey?: str
   const integrationStatus = projectIntegrationStatus(report.integrationStatus);
   return { status, deliveryStatus, findings: safeFindings(report.findings, apiKey), warnings: safeWarnings(report.warnings, apiKey), ...(integrationStatus ? { integrationStatus } : {}) };
 }
-function counts(signatures: SignaturePlan['signatures']): NonNullable<DigestSummary['signatureCounts']> {
+function counts(signatures: StoredSignature[]): NonNullable<DigestSummary['signatureCounts']> {
   return signatures.reduce((total, item) => ({ ...total, [item.classification]: total[item.classification] + 1 }), { new: 0, recurring: 0, reactivated: 0, latent: 0 });
 }
-function severity(signatures: SignaturePlan['signatures']) {
+function severity(signatures: StoredSignature[]) {
   return signatures.reduce((total, item) => ({ ...total, critical: total.critical + Number(item.level === 'CRITICAL'), warning: total.warning + Number(item.level === 'ERROR' || item.level === 'WARNING') }), { critical: 0, warning: 0, info: 0 });
 }
 function summaryFor(row: V2ReportRow, apiKey?: string): DigestSummary {
@@ -370,7 +395,7 @@ function summaryFor(row: V2ReportRow, apiKey?: string): DigestSummary {
   const createdAt = safeTimestamp(row.created_at);
   return { id: row.id, window: pointInTimeWindow(createdAt), severityCounts: severity(signatures), createdAt, deliveryStatus: deliveryStatusValue(stored.value.report?.deliveryStatus) ?? 'pending', ...(deliveryDiagnosticForRow(row) ? { deliveryDiagnostic: deliveryDiagnosticForRow(row) } : {}), source: 'v2', runStatus: row.status as 'quiet' | 'reported' | 'partial' | 'failed', warningCodes: safeWarnings(stored.value.report?.warnings, apiKey), signatureCounts: counts(signatures) };
 }
-function detailFor(row: V2ReportRow, apiKey?: string): DigestDetail {
+function detailFor(row: V2ReportRow, apiKey?: string, ignoredSignatures = new Set<string>()): DigestDetail {
   const stored = payload(row);
   if (!stored.valid) return invalidDetail(row);
   if (isCorruptReport(row, stored)) return invalidDetail(row, 'REPORT_CORRUPT');
@@ -379,7 +404,7 @@ function detailFor(row: V2ReportRow, apiKey?: string): DigestDetail {
   return {
     id: row.id, summary: summaryFor(row, apiKey), rendered: { format: 'markdown', body: '' },
      presentation: { version: 2, mode: 'batch', status: row.status as 'quiet' | 'reported' | 'partial' | 'failed', warnings: safeWarnings(value.report?.warnings, apiKey), ...(integrationStatus ? { integrationStatus } : {}),
-       signatures: signatures.map((item) => ({ signature: item.signature, component: item.component, level: item.level, classification: item.classification, trend: item.trend, ...(item.problemKind ? { problemKind: item.problemKind } : {}), occurrences: item.occurrences.length, ...(analyses.has(item.signature) ? { analysis: analyses.get(item.signature) } : {}), ...(safeNotes(value.notesBySignature)?.[item.signature] ? { notes: safeNotes(value.notesBySignature)![item.signature] } : {}) })) }
+        signatures: signatures.map((item) => ({ signature: item.signature, component: item.component, level: item.level, classification: item.classification, trend: item.trend, ...(item.problemKind ? { problemKind: item.problemKind } : {}), occurrences: item.occurrenceCount, ...(analyses.has(item.signature) ? { analysis: analyses.get(item.signature) } : item.safeExcerpt ? { safeExcerpt: item.safeExcerpt } : {}), ...(ignoredSignatures.has(item.signature) ? { ignoredForFuture: true } : {}), ...(safeNotes(value.notesBySignature)?.[item.signature] ? { notes: safeNotes(value.notesBySignature)![item.signature] } : {}) })) }
   };
 }
 function invalidSummary(row: V2ReportRow, warning = 'REPORT_PAYLOAD_INVALID'): DigestSummary {
@@ -422,11 +447,7 @@ function deliveryAttemptStatus(value: unknown): 'ready' | 'pending' | 'sent' | '
 function isLevel(value: unknown): value is SignaturePlan['signatures'][number]['level'] { return value === 'ERROR' || value === 'CRITICAL' || value === 'WARNING'; }
 function isClassification(value: unknown): value is SignaturePlan['signatures'][number]['classification'] { return value === 'new' || value === 'recurring' || value === 'reactivated' || value === 'latent'; }
 function isTrend(value: unknown): value is SignaturePlan['signatures'][number]['trend'] { return value === 'new' || value === 'increasing' || value === 'flat' || value === 'decreasing' || value === 'unknown'; }
-function safeOccurrence(value: unknown): ParsedLogEntry | null {
-  const occurrence = asRecord(value);
-  if (typeof occurrence.at !== 'string' || !isLevel(occurrence.level) || typeof occurrence.component !== 'string' || occurrence.component.trim().length === 0 || typeof occurrence.message !== 'string' || occurrence.message.trim().length === 0 || typeof occurrence.normalizedMessage !== 'string' || occurrence.normalizedMessage.trim().length === 0 || typeof occurrence.signature !== 'string' || occurrence.signature.trim().length === 0) return null;
-  return { at: occurrence.at, level: occurrence.level, component: occurrence.component, message: occurrence.message, normalizedMessage: occurrence.normalizedMessage, signature: occurrence.signature, ...(occurrence.problemKind === 'endpoint_resolution' ? { problemKind: occurrence.problemKind } : {}) };
-}
+function safePositiveCount(value: unknown): number | undefined { return typeof value === 'number' && Number.isInteger(value) && value >= 1 ? value : undefined; }
 
 function deliveryDiagnosticValue(value: unknown): DeliveryDiagnostic | undefined {
   const parsed = DeliveryDiagnosticSchema.safeParse(value);

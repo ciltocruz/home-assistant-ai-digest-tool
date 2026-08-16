@@ -560,12 +560,11 @@ describe('persistent runtime services', () => {
     });
   });
 
-  it('stores and exposes the verbose safe provider failure on the actual digest job path', async () => {
+  it('stores a usable partial report instead of provider failure text when every AI call fails', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-v2-no-fallback-'));
     const logPath = join(dataDir, 'home-assistant.log');
     await writeFile(logPath, '2026-07-12 10:00:00 ERROR [mqtt] connection failed\n');
     const rawProviderMessage = "models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. token=AIzaSyA1B2C3D4E5F6G7H8";
-    const safeProviderMessage = 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent. token=[REDACTED]';
     const failures: Array<{ errorCode: string; errorMessage: string }> = [];
      const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW, haLogPath: logPath, digestFailureReporter: (event) => failures.push(event), providerHttpClient: async () => ({ status: 404, json: async () => ({ error: { message: rawProviderMessage } }) }) });
     await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET });
@@ -574,28 +573,24 @@ describe('persistent runtime services', () => {
     await (services.digestWorker as { runOnce(): Promise<void> } | undefined)?.runOnce();
 
     const stored = await services.digestJobs.get(queued.jobId);
-    expect(stored).toMatchObject({ status: 'failed', errorCode: 'AI_PROVIDER_UNAVAILABLE' });
-    expect(stored?.errorMessage).toContain('Gemini 404');
-    expect(stored?.errorMessage).toContain("model 'gemini-flash-latest'");
-    expect(stored?.errorMessage).toContain(safeProviderMessage);
-    expect(stored?.errorMessage).not.toContain(rawProviderMessage);
-    expect(stored?.errorMessage).toContain('model retired');
-    expect(stored?.errorMessage).not.toContain(AI_SECRET);
-    expect(failures).toEqual([expect.objectContaining({ errorCode: 'AI_PROVIDER_UNAVAILABLE', errorMessage: stored?.errorMessage })]);
+    expect(stored).toMatchObject({ status: 'completed', reportId: `v2-report:${queued.jobId}` });
+    expect(stored?.errorMessage).toBeUndefined();
+    expect(failures).toEqual([]);
 
     const app = createApp({ services, auth: authOptions() });
     const response = await authenticatedGet(app, `/api/digests/jobs/${queued.jobId}`);
-    const failedReport = DigestDetailSchema.parse(await services.reports.get(`v2-run:${queued.jobId}`));
-    expect(failedReport.presentation).toMatchObject({ mode: 'batch', status: 'failed', failure: expect.stringContaining(safeProviderMessage) });
-    expect(JSON.stringify(failedReport)).not.toContain(rawProviderMessage);
-    const detailResponse = await authenticatedGet(app, `/api/digests/v2-run:${queued.jobId}`);
+    const partialReport = DigestDetailSchema.parse(await services.reports.get(`v2-report:${queued.jobId}`));
+    expect(partialReport.presentation).toMatchObject({ mode: 'batch', status: 'partial', warnings: ['AI_ANALYSIS_UNAVAILABLE'], signatures: [expect.objectContaining({ occurrences: 1 })] });
+    expect(JSON.stringify(partialReport)).not.toContain(rawProviderMessage);
+    expect(JSON.stringify(partialReport)).not.toContain(AI_SECRET);
+    const detailResponse = await authenticatedGet(app, `/api/digests/v2-report:${queued.jobId}`);
     expect(detailResponse.statusCode).toBe(200);
-    expect(detailResponse.json()).toMatchObject({ presentation: { failure: expect.stringContaining(safeProviderMessage) } });
+    expect(detailResponse.json()).toMatchObject({ presentation: { status: 'partial', warnings: ['AI_ANALYSIS_UNAVAILABLE'] } });
     expect(JSON.stringify(detailResponse.json())).not.toContain(rawProviderMessage);
     await app.close();
     await services.close?.();
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ errorMessage: stored?.errorMessage });
+    expect(response.json()).toMatchObject({ status: 'completed', reportId: `v2-report:${queued.jobId}` });
     expect(JSON.stringify(response.json())).not.toContain(AI_SECRET);
   });
 
@@ -650,6 +645,65 @@ describe('persistent runtime services', () => {
     expect(response.json()).toMatchObject({ source: 'legacy', presentation: { version: 1, mode: 'legacy_markdown' } });
     for (const secret of rawSecrets) expect(JSON.stringify(response.json())).not.toContain(secret);
     await app.close();
+    await services.close?.();
+  });
+
+  it('persists manual Telegram actions separately without mutating automatic generation state', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-manual-telegram-'));
+    const logPath = join(dataDir, 'home-assistant.log');
+    await writeFile(logPath, '2026-07-12 10:00:00 ERROR [mqtt] private trace content\n');
+    const requests: Array<{ body: unknown }> = [];
+    const operationalEvents: unknown[] = [];
+    const services = await createPersistentRuntimeServices({
+      dataDir,
+      now: () => NOW,
+      haLogPath: logPath,
+      providerHttpClient: async () => ({ status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'MQTT failed', recommendation: 'Restart MQTT' }) }] } }] }) }),
+      telegramHttpClient: async (request) => { requests.push({ body: request.body }); return { status: 200, json: async () => ({ ok: true }) }; },
+      operationalEventReporter: (event) => operationalEvents.push(event),
+      reportUrl: (reportId) => `https://digest.test/reports/${encodeURIComponent(reportId)}`
+    });
+    await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET, telegram: { botToken: TELEGRAM_SECRET, chatId: '42' } });
+    const queued = await services.digestJobs.enqueue({ kind: 'manual', triggerWindowId: 'v2:manual-telegram' });
+    await (services.digestWorker as unknown as { runOnce(): Promise<void> }).runOnce();
+    const job = await services.digestJobs.get(queued.jobId);
+    const reportId = job?.reportId ?? 'missing';
+    const before = DigestDetailSchema.parse(await services.reports.get(reportId));
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
+    const db = new DatabaseSync(join(dataDir, 'app.db'));
+    const payloadBeforeManualSends = (db.prepare('select payload_json from v2_reports where id = ?').get(reportId) as { payload_json: string }).payload_json;
+    const firstAction = '11111111-1111-4111-8111-111111111111';
+    const secondAction = '22222222-2222-4222-8222-222222222222';
+
+    await services.manualTelegram?.send(reportId, firstAction);
+    await services.manualTelegram?.send(reportId, firstAction);
+    await services.manualTelegram?.send(reportId, secondAction);
+
+    const after = DigestDetailSchema.parse(await services.reports.get(reportId));
+    expect(requests).toHaveLength(3);
+    expect(after.summary.deliveryStatus).toBe(before.summary.deliveryStatus);
+    expect(after.summary.deliveryStatus).toBe('sent');
+    expect(after.manualTelegram).toMatchObject({ configured: true, attempts: [
+      expect.objectContaining({ actionId: secondAction, status: 'sent' }),
+      expect.objectContaining({ actionId: firstAction, status: 'sent' })
+    ] });
+    expect(JSON.stringify(requests.map(({ body }) => body))).not.toContain('private trace content');
+    expect(JSON.stringify(after)).not.toContain(TELEGRAM_SECRET);
+    expect(JSON.stringify(operationalEvents)).not.toMatch(/private trace content|sentinel-telegram|chat/i);
+
+    expect(db.prepare('select delivery_status from v2_runs where id = ?').get(queued.jobId)).toEqual({ delivery_status: 'sent' });
+    expect(db.prepare('select status from v2_report_delivery_attempts where report_id = ?').get(reportId)).toEqual({ status: 'sent' });
+    const payloadBeforeDelete = db.prepare('select payload_json from v2_reports where id = ?').get(reportId) as { payload_json: string };
+    expect(payloadBeforeDelete.payload_json).toBe(payloadBeforeManualSends);
+    expect(JSON.parse(payloadBeforeDelete.payload_json)).toMatchObject({ report: { deliveryStatus: 'sent' } });
+    const rows = db.prepare('select * from manual_telegram_sends where report_id = ?').all(reportId) as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(2);
+    expect(Object.keys(rows[0] ?? {})).not.toEqual(expect.arrayContaining(['target_ref', 'token', 'chat_id', 'message_text', 'response_body', 'request_url', 'ip']));
+    expect(JSON.stringify(rows)).not.toMatch(/private trace content|sentinel-telegram|owner@example|192\.0\.2\.10/);
+
+    await services.reports.remove(reportId);
+    expect(db.prepare('select count(*) as count from manual_telegram_sends where report_id = ?').get(reportId)).toEqual({ count: 0 });
+    db.close();
     await services.close?.();
   });
 });

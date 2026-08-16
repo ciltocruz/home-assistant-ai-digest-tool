@@ -10,9 +10,14 @@ import { OnboardingFlow, createInitialOnboardingState, restoreOnboardingState, t
 import { ReportDetail } from './report-detail.js';
 import type { AppRoute } from './router.js';
 import { SettingsPanel, type SettingsApi } from './settings.js';
-import type { DigestDetail, EditableSettingsDto, RunDigestRequest, RunDigestResponse } from '@ha-digest/shared';
+import type { DigestDetail, EditableSettingsDto, ExactProblemIgnoreResult, ManualTelegramSendResult, RunDigestRequest, RunDigestResponse } from '@ha-digest/shared';
 
-type AppApi = Partial<OnboardingApi & DashboardApi & JobLifecycleApi & { getDigest(id: string): Promise<DigestDetail>; deleteDigest(id: string): Promise<void> }>;
+type AppApi = Partial<OnboardingApi & DashboardApi & JobLifecycleApi & {
+  getDigest(id: string): Promise<DigestDetail>;
+  deleteDigest(id: string): Promise<void>;
+  ignoreReportProblem(reportId: string, signature: string): Promise<ExactProblemIgnoreResult>;
+  sendReportViaTelegram(reportId: string, actionId: string): Promise<ManualTelegramSendResult>;
+}>;
 type TimeZoneApi = Pick<SettingsApi, 'getSettings'>;
 type SessionApi = { getSession(): Promise<{ language: 'en' | 'es' }>; getAuthStatus(): Promise<{ hasAdmin: boolean }>; register(password: string, language: 'en' | 'es'): Promise<{ language: 'en' | 'es' }>; login(password: string): Promise<{ language: 'en' | 'es' }> };
 
@@ -96,7 +101,7 @@ function ReportsWorkspace({ api, reportId, refreshKey, onChanged, timeZone }: { 
   </section>;
 }
 
-function ReportRoute({ api, reportId, onDeleted, timeZone }: { api?: { getDigest?(id: string): Promise<DigestDetail>; deleteDigest?(id: string): Promise<void> }; reportId: string; onDeleted(): void; timeZone?: string }) {
+function ReportRoute({ api, reportId, onDeleted, timeZone }: { api?: AppApi; reportId: string; onDeleted(): void; timeZone?: string }) {
   const [state, setState] = useState<{ status: 'loading' } | { status: 'ready'; report: DigestDetail } | { status: 'error' }>({ status: 'loading' });
   useEffect(() => {
     if (!api?.getDigest) {
@@ -111,7 +116,12 @@ function ReportRoute({ api, reportId, onDeleted, timeZone }: { api?: { getDigest
 
   if (state.status === 'loading') return <section className="panel report-detail" aria-live="polite"><h2>{t('report.loadingTitle')}</h2><p>{t('report.loadingCopy')}</p></section>;
   if (state.status === 'error') return <section className="panel report-detail" role="alert"><h2>{t('report.errorTitle')}</h2><p>{t('report.errorCopy')}</p><a className="report-link" href="/reports">{t('report.back')}</a></section>;
-  return <ReportDetail report={state.report} timeZone={timeZone} onDelete={api?.deleteDigest ? async () => { await api.deleteDigest!(reportId); onDeleted(); } : undefined} />;
+  const refresh = async () => { if (api?.getDigest) setState({ status: 'ready', report: await api.getDigest(reportId) }); };
+  return <ReportDetail report={state.report} timeZone={timeZone}
+    onDelete={api?.deleteDigest ? async () => { await api.deleteDigest!(reportId); onDeleted(); } : undefined}
+    onIgnoreProblem={api?.ignoreReportProblem ? async (signature) => { await api.ignoreReportProblem!(reportId, signature); await refresh(); } : undefined}
+    onManualTelegramSend={api?.sendReportViaTelegram ? async () => { await api.sendReportViaTelegram!(reportId, crypto.randomUUID()); await refresh(); } : undefined}
+  />;
 }
 
 function ManualDigestCard({ api, onQueued }: { api?: ManualDigestApi; onQueued(jobId: string): void }) {

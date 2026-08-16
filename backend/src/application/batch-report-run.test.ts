@@ -96,14 +96,53 @@ describe('BatchReportRun', () => {
     expect(notifications).toEqual([expect.not.objectContaining({ reportUrl: expect.anything() })]);
   });
 
-  it('records an all-provider failure as a web-only failed run without advancing the cursor', async () => {
+  it('commits an all-provider failure as a web-only partial report with safe evidence', async () => {
     const providerSecret = 'AIzaSyA1B2C3D4E5F6G7H8';
     const { run, commits, failures } = harness(async () => { throw new Error(`Gemini request failed at https://example.test/generate?key=${providerSecret}`); });
 
-    await expect(run.run({ runId: 'run-3', slotId: 'slot-3' })).resolves.toEqual({ status: 'failed', code: 'AI_ANALYSIS_UNAVAILABLE', errorMessage: 'Gemini request failed at https://example.test/generate?key=[REDACTED]' });
-    expect(commits).toEqual([]);
-    expect(failures).toEqual([{ request: { runId: 'run-3', slotId: 'slot-3' }, code: 'AI_ANALYSIS_UNAVAILABLE', errorMessage: 'Gemini request failed at https://example.test/generate?key=[REDACTED]' }]);
-    expect(JSON.stringify(failures)).not.toContain(providerSecret);
+    await expect(run.run({ runId: 'run-3', slotId: 'slot-3' })).resolves.toEqual({ status: 'partial', warnings: ['AI_ANALYSIS_UNAVAILABLE'], reportId: 'report-id' });
+    expect(commits).toMatchObject([{
+      cursor: delta.cursor,
+      report: { status: 'partial', deliveryStatus: 'skipped', findings: [], warnings: ['AI_ANALYSIS_UNAVAILABLE'] }
+    }]);
+    expect(failures).toEqual([]);
+    expect(JSON.stringify(commits)).not.toContain(providerSecret);
+  });
+
+  it('matches signature ignore rules exactly without hiding a sibling from the same component', async () => {
+    const siblingEntries = parseHomeAssistantLog([
+      '2026-07-29 12:00:00 ERROR [homeassistant.components.demo] First failure',
+      '2026-07-29 12:01:00 ERROR [homeassistant.components.demo] Second failure'
+    ]);
+    const siblingPlan: SignaturePlan = { baselineEntries: [], signatures: siblingEntries.map((entry) => ({ ...entry, classification: 'new', trend: 'new', occurrences: [entry] })) };
+    const analyzed: string[] = [];
+    const commits: Parameters<BatchPersistence['commit']>[0][] = [];
+    const run = new BatchReportRun({
+      log: { read: async () => ({ lines: [], cursor: delta.cursor }) },
+      signatures: { classifyAndStage: async () => siblingPlan },
+      provider: { analyze: async (context) => { analyzed.push(context.signature); return { summary: 'Found', recommendation: 'Fix' }; } },
+      persistence: { commit: async (plan) => { commits.push(plan); return 'exact-ignore-report'; }, claimDeliveryAttempt: async () => ({ status: 'pending', shouldSend: false }), updateDeliveryStatus: async () => undefined, fail: async () => undefined },
+      ignores: { listActive: async () => [{ id: 'exact-ignore', match: siblingEntries[0]!.signature, type: 'signature', createdAt: '2026-07-29T12:02:00.000Z' }] }
+    });
+
+    await run.run({ runId: 'exact-ignore-run', slotId: 'exact-ignore-slot' });
+
+    expect(analyzed).toEqual([siblingEntries[1]!.signature]);
+    expect(commits[0]?.reportedSignatures?.map(({ signature }) => signature)).toEqual([siblingEntries[1]!.signature]);
+  });
+
+  it('preserves substring matching for legacy ignore rule types', async () => {
+    const analyzed: string[] = [];
+    const run = new BatchReportRun({
+      log: { read: async () => delta }, signatures: { classifyAndStage: async () => plan },
+      provider: { analyze: async (context) => { analyzed.push(context.component); return { summary: 'Found', recommendation: 'Fix' }; } },
+      persistence: { commit: async () => 'legacy-ignore-report', claimDeliveryAttempt: async () => ({ status: 'pending', shouldSend: false }), updateDeliveryStatus: async () => undefined, fail: async () => undefined },
+      ignores: { listActive: async () => [{ id: 'legacy-ignore', match: 'ha.two', type: 'message', createdAt: '2026-07-29T12:03:00.000Z' }] }
+    });
+
+    await run.run({ runId: 'legacy-ignore-run', slotId: 'legacy-ignore-slot' });
+
+    expect(analyzed).toEqual(['ha.one', 'ha.three']);
   });
 
   it('keeps HA degradation in the committed report and notifies only committed findings', async () => {

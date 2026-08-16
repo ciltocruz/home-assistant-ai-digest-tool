@@ -206,7 +206,12 @@ One condition needs review.
         inProgress: 2,
         retrying: 1,
         errors: 3,
-        unknown: 2
+        unknown: 2,
+        errorGroups: [
+          { category: 'authentication_error', reason: 'authentication_failed', count: 1 },
+          { category: 'migration_error', reason: 'unknown', count: 1 },
+          { category: 'failed_unload', reason: 'unknown', count: 1 }
+        ]
       }
     }));
     const serialized = JSON.stringify(report);

@@ -223,6 +223,27 @@ describe('createApiClient', () => {
     expect(calls).toHaveLength(0);
   });
 
+  test('uses report-scoped action contracts without arbitrary targets or matches', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const actionId = '11111111-1111-4111-8111-111111111111';
+    const client = createApiClient({ csrfToken: 'csrf-token', fetch: async (url, init = {}) => {
+      calls.push({ url: String(url), init });
+      if (String(url).endsWith('/ignore')) return jsonResponse(201, { rule: { id: 'rule-1', match: 'signature/one', type: 'signature', createdAt: '2026-08-14T12:00:00.000Z' }, alreadyIgnored: false });
+      return jsonResponse(201, { attempt: { actionId, status: 'sent', requestedAt: '2026-08-14T12:00:00.000Z', completedAt: '2026-08-14T12:00:01.000Z' }, alreadyRequested: false });
+    } });
+
+    await client.ignoreReportProblem('report/id', 'signature/one');
+    await client.sendReportViaTelegram('report/id', actionId);
+
+    expect(calls.map(({ url }) => url)).toEqual([
+      '/api/digests/report%2Fid/problems/signature%2Fone/ignore',
+      '/api/digests/report%2Fid/manual-telegram-sends'
+    ]);
+    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({});
+    expect(JSON.parse(String(calls[1]?.init.body))).toEqual({ actionId, confirmed: true });
+    expect(JSON.stringify(calls)).not.toMatch(/targetRef|chatId|botToken|"match"/);
+  });
+
   test('redacts secret-like values from server errors before exposing them to UI state', async () => {
     const bearerScheme = ['Bea', 'rer'].join('');
     const jwtLikeValue = [jsonBase64UrlSentinel('header'), jsonBase64UrlSentinel('payload'), 'signature_value'].join('.');

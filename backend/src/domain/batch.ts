@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { sanitizeTraceExcerpt, type SafeTraceExcerpt } from './safe-trace.js';
 export type LogLevel = 'ERROR' | 'CRITICAL' | 'WARNING';
 export type SignatureClass = 'new' | 'recurring' | 'reactivated' | 'latent';
 export type SignatureTrend = 'new' | 'increasing' | 'flat' | 'decreasing' | 'unknown';
@@ -10,6 +11,7 @@ export type ParsedLogEntry = {
   message: string;
   normalizedMessage: string;
   signature: string;
+  safeExcerpt?: SafeTraceExcerpt;
   problemKind?: ProblemKind;
 };
 export type LogCursor = { dev: number; ino: number; size: number; offset: number };
@@ -44,23 +46,41 @@ export type BatchClassificationOptions = {
 };
 
 const HA_LOG_LINE = /^(?<at>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+(?<level>ERROR|CRITICAL|WARNING)\s+(?:\([^)]*\)\s+)?\[(?<component>[^\]]+)]\s*(?<message>[\s\S]+)$/i;
+const TIMESTAMPED_LOG_LINE = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\s+/;
 const DEFAULT_LOOKBACK_DAYS = 10;
 const DEFAULT_REACTIVATION_DAYS = 7;
 
 export function parseHomeAssistantLog(lines: string[], options: { includeWarnings?: boolean } = {}): ParsedLogEntry[] {
-  return lines.flatMap((line) => {
-    const match = line.match(HA_LOG_LINE);
-    if (!match?.groups) return [];
-    const level = match.groups.level.toUpperCase() as LogLevel;
-    if (level === 'WARNING' && !options.includeWarnings) return [];
-    const at = toIso(match.groups.at);
-    if (!at) return [];
-    const component = match.groups.component.trim().toLowerCase();
-    const message = match.groups.message.trim();
+  const entries: ParsedLogEntry[] = [];
+  let current: { groups: Record<string, string>; continuation: string[] } | undefined;
+  const flush = () => {
+    if (!current) return;
+    const { groups, continuation } = current;
+    current = undefined;
+    const level = groups.level.toUpperCase() as LogLevel;
+    if (level === 'WARNING' && !options.includeWarnings) return;
+    const at = toIso(groups.at);
+    if (!at) return;
+    const component = groups.component.trim().toLowerCase();
+    const message = groups.message.trim();
     const normalizedMessage = normalizeLogMessage(message);
     const problemKind = problemKindFor(component, normalizedMessage);
-    return [{ at, level, component, message, normalizedMessage, signature: signatureFor(component, level, normalizedMessage), ...(problemKind ? { problemKind } : {}) }];
-  });
+    const safeExcerpt = sanitizeTraceExcerpt(continuation.length > 0 ? continuation : [message]);
+    entries.push({ at, level, component, message, normalizedMessage, signature: signatureFor(component, level, normalizedMessage), ...(problemKind ? { problemKind } : {}), ...(safeExcerpt ? { safeExcerpt } : {}) });
+  };
+
+  for (const line of lines) {
+    if (!TIMESTAMPED_LOG_LINE.test(line)) {
+      current?.continuation.push(line);
+      continue;
+    }
+    flush();
+    const match = line.match(HA_LOG_LINE);
+    if (!match?.groups) continue;
+    current = { groups: match.groups as Record<string, string>, continuation: [] };
+  }
+  flush();
+  return entries;
 }
 
 export function normalizeLogMessage(message: string): string {
