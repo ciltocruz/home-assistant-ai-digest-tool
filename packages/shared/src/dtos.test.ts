@@ -14,7 +14,9 @@ import {
   SetupValidationRequestSchema,
   SetupValidationResponseSchema,
   BatchDeleteReportsRequestSchema,
-  BatchDeleteReportsResponseSchema
+  BatchDeleteReportsResponseSchema,
+  EntityIssueDtoSchema,
+  StaleEntitiesResponseSchema
 } from './dtos.js';
 
 describe('shared DTOs', () => {
@@ -502,4 +504,42 @@ describe('BatchDeleteReports DTOs', () => {
     expect(() => BatchDeleteReportsResponseSchema.parse({ deletedCount: 1, extra: 'unallowed' })).toThrow();
   });
 });
+
+describe('StaleEntities DTOs', () => {
+  it('validates EntityIssueDtoSchema', () => {
+    const valid = EntityIssueDtoSchema.parse({
+      entityId: 'sensor.zigbee_living_room_temperature',
+      name: 'Temperatura Salón',
+      domain: 'sensor',
+      state: 'unavailable',
+      issueType: 'unavailable',
+      lastUpdated: '2026-08-16T10:00:00.000Z'
+    });
+    expect(valid.entityId).toBe('sensor.zigbee_living_room_temperature');
+  });
+
+  it('validates StaleEntitiesResponseSchema', () => {
+    const valid = StaleEntitiesResponseSchema.parse({
+      unavailableCount: 1,
+      staleCount: 0,
+      totalAudited: 45,
+      entities: [
+        {
+          entityId: 'sensor.zigbee_living_room_temperature',
+          name: 'Temperatura Salón',
+          domain: 'sensor',
+          state: 'unavailable',
+          issueType: 'unavailable',
+          lastUpdated: '2026-08-16T10:00:00.000Z'
+        }
+      ]
+    });
+    expect(valid.unavailableCount).toBe(1);
+  });
+
+  it('enforces strict mode on StaleEntities DTOs', () => {
+    expect(() => StaleEntitiesResponseSchema.parse({ unavailableCount: 0, staleCount: 0, totalAudited: 0, entities: [], extra: 1 })).toThrow();
+  });
+});
+
 

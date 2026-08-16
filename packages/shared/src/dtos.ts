@@ -656,3 +656,22 @@ export const BatchDeleteReportsResponseSchema = z.object({
   deletedCount: z.number().int().min(0)
 }).strict();
 export type BatchDeleteReportsResponse = z.infer<typeof BatchDeleteReportsResponseSchema>;
+
+export const EntityIssueDtoSchema = z.object({
+  entityId: z.string().min(1),
+  name: z.string(),
+  domain: z.string(),
+  state: z.string(),
+  issueType: z.enum(['unavailable', 'stale']),
+  lastUpdated: z.string()
+}).strict();
+export type EntityIssueDto = z.infer<typeof EntityIssueDtoSchema>;
+
+export const StaleEntitiesResponseSchema = z.object({
+  unavailableCount: z.number().int().min(0),
+  staleCount: z.number().int().min(0),
+  totalAudited: z.number().int().min(0),
+  entities: z.array(EntityIssueDtoSchema)
+}).strict();
+export type StaleEntitiesResponse = z.infer<typeof StaleEntitiesResponseSchema>;
+
