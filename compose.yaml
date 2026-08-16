@@ -7,7 +7,7 @@ services:
     ports:
       - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-3000}:3000"
     environment:
-      APP_BIND_ADDRESS: "${APP_BIND_ADDRESS:-127.0.0.1}"
+      APP_BIND_ADDRESS: "127.0.0.1"
       RUNTIME_MODE: "${RUNTIME_MODE:-local}"
       TRUST_PROXY: "${TRUST_PROXY:-false}"
       SECURE_COOKIES: "${SECURE_COOKIES:-false}"
