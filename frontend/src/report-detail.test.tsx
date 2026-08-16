@@ -499,4 +499,29 @@ describe('ReportDetail', () => {
     expect(html).toContain('A privacy-safe trace excerpt is unavailable for this problem.');
     expect(html).not.toContain('<pre>');
   });
+
+  test('shows the persisted log read range for a v2 report that has one', () => {
+    const html = renderToStaticMarkup(<ReportDetail timeZone="Europe/Madrid" report={{
+      id: 'v2-log-read-report', source: 'v2',
+      summary: { id: 'v2-log-read-report', window: { from: '2026-08-01T09:00:00.000Z', to: '2026-08-01T10:00:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-08-17T10:00:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'quiet', logReadFrom: '2026-08-17T10:00:00.000Z', logReadTo: '2026-08-17T12:30:00.000Z' },
+      rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'quiet', warnings: [], signatures: [] }
+    }} />);
+
+    expect(html).toContain('<dt>Errores leídos</dt>');
+    expect(html).toContain('17 ago 2026, 12:00 — 17 ago 2026, 14:30');
+    expect(html).toContain('Desde el cursor persistido en el archivo de log actual.');
+  });
+
+  test('keeps the log read range hidden for reports without one', () => {
+    const html = renderToStaticMarkup(<ReportDetail report={{
+      id: 'v2-no-log-read', source: 'v2',
+      summary: { id: 'v2-no-log-read', window: { from: '2026-08-01T09:00:00.000Z', to: '2026-08-01T10:00:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-08-01T10:00:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'quiet' },
+      rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'quiet', warnings: [], signatures: [] }
+    }} />);
+
+    expect(html).not.toContain('Errores leídos');
+    expect(html).not.toContain('Desde el cursor persistido en el archivo de log actual.');
+  });
 });

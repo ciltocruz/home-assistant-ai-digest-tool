@@ -30,8 +30,33 @@ describe('BatchReportRun', () => {
     expect(analyze).toHaveBeenCalledTimes(3);
     expect(analyze.mock.calls[0]?.[0].occurrences).toEqual(['one token=[REDACTED]']);
     expect(commits).toHaveLength(1);
-    expect(commits[0]).toMatchObject({ cursor: delta.cursor, report: { status: 'reported', deliveryStatus: 'skipped', findings: [{}, {}, {}] } });
+    expect(commits[0]).toMatchObject({ cursor: delta.cursor, logRead: { from: entries[0].at, to: entries[entries.length - 1].at }, report: { status: 'reported', deliveryStatus: 'skipped', findings: [{}, {}, {}] } });
     expect(deliveryUpdates).toEqual([{ reportId: 'report-id', status: 'skipped' }]);
+  });
+
+  it('commits the parsed log read range when the delta contains parseable entries', async () => {
+    const analyze = vi.fn(async () => ({ summary: 'summary', recommendation: 'fix' }));
+    const { run, commits } = harness(analyze);
+
+    await run.run({ runId: 'run-logread', slotId: 'slot-logread' });
+
+    expect(commits[0]?.logRead).toEqual({ from: entries[0].at, to: entries[entries.length - 1].at });
+  });
+
+  it('commits a null log read range when the delta contains no parseable entries', async () => {
+    const analyze = vi.fn(async () => ({ summary: 'summary', recommendation: 'fix' }));
+    const commits: Parameters<BatchPersistence['commit']>[0][] = [];
+    const run = new BatchReportRun({
+      log: { read: async () => ({ lines: ['garbage line without a timestamp', ''], cursor: delta.cursor }) },
+      signatures: { classifyAndStage: async () => plan },
+      provider: { analyze },
+      persistence: { commit: async (value) => { commits.push(value); return 'report-id'; }, claimDeliveryAttempt: async () => ({ status: 'pending' as const, shouldSend: true }), updateDeliveryStatus: async () => undefined, fail: async () => undefined },
+      now: () => '2026-07-30T00:00:00.000Z'
+    });
+
+    await run.run({ runId: 'run-null-logread', slotId: 'slot-null-logread' });
+
+    expect(commits[0]?.logRead).toBeNull();
   });
 
   it('commits available findings with a partial-analysis warning when one signature provider call fails', async () => {
@@ -105,6 +130,7 @@ describe('BatchReportRun', () => {
     await expect(run.run({ runId: 'run-3', slotId: 'slot-3' })).resolves.toEqual({ status: 'partial', warnings: ['AI_ANALYSIS_UNAVAILABLE', expectedError], reportId: 'report-id' });
     expect(commits).toMatchObject([{
       cursor: delta.cursor,
+      logRead: { from: entries[0].at, to: entries[entries.length - 1].at },
       report: { status: 'partial', deliveryStatus: 'skipped', findings: [], warnings: ['AI_ANALYSIS_UNAVAILABLE', expectedError], failure: expectedError }
     }]);
     expect(failures).toEqual([]);

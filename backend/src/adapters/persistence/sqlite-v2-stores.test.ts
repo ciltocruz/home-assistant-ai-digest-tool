@@ -38,6 +38,7 @@ describe('SQLiteV2Stores', () => {
         request: { runId: `run-${index}`, slotId: `slot-${index}` },
         cursor: { dev: 1, ino: 2, size: 100 + index, offset: 100 + index },
         signatures: plan,
+        logRead: null,
         report: { status: 'reported', findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [] }
       });
     }
@@ -46,6 +47,46 @@ describe('SQLiteV2Stores', () => {
     expect(db.prepare('select count(*) as count from v2_runs').get()).toEqual({ count: 12 });
     expect(db.prepare('select count(*) as count from v2_reports').get()).toEqual({ count: 10 });
     expect(db.prepare('select total_count as count from v2_signatures').get()).toEqual({ count: 12 });
+  });
+
+  it('persists the log read range and exposes it in the detail summary', async () => {
+    const db = await openTestDatabase();
+    runMigrations(db);
+    const stores = new SQLiteV2Stores(db, 10, () => '2026-08-17T13:00:00.000Z');
+    const entries = parseHomeAssistantLog(['2026-08-17 10:00:00 ERROR [homeassistant.components.demo] Failure 42']);
+    const plan = await stores.classifyAndStage(entries, '2026-08-17T13:00:00.000Z');
+    const reportId = await stores.commit({
+      request: { runId: 'log-read-run', slotId: 'log-read-slot' },
+      cursor: { dev: 1, ino: 2, size: 100, offset: 100 },
+      signatures: plan,
+      logRead: { from: '2026-08-17T10:00:00.000Z', to: '2026-08-17T12:30:00.000Z' },
+      report: { status: 'reported', findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [] }
+    });
+
+    expect(db.prepare('select log_read_from, log_read_to from v2_reports where id = ?').get(reportId))
+      .toEqual({ log_read_from: '2026-08-17T10:00:00.000Z', log_read_to: '2026-08-17T12:30:00.000Z' });
+    expect(DigestDetailSchema.parse(await stores.getReport(reportId))).toMatchObject({
+      summary: { logReadFrom: '2026-08-17T10:00:00.000Z', logReadTo: '2026-08-17T12:30:00.000Z' }
+    });
+  });
+
+  it('keeps the summary free of log read fields for reports committed without a range', async () => {
+    const db = await openTestDatabase();
+    runMigrations(db);
+    const stores = new SQLiteV2Stores(db, 10, () => '2026-08-17T13:00:00.000Z');
+    const entries = parseHomeAssistantLog(['2026-08-17 10:00:00 ERROR [homeassistant.components.demo] Failure 42']);
+    const plan = await stores.classifyAndStage(entries, '2026-08-17T13:00:00.000Z');
+    const reportId = await stores.commit({
+      request: { runId: 'no-log-read-run', slotId: 'no-log-read-slot' },
+      cursor: { dev: 1, ino: 2, size: 100, offset: 100 },
+      signatures: plan,
+      logRead: null,
+      report: { status: 'reported', findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [] }
+    });
+
+    const detail = DigestDetailSchema.parse(await stores.getReport(reportId));
+    expect(detail.summary.logReadFrom).toBeUndefined();
+    expect(detail.summary.logReadTo).toBeUndefined();
   });
 
   it('sanitizes provider analysis before writing both v2 report storage locations and projecting detail', async () => {
@@ -70,6 +111,7 @@ describe('SQLiteV2Stores', () => {
       request: { runId: 'analysis-redaction-run', slotId: 'analysis-redaction-slot' },
       cursor: { dev: 1, ino: 2, size: 100, offset: 100 },
       signatures: plan,
+      logRead: null,
       report: { status: 'reported', findings: [{ signature: entries[0]!.signature, analysis }], warnings: [] }
     });
 
@@ -105,6 +147,7 @@ describe('SQLiteV2Stores', () => {
       request: { runId: 'safe-trace-run', slotId: 'safe-trace-slot' },
       cursor: { dev: 1, ino: 2, size: 100, offset: 100 },
       signatures: plan,
+      logRead: null,
       reportedSignatures: plan.signatures,
       report: { status: 'partial', findings: [], warnings: ['AI_ANALYSIS_UNAVAILABLE'], deliveryStatus: 'skipped' }
     });
@@ -157,6 +200,7 @@ describe('SQLiteV2Stores', () => {
       request: { runId: 'strict-v2-run', slotId: 'strict-v2-slot' },
       cursor: { dev: 1, ino: 2, size: 100, offset: 100 },
       signatures: plan,
+      logRead: null,
       report: {
         status: 'reported',
         findings: [{
@@ -187,7 +231,7 @@ describe('SQLiteV2Stores', () => {
     const plan = await stores.classifyAndStage(entries, '2026-08-01T10:00:00.000Z');
 
     await expect(stores.commit({
-      request: { runId: 'failed-run', slotId: 'failed-slot' }, cursor: { dev: 1, ino: 2, size: 10, offset: 10 }, signatures: plan,
+      request: { runId: 'failed-run', slotId: 'failed-slot' }, cursor: { dev: 1, ino: 2, size: 10, offset: 10 }, signatures: plan, logRead: null,
       report: { status: 'reported', findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [] }
     })).rejects.toThrow('storage unavailable');
 
@@ -225,6 +269,7 @@ describe('SQLiteV2Stores', () => {
       request,
       cursor: { dev: 1, ino: 2, size: 100, offset: 100 },
       signatures: plan,
+      logRead: null,
       report: { status: 'reported', findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [] }
     });
 
@@ -244,6 +289,7 @@ describe('SQLiteV2Stores', () => {
       request,
       cursor: { dev: 1, ino: 2, size: 100, offset: 100 },
       signatures: plan,
+      logRead: null,
       report: { status: 'reported', findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [] }
     })).resolves.toBe(reportId);
     expect(db.prepare('select count(*) as count from v2_reports where run_id = ?').get('retry-run')).toEqual({ count: 1 });
@@ -259,6 +305,7 @@ describe('SQLiteV2Stores', () => {
       request: { runId: 'normal-run', slotId: 'normal-slot' },
       cursor: { dev: 1, ino: 2, size: 100, offset: 100 },
       signatures: plan,
+      logRead: null,
       report: { status: 'reported' as const, findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [] }
     };
 
@@ -287,6 +334,7 @@ describe('SQLiteV2Stores', () => {
       request: { runId: 'delivery-run', slotId: 'delivery-slot' },
       cursor: { dev: 1, ino: 2, size: 100, offset: 100 },
       signatures: plan,
+      logRead: null,
       report: { status: 'reported', deliveryStatus: 'pending', findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [] }
     });
 
@@ -302,7 +350,7 @@ describe('SQLiteV2Stores', () => {
     const stores = new SQLiteV2Stores(db, 10, () => '2026-08-13T10:00:01.000Z');
     const entries = parseHomeAssistantLog(['2026-08-13 09:00:00 ERROR [homeassistant.components.demo] Failure 42']);
     const plan = await stores.classifyAndStage(entries, '2026-08-13T10:00:00.000Z');
-    const reportId = await stores.commit({ request: { runId: 'diag-run', slotId: 'diag-slot' }, cursor: { dev: 1, ino: 2, size: 1, offset: 1 }, signatures: plan, report: { status: 'reported', findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [] } });
+    const reportId = await stores.commit({ request: { runId: 'diag-run', slotId: 'diag-slot' }, cursor: { dev: 1, ino: 2, size: 1, offset: 1 }, signatures: plan, logRead: null, report: { status: 'reported', findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [] } });
 
     await stores.updateDeliveryStatus(reportId, 'failed', { channel: 'telegram', stage: 'response', errorCode: 'TELEGRAM_HTTP_401', messageKey: 'telegram_auth_failed', recordedAt: '2026-08-13T10:00:01.000Z' });
 
@@ -319,7 +367,7 @@ describe('SQLiteV2Stores', () => {
     const stores = new SQLiteV2Stores(db, 10, () => '2026-08-13T10:00:01.000Z');
     const entries = parseHomeAssistantLog(['2026-08-13 09:00:00 ERROR [homeassistant.components.demo] Failure 42']);
     const plan = await stores.classifyAndStage(entries, '2026-08-13T10:00:00.000Z');
-    const reportId = await stores.commit({ request: { runId: 'invalid-response-run', slotId: 'invalid-response-slot' }, cursor: { dev: 1, ino: 2, size: 1, offset: 1 }, signatures: plan, report: { status: 'reported', findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [] } });
+    const reportId = await stores.commit({ request: { runId: 'invalid-response-run', slotId: 'invalid-response-slot' }, cursor: { dev: 1, ino: 2, size: 1, offset: 1 }, signatures: plan, logRead: null, report: { status: 'reported', findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [] } });
 
     await stores.updateDeliveryStatus(reportId, 'pending', { channel: 'telegram', stage: 'response', errorCode: 'TELEGRAM_INVALID_RESPONSE', messageKey: 'telegram_invalid_response', recordedAt: '2026-08-13T10:00:01.000Z' });
 
@@ -414,7 +462,7 @@ describe('SQLiteV2Stores', () => {
     const privateValues = ['owner@example.test', '192.0.2.10', 'https://private.example.test', 'entry-private-id', 'arbitrary private reason', 'private_domain'];
 
     const reportId = await stores.commit({
-      request: { runId: 'safe-integration-groups-run', slotId: 'safe-integration-groups-slot' }, cursor: { dev: 1, ino: 2, size: 1, offset: 1 }, signatures: plan,
+      request: { runId: 'safe-integration-groups-run', slotId: 'safe-integration-groups-slot' }, cursor: { dev: 1, ino: 2, size: 1, offset: 1 }, signatures: plan, logRead: null,
       report: { status: 'reported', findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [], integrationStatus: { available: true, integrations: [
         { state: 'setup_error', title: privateValues[0], domain: privateValues[5], entry_id: privateValues[3], reason: 'invalid_auth' },
         { state: 'setup_error', title: privateValues[1], reason: privateValues[4] },
@@ -698,6 +746,7 @@ describe('SQLiteV2Stores', () => {
       request: { runId: 'newer-run', slotId: 'newer-slot' },
       cursor: { dev: 1, ino: 2, size: 200, offset: 200 },
       signatures: newerPlan,
+      logRead: null,
       report: { status: 'reported', findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [] }
     });
     expect(await stores.getReport(`v2-report:${queued.jobId}`)).toBeNull();
@@ -880,6 +929,7 @@ describe('SQLiteV2Stores', () => {
         request: { runId: `delete-${suffix}`, slotId: `delete-${suffix}-slot` },
         cursor: { dev: 1, ino: 2, size: 100, offset: 100 },
         signatures: plan,
+        logRead: null,
         report: { status: 'reported', findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [] }
       }));
     }
@@ -906,7 +956,7 @@ describe('SQLiteV2Stores', () => {
     const entries = parseHomeAssistantLog(['2026-08-14 12:00:00 ERROR [homeassistant.components.demo] Failure']);
     const plan = await stores.classifyAndStage(entries, '2026-08-14T12:30:00.000Z');
     const reportId = await stores.commit({
-      request: { runId: 'exact-ignore-store-run', slotId: 'exact-ignore-store-slot' }, cursor: { dev: 1, ino: 2, size: 1, offset: 1 }, signatures: plan,
+      request: { runId: 'exact-ignore-store-run', slotId: 'exact-ignore-store-slot' }, cursor: { dev: 1, ino: 2, size: 1, offset: 1 }, signatures: plan, logRead: null,
       report: { status: 'reported', findings: [{ signature: entries[0]!.signature, analysis: { summary: 'Found', recommendation: 'Fix' } }], warnings: [] }
     });
 

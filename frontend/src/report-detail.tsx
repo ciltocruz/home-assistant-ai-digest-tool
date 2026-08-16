@@ -40,6 +40,7 @@ export function ReportDetail({ report, embedded = false, onDelete, onIgnoreProbl
       {source === 'v2'
         ? <div><dt>{t('report.generatedAtLabel')}</dt><dd>{formatDateTime(report.summary.createdAt, timeZone)}</dd></div>
         : <div><dt>{t('report.window')}</dt><dd>{formatDateTime(report.summary.window.from, timeZone)} — {formatDateTime(report.summary.window.to, timeZone)}<span className="report-metadata-help">{t('report.windowHelp')}</span></dd></div>}
+      {report.summary.logReadFrom ? <div><dt>{t('report.logReadRange')}</dt><dd>{formatDateTime(report.summary.logReadFrom, timeZone)}{report.summary.logReadTo && report.summary.logReadTo !== report.summary.logReadFrom ? <> — {formatDateTime(report.summary.logReadTo, timeZone)}</> : null}<span className="report-metadata-help">{t('report.logReadHelp')}</span></dd></div> : null}
       {source === 'legacy' ? <div><dt>{t('dashboard.history.fields.format')}</dt><dd>{t('dashboard.history.source.legacy')}</dd></div> : null}
     </dl>
     <ReportOutcomes report={report} source={source} heading={SectionHeading} />

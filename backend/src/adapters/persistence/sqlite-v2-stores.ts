@@ -57,8 +57,8 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
         ...(integrationStatus ? { integrationStatus } : {})
       };
       this.db.prepare(
-        'insert into v2_reports(id, run_id, status, payload_json, created_at) values (?, ?, ?, ?, ?)'
-      ).run(reportId, runId, plan.report.status, JSON.stringify({ report: storedReport, signatures: safeSignatures(plan.reportedSignatures ?? plan.signatures.signatures, new Set(findings.map((finding) => finding.signature))), notesBySignature: safeNotes(plan.notesBySignature) ?? {} }), createdAt);
+        'insert into v2_reports(id, run_id, status, payload_json, created_at, log_read_from, log_read_to) values (?, ?, ?, ?, ?, ?, ?)'
+      ).run(reportId, runId, plan.report.status, JSON.stringify({ report: storedReport, signatures: safeSignatures(plan.reportedSignatures ?? plan.signatures.signatures, new Set(findings.map((finding) => finding.signature))), notesBySignature: safeNotes(plan.notesBySignature) ?? {} }), createdAt, plan.logRead?.from ?? null, plan.logRead?.to ?? null);
       if (plan.report.status !== 'quiet') {
         const attemptStatus = deliveryStatus === 'sent' || deliveryStatus === 'skipped'
           ? deliveryStatus
@@ -318,13 +318,14 @@ export class SQLiteV2Stores implements BatchPersistence, SignatureMemory, NoteSt
 }
 
 const REPORT_SELECT = `select v2_reports.id, v2_reports.status, v2_reports.payload_json, v2_reports.created_at,
+  v2_reports.log_read_from, v2_reports.log_read_to,
   (select status from v2_runs where id = v2_reports.run_id) as run_status,
   (select diagnostic_error_code from v2_report_delivery_attempts where report_id = v2_reports.id) as diagnostic_error_code,
   (select diagnostic_message_key from v2_report_delivery_attempts where report_id = v2_reports.id) as diagnostic_message_key,
   (select diagnostic_stage from v2_report_delivery_attempts where report_id = v2_reports.id) as diagnostic_stage,
   (select diagnostic_at from v2_report_delivery_attempts where report_id = v2_reports.id) as diagnostic_at
   from v2_reports`;
-type V2ReportRow = { id: string; status: string; run_status?: string | null; run_delivery_status?: string | null; payload_json: string; created_at: string; diagnostic_error_code?: string | null; diagnostic_message_key?: string | null; diagnostic_stage?: string | null; diagnostic_at?: string | null };
+type V2ReportRow = { id: string; status: string; run_status?: string | null; run_delivery_status?: string | null; payload_json: string; created_at: string; log_read_from?: string | null; log_read_to?: string | null; diagnostic_error_code?: string | null; diagnostic_message_key?: string | null; diagnostic_stage?: string | null; diagnostic_at?: string | null };
 type FailedRunRow = { id: string; status: string; error_code: string | null; error_message: string | null; created_at: string };
 type V2Payload = { report?: Partial<CommitPlan['report']>; signatures?: unknown; notesBySignature?: unknown };
 type StoredSignature = {
@@ -402,7 +403,9 @@ function summaryFor(row: V2ReportRow, apiKey?: string): DigestSummary {
   if (isCorruptReport(row, stored)) return invalidSummary(row, 'REPORT_CORRUPT');
   const signatures = safeSignatures(stored.value.signatures);
   const createdAt = safeTimestamp(row.created_at);
-  return { id: row.id, window: pointInTimeWindow(createdAt), severityCounts: severity(signatures), createdAt, deliveryStatus: deliveryStatusValue(stored.value.report?.deliveryStatus) ?? 'pending', ...(deliveryDiagnosticForRow(row) ? { deliveryDiagnostic: deliveryDiagnosticForRow(row) } : {}), source: 'v2', runStatus: row.status as 'quiet' | 'reported' | 'partial' | 'failed', warningCodes: safeWarnings(stored.value.report?.warnings, apiKey), signatureCounts: counts(signatures) };
+  const logReadFrom = safeIsoDate(row.log_read_from);
+  const logReadTo = safeIsoDate(row.log_read_to);
+  return { id: row.id, window: pointInTimeWindow(createdAt), severityCounts: severity(signatures), createdAt, deliveryStatus: deliveryStatusValue(stored.value.report?.deliveryStatus) ?? 'pending', ...(deliveryDiagnosticForRow(row) ? { deliveryDiagnostic: deliveryDiagnosticForRow(row) } : {}), ...(logReadFrom && logReadTo ? { logReadFrom, logReadTo } : {}), source: 'v2', runStatus: row.status as 'quiet' | 'reported' | 'partial' | 'failed', warningCodes: safeWarnings(stored.value.report?.warnings, apiKey), signatureCounts: counts(signatures) };
 }
 function detailFor(row: V2ReportRow, apiKey?: string, ignoredSignatures = new Set<string>()): DigestDetail {
   const stored = payload(row);

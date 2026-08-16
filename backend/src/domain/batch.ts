@@ -16,6 +16,7 @@ export type ParsedLogEntry = {
 };
 export type LogCursor = { dev: number; ino: number; size: number; offset: number };
 export type LogDelta = { lines: string[]; cursor: LogCursor; recovery?: 'truncated' | 'replaced' };
+export type LogReadRange = { from: string; to: string };
 export type KnownSignature = {
   signature: string;
   firstSeenAt: string;

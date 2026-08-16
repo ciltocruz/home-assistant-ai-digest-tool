@@ -123,6 +123,7 @@ function applyMigrations(db: DatabaseSync): void {
   addDigestJobColumns(db);
   addV2BatchTables(db);
   addV2RunColumns(db);
+  addV2ReportLogReadColumns(db);
   addV2DeliveryDiagnosticColumns(db);
   backfillV2DeliveryAttempts(db);
   backfillV2RunDeliveryStatuses(db);
@@ -323,6 +324,12 @@ function addV2RunColumns(db: DatabaseSync): void {
   const columns = new Set((db.prepare('pragma table_info(v2_runs)').all() as Array<{ name: string }>).map((column) => column.name));
   if (!columns.has('error_message')) db.exec('alter table v2_runs add column error_message text');
   if (!columns.has('delivery_status')) db.exec('alter table v2_runs add column delivery_status text');
+}
+
+function addV2ReportLogReadColumns(db: DatabaseSync): void {
+  const columns = new Set((db.prepare('pragma table_info(v2_reports)').all() as Array<{ name: string }>).map((column) => column.name));
+  if (!columns.has('log_read_from')) db.exec('alter table v2_reports add column log_read_from text');
+  if (!columns.has('log_read_to')) db.exec('alter table v2_reports add column log_read_to text');
 }
 
 function addV2DeliveryDiagnosticColumns(db: DatabaseSync): void {

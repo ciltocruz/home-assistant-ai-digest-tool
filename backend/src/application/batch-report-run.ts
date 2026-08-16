@@ -1,4 +1,4 @@
-import type { BatchSignature, LogDelta, ParsedLogEntry, SignaturePlan } from '../domain/batch.js';
+import type { BatchSignature, LogDelta, LogReadRange, ParsedLogEntry, SignaturePlan } from '../domain/batch.js';
 import { parseHomeAssistantLog } from '../domain/batch.js';
 import type { DeliveryDiagnostic, DeliveryDiagnosticErrorCode, DeliveryResult, DeliveryStatus, IgnoreRuleDto, NoteDto } from '@ha-digest/shared';
 import type { IntegrationStatusFailureReason, IntegrationStatusSnapshot } from './integration-status.js';
@@ -42,6 +42,7 @@ export type CommitPlan = {
   request: RunRequest;
   cursor: LogDelta['cursor'];
   signatures: SignaturePlan;
+  logRead: LogReadRange | null;
   reportedSignatures?: SignaturePlan['signatures'];
   notesBySignature?: Record<string, NoteDto[]>;
   report: {
@@ -90,10 +91,9 @@ export class BatchReportRun {
       throw error;
     }
     const now = this.dependencies.now?.() ?? new Date().toISOString();
-    const plan = await this.dependencies.signatures.classifyAndStage(
-      parseHomeAssistantLog(delta.lines, { includeWarnings: request.includeWarnings }),
-      now
-    );
+    const entries = parseHomeAssistantLog(delta.lines, { includeWarnings: request.includeWarnings });
+    const plan = await this.dependencies.signatures.classifyAndStage(entries, now);
+    const logRead: LogReadRange | null = entries.length > 0 ? { from: entries[0].at, to: entries[entries.length - 1].at } : null;
     const [rules, notes] = await Promise.all([
       this.dependencies.ignores?.listActive(now) ?? [],
       this.dependencies.notes?.listWindow({ from: '1970-01-01T00:00:00.000Z', to: now }) ?? []
@@ -105,7 +105,7 @@ export class BatchReportRun {
     const notesBySignature = notesForSignatures(reportedSignatures, notes);
     const integrationStatus = await this.readIntegrationStatus();
     if (reportedSignatures.length === 0) {
-      const reportId = await this.commit({ request, cursor: delta.cursor, signatures: plan, reportedSignatures, notesBySignature, report: { status: 'quiet', deliveryStatus: 'skipped', findings: [], warnings: [], integrationStatus } });
+      const reportId = await this.commit({ request, cursor: delta.cursor, signatures: plan, logRead, reportedSignatures, notesBySignature, report: { status: 'quiet', deliveryStatus: 'skipped', findings: [], warnings: [], integrationStatus } });
       this.report({ event: 'report_commit_completed', reportId, status: 'quiet', signatureCount: 0 });
       return { status: 'quiet', warnings: [], reportId };
     }
@@ -140,6 +140,7 @@ export class BatchReportRun {
         request,
         cursor: delta.cursor,
         signatures: plan,
+        logRead,
         reportedSignatures,
         notesBySignature,
         report: {
@@ -166,7 +167,7 @@ export class BatchReportRun {
       ...(firstError ? { failure: firstError } : {}),
       integrationStatus
     };
-    const reportId = await this.commit({ request, cursor: delta.cursor, signatures: plan, reportedSignatures, notesBySignature, report });
+    const reportId = await this.commit({ request, cursor: delta.cursor, signatures: plan, logRead, reportedSignatures, notesBySignature, report });
     this.report({ event: 'report_commit_completed', reportId, status, signatureCount: reportedSignatures.length });
     if (await this.dependencies.persistence.getDeliveryStatus?.(reportId) === 'sent') {
       return { status, warnings, reportId, deliveryStatus: 'sent' };

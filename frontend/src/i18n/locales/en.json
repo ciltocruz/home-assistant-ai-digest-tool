@@ -238,6 +238,8 @@
     "window": "Reviewed period",
     "generatedAtLabel": "Report generated at",
     "windowHelp": "The span of Home Assistant information reviewed to create this report.",
+    "logReadRange": "Errors read",
+    "logReadHelp": "From the persisted cursor in the current log file.",
     "delivery": "Delivery",
     "back": "Back to reports",
     "loadingTitle": "Loading report",

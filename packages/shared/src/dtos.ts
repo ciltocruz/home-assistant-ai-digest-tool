@@ -360,6 +360,8 @@ export const DigestSummarySchema = z
     createdAt: IsoDateTimeSchema,
     deliveryStatus: DeliveryStatusSchema,
     deliveryDiagnostic: DeliveryDiagnosticSchema.optional(),
+    logReadFrom: IsoDateTimeSchema.optional(),
+    logReadTo: IsoDateTimeSchema.optional(),
     source: z.enum(['legacy', 'v2']).optional(),
     runStatus: z.enum(['quiet', 'reported', 'partial', 'failed']).optional(),
     warningCodes: z.array(z.string().min(1)).optional(),

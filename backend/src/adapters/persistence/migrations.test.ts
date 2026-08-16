@@ -159,6 +159,25 @@ describe('SQLite migrations', () => {
     expect(db.prepare('select status, diagnostic_error_code, diagnostic_message_key, diagnostic_stage, diagnostic_at from v2_report_delivery_attempts where report_id = ?').get('v2-report:old-diag')).toEqual({ status: 'failed', diagnostic_error_code: null, diagnostic_message_key: null, diagnostic_stage: null, diagnostic_at: null });
   });
 
+  it('adds nullable log read columns to v2 reports without changing existing data', async () => {
+    const db = await openTestDatabase();
+    runMigrations(db);
+    db.prepare('insert into v2_runs(id, slot_id, status, created_at) values (?, ?, ?, ?)')
+      .run('log-read-legacy-run', 'log-read-legacy-slot', 'reported', '2026-08-17T13:00:00.000Z');
+    db.prepare('insert into v2_reports(id, run_id, status, payload_json, created_at) values (?, ?, ?, ?, ?)')
+      .run('v2-report:log-read-legacy-run', 'log-read-legacy-run', 'reported', '{"report":{"status":"reported"}}', '2026-08-17T13:00:00.000Z');
+
+    runMigrations(db);
+
+    expect((db.prepare('pragma table_info(v2_reports)').all() as Array<{ name: string }>).map((column) => column.name)).toEqual(expect.arrayContaining(['log_read_from', 'log_read_to']));
+    expect(db.prepare('select log_read_from, log_read_to from v2_reports where id = ?').get('v2-report:log-read-legacy-run')).toEqual({ log_read_from: null, log_read_to: null });
+
+    runMigrations(db);
+
+    expect((db.prepare('pragma table_info(v2_reports)').all() as Array<{ name: string }>).filter((column) => column.name === 'log_read_from' || column.name === 'log_read_to')).toHaveLength(2);
+    expect(db.prepare('select id, run_id, status, payload_json, created_at from v2_reports where id = ?').get('v2-report:log-read-legacy-run')).toEqual({ id: 'v2-report:log-read-legacy-run', run_id: 'log-read-legacy-run', status: 'reported', payload_json: '{"report":{"status":"reported"}}', created_at: '2026-08-17T13:00:00.000Z' });
+  });
+
   it('repairs only an orphaned completed v2 job and makes it retryable once', async () => {
     const db = await openTestDatabase();
     runMigrations(db);

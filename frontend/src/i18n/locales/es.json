@@ -238,6 +238,8 @@
     "window": "Periodo revisado",
     "generatedAtLabel": "Informe generado el",
     "windowHelp": "Intervalo de información de Home Assistant revisado para crear este informe.",
+    "logReadRange": "Errores leídos",
+    "logReadHelp": "Desde el cursor persistido en el archivo de log actual.",
     "delivery": "Notificación",
     "back": "Volver a informes",
     "loadingTitle": "Cargando informe",
