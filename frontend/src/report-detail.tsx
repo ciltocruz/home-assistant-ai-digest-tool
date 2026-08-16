@@ -5,12 +5,14 @@ import { redactSensitiveText } from './api-client.js';
 import { ConfirmDialog, LiveFeedback } from './feedback.js';
 import { formatDateTime } from './date-time.js';
 
-export function ReportDetail({ report, embedded = false, onDelete, timeZone }: { report: DigestDetail; embedded?: boolean; onDelete?: () => Promise<void>; timeZone?: string }) {
+export function ReportDetail({ report, embedded = false, onDelete, onIgnoreProblem, onManualTelegramSend, timeZone }: { report: DigestDetail; embedded?: boolean; onDelete?: () => Promise<void>; onIgnoreProblem?: (signature: string) => Promise<void>; onManualTelegramSend?: () => Promise<void>; timeZone?: string }) {
   const presentation = report.presentation;
   const SectionHeading = embedded ? 'h3' : 'h2';
   const legacyMarkdown = presentation?.mode === 'legacy_markdown' ? presentation.legacyMarkdown : report.rendered.body;
   const source = report.source ?? report.summary.source ?? (presentation?.mode === 'batch' ? 'v2' : 'legacy');
+  const sendable = !report.id.startsWith('v2-run:') && !(presentation?.mode === 'batch' && presentation.status === 'failed');
   const [deleteState, setDeleteState] = useState<'idle' | 'confirming' | 'pending' | 'error'>('idle');
+  const [telegramState, setTelegramState] = useState<'idle' | 'confirming' | 'pending' | 'error'>('idle');
 
   async function deleteReport() {
     if (!onDelete || deleteState === 'pending') return;
@@ -20,6 +22,13 @@ export function ReportDetail({ report, embedded = false, onDelete, timeZone }: {
     } catch {
       setDeleteState('error');
     }
+  }
+
+  async function sendTelegram() {
+    if (!onManualTelegramSend || telegramState === 'pending') return;
+    setTelegramState('pending');
+    try { await onManualTelegramSend(); setTelegramState('idle'); }
+    catch { setTelegramState('error'); }
   }
 
   return <article className="panel report-detail">
@@ -42,7 +51,7 @@ export function ReportDetail({ report, embedded = false, onDelete, timeZone }: {
         <span className="severity-chip severity-chip--info">{t('report.severity.info')} {report.summary.severityCounts.info}</span>
       </div>
     </section>
-    {presentation?.mode === 'batch' ? <BatchPresentation heading={SectionHeading} presentation={presentation} /> : presentation?.mode === 'structured' ? <>
+    {presentation?.mode === 'batch' ? <BatchPresentation heading={SectionHeading} presentation={presentation} onIgnoreProblem={onIgnoreProblem} /> : presentation?.mode === 'structured' ? <>
       <section className="report-section" aria-labelledby="report-overview-title">
         <SectionHeading id="report-overview-title">{t('report.presentation.overview.title')}</SectionHeading>
         <p className="report-item-title">{presentation.overview.title}</p>
@@ -68,11 +77,16 @@ export function ReportDetail({ report, embedded = false, onDelete, timeZone }: {
          </section>
       </details>
     </>}
+    {sendable && report.manualTelegram ? <ManualTelegramStatus heading={SectionHeading} attempts={report.manualTelegram.attempts} timeZone={timeZone} /> : null}
     <footer className="report-actions">
       <a className="report-link" href="/reports">{t('report.back')}</a>
-      {onDelete ? <button type="button" className="danger-action" onClick={() => setDeleteState('confirming')}>{t('report.delete.action')}</button> : null}
+      <div className="report-action-buttons">
+        {sendable && report.manualTelegram?.configured && onManualTelegramSend ? <button type="button" className="secondary-action" disabled={telegramState === 'pending'} onClick={() => setTelegramState('confirming')}>{telegramState === 'pending' ? t('report.telegram.pending') : t('report.telegram.action')}</button> : null}
+        {onDelete ? <button type="button" className="danger-action" onClick={() => setDeleteState('confirming')}>{t('report.delete.action')}</button> : null}
+      </div>
     </footer>
     <LiveFeedback message={deleteState === 'error' ? t('report.delete.error') : ''} error />
+    <LiveFeedback message={telegramState === 'pending' ? t('report.telegram.pending') : telegramState === 'error' ? t('report.telegram.error') : ''} error={telegramState === 'error'} />
     <ConfirmDialog
       open={deleteState === 'confirming' || deleteState === 'pending'}
       title={t('report.delete.title')}
@@ -84,6 +98,7 @@ export function ReportDetail({ report, embedded = false, onDelete, timeZone }: {
       onCancel={() => setDeleteState('idle')}
       onConfirm={() => void deleteReport()}
     />
+    <ConfirmDialog open={telegramState === 'confirming' || telegramState === 'pending'} title={t('report.telegram.title')} description={t('report.telegram.description')} confirmLabel={telegramState === 'pending' ? t('report.telegram.pending') : t('report.telegram.action')} cancelLabel={t('report.telegram.cancel')} pending={telegramState === 'pending'} onCancel={() => setTelegramState('idle')} onConfirm={() => void sendTelegram()} />
   </article>;
 }
 
@@ -137,20 +152,34 @@ function PresentationSection({ heading: Heading, id, title, items }: { heading: 
   </section>;
 }
 
-function BatchPresentation({ heading: Heading, presentation }: { heading: 'h2' | 'h3'; presentation: Extract<NonNullable<DigestDetail['presentation']>, { mode: 'batch' }> }) {
+function BatchPresentation({ heading: Heading, presentation, onIgnoreProblem }: { heading: 'h2' | 'h3'; presentation: Extract<NonNullable<DigestDetail['presentation']>, { mode: 'batch' }>; onIgnoreProblem?: (signature: string) => Promise<void> }) {
   if (presentation.status === 'failed') return <section className="report-section" role="alert"><Heading>{t('report.batch.failure')}</Heading><p>{failureLabel(presentation.failure)}</p></section>;
   const integrationStatus = projectIntegrationStatus(presentation.integrationStatus);
   return <>
     {presentation.warnings.length > 0 ? <section className="report-section report-analysis-note"><Heading>{t('report.batch.warnings')}</Heading><ul>{presentation.warnings.map((warning) => <li key={warning}>{warningLabel(warning)}{warning === 'AI_ANALYSIS_PARTIAL' ? null : <code translate="no" dir="ltr">{warning}</code>}</li>)}</ul></section> : null}
     <IntegrationSummary heading={Heading} status={integrationStatus} />
-    <section className="report-section report-problems"><Heading>{t('report.batch.problems')}</Heading><p className="report-section-intro">{t('report.batch.groupingExplanation')}</p><ul className="report-presentation-list">{presentation.signatures.map((item) => <li key={item.signature} className="report-presentation-item">
-      <div className="report-problem-heading"><p className="report-item-title">{item.problemKind ? t(`report.batch.problemKinds.${item.problemKind}.title`) : t(`report.batch.classification.${item.classification}`)}</p><span className={`severity-badge severity-badge--${severityForLevel(item.level)}`}>{severityLabel(severityForLevel(item.level))}</span></div>
+    <section className="report-section report-problems"><Heading>{t('report.batch.problems')}</Heading><p className="report-section-intro">{t('report.batch.groupingExplanation')}</p><ul className="report-presentation-list">{presentation.signatures.map((item) => <ProblemCard key={item.signature} item={item} onIgnoreProblem={onIgnoreProblem} />)}</ul></section>
+  </>;
+}
+
+function ProblemCard({ item, onIgnoreProblem }: { item: Extract<NonNullable<DigestDetail['presentation']>, { mode: 'batch' }>['signatures'][number]; onIgnoreProblem?: (signature: string) => Promise<void> }) {
+  const [ignoreState, setIgnoreState] = useState<'idle' | 'confirming' | 'pending' | 'ignored' | 'error'>(item.ignoredForFuture ? 'ignored' : 'idle');
+  async function ignore() {
+    if (!onIgnoreProblem || ignoreState === 'pending') return;
+    setIgnoreState('pending');
+    try { await onIgnoreProblem(item.signature); setIgnoreState('ignored'); }
+    catch { setIgnoreState('error'); }
+  }
+  return <li className="report-presentation-item">
+      <div className="report-problem-heading"><p className="report-item-title"><span>{item.problemKind ? t(`report.batch.problemKinds.${item.problemKind}.title`) : t(`report.batch.classification.${item.classification}`)}</span> <code className="report-component-badge" translate="no" dir="ltr">{item.component}</code></p><span className={`severity-badge severity-badge--${severityForLevel(item.level)}`}>{severityLabel(severityForLevel(item.level))}</span></div>
       <p className="report-problem-stats"><span>{item.occurrences === 1 ? t('report.batch.occurrencesSingular') : t('report.batch.occurrencesPlural').replace('{count}', String(item.occurrences))}</span></p>
-      {item.problemKind ? <div className="report-ai-content"><div><p className="report-field-label">{t('report.batch.connectionExplanation')}</p><p>{t(`report.batch.problemKinds.${item.problemKind}.copy`)}</p></div><div><p className="report-field-label">{t('report.batch.nextStep')}</p><p>{t(`report.batch.problemKinds.${item.problemKind}.action`)}</p></div></div> : item.analysis ? <div className="report-ai-content"><div><p className="report-field-label">{t('report.batch.aiExplanation')}</p><p>{item.analysis.summary}</p></div><div><p className="report-field-label">{t('report.batch.aiRecommendation')}</p><p>{item.analysis.recommendation}</p></div></div> : <p className="muted-copy">{t('report.batch.analysisUnavailable')}</p>}
+      {item.problemKind ? <div className="report-ai-content"><div><p className="report-field-label">{t('report.batch.connectionExplanation')}</p><p>{t(`report.batch.problemKinds.${item.problemKind}.copy`)}</p></div><div><p className="report-field-label">{t('report.batch.nextStep')}</p><p>{t(`report.batch.problemKinds.${item.problemKind}.action`)}</p></div></div> : item.analysis ? <div className="report-ai-content"><div><p className="report-field-label">{t('report.batch.aiExplanation')}</p><p>{item.analysis.summary}</p></div><div><p className="report-field-label">{t('report.batch.aiRecommendation')}</p><p>{item.analysis.recommendation}</p></div></div> : <><p className="muted-copy">{t('report.batch.analysisUnavailable')}</p>{item.safeExcerpt ? <details className="report-trace-detail"><summary>{t('report.batch.trace.action')}</summary><p>{t('report.batch.trace.warning')}</p><pre><code dir="ltr" translate="no">{item.safeExcerpt.lines.join('\n')}</code></pre></details> : <p className="muted-copy">{t('report.batch.trace.unavailable')}</p>}</>}
       <details className="report-technical-detail"><summary>{t('report.batch.component')}: <span translate="no">{item.component}</span></summary><dl><div><dt>{t('report.batch.technicalId')}</dt><dd><code translate="no" dir="ltr">{item.signature}</code></dd></div></dl></details>
       {item.notes?.length ? <div className="report-operator-notes"><p className="report-field-label">{t('report.batch.operatorNotes')}</p><ul>{item.notes.map((note) => <li key={note.id}>{note.text}</li>)}</ul></div> : null}
-    </li>)}</ul></section>
-  </>;
+      <div className="report-problem-actions">{ignoreState === 'ignored' ? <span className="report-action-state" role="status">{t('report.ignore.success')}</span> : onIgnoreProblem ? <button type="button" className="secondary-action" disabled={ignoreState === 'pending'} onClick={() => setIgnoreState('confirming')}>{ignoreState === 'pending' ? t('report.ignore.pending') : t('report.ignore.action')}</button> : null}</div>
+      <LiveFeedback message={ignoreState === 'error' ? t('report.ignore.error') : ''} error />
+      <ConfirmDialog open={ignoreState === 'confirming' || ignoreState === 'pending'} title={t('report.ignore.title')} description={t('report.ignore.description')} confirmLabel={ignoreState === 'pending' ? t('report.ignore.pending') : t('report.ignore.action')} cancelLabel={t('report.ignore.cancel')} pending={ignoreState === 'pending'} onCancel={() => setIgnoreState('idle')} onConfirm={() => void ignore()} />
+    </li>;
 }
 
 function IntegrationSummary({ heading: Heading, status }: { heading: 'h2' | 'h3'; status?: IntegrationStatusSummary }) {
@@ -172,7 +201,12 @@ function IntegrationSummary({ heading: Heading, status }: { heading: 'h2' | 'h3'
     {status.retrying > 0 ? <p className="integration-neutral-note">{t('report.batch.integrationRetryingHelp')}</p> : null}
     {status.unknown > 0 ? <p className="integration-neutral-note">{t('report.batch.integrationUnknownHelp')}</p> : null}
     {status.errors > 0 ? <p className="integration-attention">{t('report.batch.integrationErrorsHelp')}</p> : <p className="integration-clear">{t('report.batch.integrationClear')}</p>}
+    {status.errorGroups?.length ? <div className="integration-error-groups"><p>{t('report.batch.integrationGroupExplanation')}</p><ul>{status.errorGroups.map((group) => <li key={`${group.category}:${group.reason}`}><span>{t(`report.batch.integrationCategories.${group.category}`)}</span><span>{t(`report.batch.integrationErrorReasons.${group.reason}`)}</span><strong>{group.count}</strong></li>)}</ul><p>{t('report.batch.integrationGroupAction')}</p></div> : status.errors > 0 ? <p className="integration-neutral-note">{t('report.batch.integrationGroupsUnavailable')}</p> : null}
   </section>;
+}
+
+function ManualTelegramStatus({ heading: Heading, attempts, timeZone }: { heading: 'h2' | 'h3'; attempts: NonNullable<DigestDetail['manualTelegram']>['attempts']; timeZone?: string }) {
+  return <section className="report-section report-manual-telegram" aria-labelledby="report-manual-telegram-title"><Heading id="report-manual-telegram-title">{t('report.telegram.statusTitle')}</Heading>{attempts.length === 0 ? <p>{t('report.telegram.none')}</p> : <ul>{attempts.map((attempt) => <li key={attempt.actionId}><span>{formatDateTime(attempt.completedAt ?? attempt.requestedAt, timeZone)}</span><strong>{t(`report.telegram.status.${attempt.status}`)}</strong>{attempt.diagnostic ? <span className="report-manual-telegram-diagnostic">{t(`report.outcomes.deliveryDiagnostics.${attempt.diagnostic.messageKey}.copy`)}</span> : null}</li>)}</ul>}</section>;
 }
 
 function severityLabel(severity: NonNullable<ReportPresentationItem['severity']>): string {
