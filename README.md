@@ -1,8 +1,21 @@
-# 🏠 Home Assistant AI Digest Tool
+<p align="center">
+  <img src="frontend/public/favicon.svg" alt="Home Assistant AI Digest Tool" width="96">
+</p>
 
-> Turn Home Assistant Core log incidents into structured, actionable reports — automatically, on a schedule, with AI summaries and Telegram alerts.
+<h1 align="center">🏠 Home Assistant AI Digest Tool</h1>
 
-[![CI](https://github.com/ciltocruz/home-assistant-ai-digest-tool/actions/workflows/ci.yml/badge.svg)](https://github.com/ciltocruz/home-assistant-ai-digest-tool/actions/workflows/ci.yml)
+<p align="center">
+  Turn Home Assistant Core log incidents into structured, actionable reports — automatically, on a schedule, with AI summaries and Telegram alerts.
+</p>
+
+<p align="center">
+  <a href="https://github.com/ciltocruz/home-assistant-ai-digest-tool/actions/workflows/ci.yml"><img src="https://github.com/ciltocruz/home-assistant-ai-digest-tool/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/ciltocruz/home-assistant-ai-digest-tool/releases"><img src="https://img.shields.io/github/v/release/ciltocruz/home-assistant-ai-digest-tool" alt="Release"></a>
+  <a href="https://app.codecov.io/gh/ciltocruz/home-assistant-ai-digest-tool"><img src="https://img.shields.io/codecov/c/github/ciltocruz/home-assistant-ai-digest-tool" alt="Coverage"></a>
+  <a href="https://github.com/ciltocruz/home-assistant-ai-digest-tool/pkgs/container/home-assistant-ai-digest-tool"><img src="https://img.shields.io/ghcr/v/ciltocruz/home-assistant-ai-digest-tool" alt="GHCR image"></a>
+  <a href="https://github.com/ciltocruz/home-assistant-ai-digest-tool/pkgs/container/home-assistant-ai-digest-tool"><img src="https://img.shields.io/ghcr/pulls/ciltocruz/home-assistant-ai-digest-tool" alt="GHCR pulls"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/ciltocruz/home-assistant-ai-digest-tool" alt="License"></a>
+</p>
 
 Home Assistant AI Digest Tool is a **Docker-first web application** that watches one mounted `home-assistant.log` file, groups repeated errors into stable signatures, and produces a digest of what actually needs your attention — new problems, reactivated ones, and trends — enriched with Home Assistant integration status and optional AI analysis.
 
@@ -18,6 +31,8 @@ Home Assistant AI Digest Tool is a **Docker-first web application** that watches
 - 🔔 **Sends a compact Telegram summary** only when findings are noteworthy. Quiet runs stay quiet.
 - 📊 **Tracks integration status** via the Home Assistant WebSocket API; an unavailable API shows as unavailable without discarding the report.
 - 🔒 **Keeps everything local** — SQLite storage, encrypted secrets, no telemetry, no cloud account.
+
+> **Gemini model note:** the Gemini adapter uses the latest flash model (`gemini-flash-lite-latest`) and it cannot be changed yet. A future version will let you choose the model for your configured API; this note will be removed then.
 
 ## 🚫 What it does NOT do
 
