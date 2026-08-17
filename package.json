@@ -9,6 +9,7 @@
     "ci": "pnpm -r build && pnpm typecheck && pnpm test && pnpm test:focused && pnpm test:smoke",
     "test:smoke": "playwright install chromium && playwright test",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:focused": "node scripts/check-focused-tests.mjs",
     "screenshots": "playwright test --config playwright.screenshots.config.ts",
     "verify:docker:preflight": "bash scripts/verify-docker-runtime.sh --preflight",
@@ -19,6 +20,7 @@
   "devDependencies": {
     "@playwright/test": "^1.57.0",
     "@types/node": "^22.10.2",
+    "@vitest/coverage-v8": "4.1.10",
     "jsdom": "29.1.1",
     "semantic-release": "25.0.9",
     "typescript": "^5.7.2",
