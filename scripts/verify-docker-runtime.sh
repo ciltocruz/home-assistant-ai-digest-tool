@@ -679,7 +679,10 @@ main() {
 
   deadline_started_at="$SECONDS"
   require_dependencies
-  cp "$repository_root/tests/fixtures/ha/home-assistant.log" "$ha_log_file"
+  # The fixture line must fall inside the analysis lookback window, so its
+  # timestamp is refreshed to the current time on every verification run.
+  sed -E "s/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}/$(date -u '+%Y-%m-%d %H:%M:%S')/" \
+    "$repository_root/tests/fixtures/ha/home-assistant.log" >"$ha_log_file"
   chmod 0644 "$ha_log_file"
   release_port_reservation
 
