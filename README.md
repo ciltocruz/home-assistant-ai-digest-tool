@@ -128,3 +128,7 @@ pnpm run ci
 Regenerate README screenshots with `pnpm screenshots` (Playwright against the mocked runtime API — no backend, no credentials needed).
 
 This is a clean-room implementation inspired by the product shape of Home Assistant incident digests; it is not a fork.
+
+## 📄 License
+
+MIT — see [LICENSE](LICENSE).
