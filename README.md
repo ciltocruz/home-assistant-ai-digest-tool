@@ -43,11 +43,24 @@ cp .env.example .env
 docker compose up --build --detach
 ```
 
-Open **http://127.0.0.1:3000** and follow the guided onboarding — six screens: language and admin account, Home Assistant connection, AI provider, optional Telegram, schedule, and privacy.
+Open **http://127.0.0.1:3000** and follow the guided onboarding.
+
+Set `PUBLIC_APP_URL` only when the application has a stable browser-accessible origin (for example `https://digest.example/`). It must not include a path prefix, credentials, a query string, or a fragment; invalid values are ignored and Telegram summaries remain unlinked.
+
+## Six-screen onboarding
+
+The first browser visit selects a language and creates the admin account, then resumes the protected onboarding flow:
+
+1. Home Assistant URL and long-lived access token.
+2. OpenAI, Gemini, or Ollama provider configuration.
+3. Optional Telegram bot token and chat ID.
+4. Required schedule and timezone.
+5. Privacy level and report retention.
+6. An immediate first report.
+
+Secrets are encrypted in `/data`, returned only as masks, and must never be committed, logged, or pasted into support requests. There are no bootstrap credentials in Compose or `.env`.
 
 ![Onboarding](docs/readme-screenshots/04-onboarding.png)
-
-Set `PUBLIC_APP_URL` only when the application has a stable browser-accessible origin (for example `https://digest.example/`); invalid values are ignored and Telegram summaries remain unlinked.
 
 ## 📋 What a report looks like
 
@@ -58,6 +71,10 @@ Reports rank findings into **attention items** (before observations and positive
 The dashboard shows the current state, the latest report, and history at a glance:
 
 ![Configuration](docs/readme-screenshots/03-configuration.png)
+
+## Report job lifecycle
+
+Every launch — scheduled, manual, or the first report after onboarding — is a **durable report job** that survives restarts: it is queued, runs (collecting log data and analyzing signatures), and finishes as completed or failed. A failed job keeps its error and offers a retry; a complete AI failure records in the web UI without advancing the log cursor. Reports are retained locally (newest 10 by default) while error signatures stay permanent.
 
 ## 🧰 Configuration
 
@@ -97,7 +114,7 @@ The Docker verifier creates disposable local and reverse-proxy Compose projects,
 - Keep the complete `/data` volume private: it holds SQLite data, the encryption key, encrypted credential records, and runtime logs.
 - Back up `app.db` and `app.key` **together** — neither can restore encrypted settings alone.
 - Use a dedicated Home Assistant long-lived token with only the required scope.
-- AI costs scale with signatures analyzed and schedule frequency — review provider pricing and pick a privacy level before enabling a production API key.
+- AI costs scale with the number of error signatures analyzed and schedule frequency — review provider pricing and pick a privacy level before enabling a production API key.
 
 ## 💻 Development
 
