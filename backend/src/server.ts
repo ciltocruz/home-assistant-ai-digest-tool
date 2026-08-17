@@ -34,7 +34,8 @@ export async function startRuntimeServer(
       publicAppUrl: config.publicAppUrl,
       failureReporter: logger.reportApiFailure,
       digestFailureReporter: logger.reportDigestFailure,
-      operationalEventReporter: logger.reportOperational
+      operationalEventReporter: logger.reportOperational,
+      scheduleTickMs: 60_000
     });
     await app.listen({ host: config.host, port: config.port });
     logger.reportOperational({ event: 'runtime_listening' });

@@ -11,7 +11,7 @@ import { SQLiteSecretStore } from './adapters/persistence/sqlite-secret-store.js
 import { parseHomeAssistantLog } from './domain/batch.js';
 import type { ReportStore } from './domain/stores.js';
 import { createApp } from './http/app.js';
-import { createPersistentRuntimeServices } from './runtime-persistence.js';
+import { createPersistentRuntimeServices, toScheduleDefinitions } from './runtime-persistence.js';
 
 process.emitWarning = (() => undefined) as typeof process.emitWarning;
 
@@ -372,6 +372,161 @@ describe('persistent runtime services', () => {
     expect(history.map((item) => item.id)).toEqual(expect.arrayContaining(['legacy-report', expect.stringMatching(/^v2-report:/)]));
     DigestDetailSchema.parse(await services.reports.get('legacy-report'));
     DigestDetailSchema.parse(await services.reports.get(history.find((item) => item.id.startsWith('v2-report:'))?.id ?? 'missing'));
+  });
+
+  it('ticks a due daily schedule into a v2 run and persists schedule state idempotently', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-schedule-tick-'));
+    const logPath = join(dataDir, 'home-assistant.log');
+    await writeFile(logPath, '2026-08-17 05:30:00 ERROR [mqtt] connection token=do-not-send\n');
+    const events = { configEntries: 0, ai: 0, telegram: 0 };
+    const schedNow = '2026-08-17T07:00:00.000Z'; // 09:00 Europe/Madrid, after the 08:00 slot
+    const services = await createPersistentRuntimeServices({
+      dataDir, now: () => schedNow, haLogPath: logPath,
+      haWebSocketFactory: () => fakeHaSocket(events),
+      providerHttpClient: async (request) => {
+        events.ai += 1;
+        return { status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'MQTT failed', recommendation: 'Restart MQTT' }) }] } }] }) };
+      },
+      telegramHttpClient: async (request) => { events.telegram += 1; return { status: 200, json: async () => ({ ok: true }) }; }
+    });
+    await services.auth?.createAdmin('schedule-tick-password', 'es');
+    await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET, telegram: { botToken: TELEGRAM_SECRET, chatId: '42' } });
+    await services.settings.update({
+      homeAssistant: { url: 'http://ha.local:8123', token: { operation: 'keep_current' } },
+      ai: { provider: 'gemini', key: { operation: 'keep_current' } },
+      notifications: { channel: 'telegram', chatId: '42', botToken: { operation: 'keep_current' } },
+      schedules: [{ kind: 'daily', enabled: true, time: '08:00', timezone: 'Europe/Madrid' }],
+      privacyLevel: 'balanced',
+      retentionDays: 30
+    });
+
+    await (services.scheduleTicker as { tick(): Promise<void> } | undefined)?.tick();
+    await (services.digestWorker as { runOnce(): Promise<void> } | undefined)?.runOnce();
+
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
+    const db = new DatabaseSync(join(dataDir, 'app.db'));
+    runMigrations(db);
+    const scheduled = db.prepare(`select slot_id from v2_runs where slot_id like 'v2:schedule:%' order by created_at desc limit 1`).get() as { slot_id: string } | undefined;
+    const state = db.prepare(`select last_scheduled_at from schedule_state where schedule_id = 'schedule:daily:08:00:Europe/Madrid'`).get() as { last_scheduled_at: string } | undefined;
+    db.close();
+
+    expect(scheduled?.slot_id).toMatch(/^v2:schedule:daily:08:00:Europe\/Madrid:/);
+    expect(state?.last_scheduled_at).toBe('2026-08-17T06:00:00Z');
+
+    await (services.scheduleTicker as { tick(): Promise<void> } | undefined)?.tick();
+    await (services.digestWorker as { runOnce(): Promise<void> } | undefined)?.runOnce();
+    const reopened = new DatabaseSync(join(dataDir, 'app.db'));
+    runMigrations(reopened);
+    const count = (reopened.prepare(`select count(*) as c from v2_runs where slot_id like 'v2:schedule:%'`).get() as { c: number }).c;
+    reopened.close();
+    expect(count).toBe(1);
+
+    await services.close?.();
+  });
+
+  it('marks the first run as enqueued without a spurious initial run when v2 reports already exist', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-schedule-seed-existing-'));
+    const logPath = join(dataDir, 'home-assistant.log');
+    await writeFile(logPath, '2026-08-17 05:30:00 ERROR [mqtt] connection token=do-not-send\n');
+    const events = { configEntries: 0, ai: 0, telegram: 0 };
+    const schedNow = '2026-08-17T07:00:00.000Z';
+    const services = await createPersistentRuntimeServices({
+      dataDir, now: () => schedNow, haLogPath: logPath,
+      haWebSocketFactory: () => fakeHaSocket(events),
+      providerHttpClient: async (request) => {
+        events.ai += 1;
+        return { status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'MQTT failed', recommendation: 'Restart MQTT' }) }] } }] }) };
+      },
+      telegramHttpClient: async (request) => { events.telegram += 1; return { status: 200, json: async () => ({ ok: true }) }; }
+    });
+    await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET, telegram: { botToken: TELEGRAM_SECRET, chatId: '42' } });
+    await services.settings.update({
+      homeAssistant: { url: 'http://ha.local:8123', token: { operation: 'keep_current' } },
+      ai: { provider: 'gemini', key: { operation: 'keep_current' } },
+      notifications: { channel: 'telegram', chatId: '42', botToken: { operation: 'keep_current' } },
+      schedules: [{ kind: 'daily', enabled: true, time: '08:00', timezone: 'Europe/Madrid' }],
+      privacyLevel: 'balanced',
+      retentionDays: 30
+    });
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
+    const seed = new DatabaseSync(join(dataDir, 'app.db'));
+    runMigrations(seed);
+    seed.prepare('insert into v2_runs(id, slot_id, status, error_code, created_at) values (?, ?, ?, ?, ?)')
+      .run('existing-run', 'manual:seed', 'reported', null, '2026-08-16T00:00:00.000Z');
+    seed.prepare('insert into v2_reports(id, run_id, status, payload_json, created_at) values (?, ?, ?, ?, ?)')
+      .run('v2-report:existing', 'existing-run', 'reported', JSON.stringify({ report: { warnings: [] }, signatures: [] }), '2026-08-16T00:00:00.000Z');
+    seed.close();
+
+    await (services.scheduleTicker as { tick(): Promise<void> } | undefined)?.tick();
+    await (services.digestWorker as { runOnce(): Promise<void> } | undefined)?.runOnce();
+
+    const db = new DatabaseSync(join(dataDir, 'app.db'));
+    runMigrations(db);
+    const initialCount = (db.prepare(`select count(*) as c from v2_runs where slot_id = 'v2:initial'`).get() as { c: number }).c;
+    const scheduledCount = (db.prepare(`select count(*) as c from v2_runs where slot_id like 'v2:schedule:%'`).get() as { c: number }).c;
+    const seeded = db.prepare(`select first_run_enqueued_at from schedule_state where schedule_id = '__initial__'`).get() as { first_run_enqueued_at: string } | undefined;
+    db.close();
+
+    expect(initialCount).toBe(0);
+    expect(scheduledCount).toBe(1);
+    expect(seeded?.first_run_enqueued_at).toBe(schedNow);
+
+    await services.close?.();
+  });
+
+  it('enqueues the v2 initial run on the first tick of a fresh install with a schedule', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-schedule-seed-fresh-'));
+    const logPath = join(dataDir, 'home-assistant.log');
+    await writeFile(logPath, '2026-08-17 05:30:00 ERROR [mqtt] connection token=do-not-send\n');
+    const events = { configEntries: 0, ai: 0, telegram: 0 };
+    const schedNow = '2026-08-17T07:00:00.000Z';
+    const services = await createPersistentRuntimeServices({
+      dataDir, now: () => schedNow, haLogPath: logPath,
+      haWebSocketFactory: () => fakeHaSocket(events),
+      providerHttpClient: async (request) => {
+        events.ai += 1;
+        return { status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'MQTT failed', recommendation: 'Restart MQTT' }) }] } }] }) };
+      },
+      telegramHttpClient: async (request) => { events.telegram += 1; return { status: 200, json: async () => ({ ok: true }) }; }
+    });
+    await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET, telegram: { botToken: TELEGRAM_SECRET, chatId: '42' } });
+    await services.settings.update({
+      homeAssistant: { url: 'http://ha.local:8123', token: { operation: 'keep_current' } },
+      ai: { provider: 'gemini', key: { operation: 'keep_current' } },
+      notifications: { channel: 'telegram', chatId: '42', botToken: { operation: 'keep_current' } },
+      schedules: [{ kind: 'daily', enabled: true, time: '08:00', timezone: 'Europe/Madrid' }],
+      privacyLevel: 'balanced',
+      retentionDays: 30
+    });
+
+    await (services.scheduleTicker as { tick(): Promise<void> } | undefined)?.tick();
+    await (services.digestWorker as { runOnce(): Promise<void> } | undefined)?.runOnce();
+
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
+    const db = new DatabaseSync(join(dataDir, 'app.db'));
+    runMigrations(db);
+    const initialCount = (db.prepare(`select count(*) as c from v2_runs where slot_id = 'v2:initial'`).get() as { c: number }).c;
+    const scheduledCount = (db.prepare(`select count(*) as c from v2_runs where slot_id like 'v2:schedule:%'`).get() as { c: number }).c;
+    const seeded = db.prepare(`select first_run_enqueued_at from schedule_state where schedule_id = '__initial__'`).get() as { first_run_enqueued_at: string } | undefined;
+    db.close();
+
+    expect(initialCount).toBe(1);
+    expect(scheduledCount).toBe(1);
+    expect(seeded?.first_run_enqueued_at).toBe(schedNow);
+
+    await services.close?.();
+  });
+
+  it('maps persisted schedule DTOs to stable scheduler definitions with the HA day shift', () => {
+    expect(toScheduleDefinitions([{ kind: 'daily', enabled: true, time: '08:00', timezone: 'Europe/Madrid' }])).toEqual([
+      { id: 'schedule:daily:08:00:Europe/Madrid', mode: 'preset', preset: 'daily', enabled: true, time: '08:00', timezone: 'Europe/Madrid' }
+    ]);
+    expect(toScheduleDefinitions([{ kind: 'weekly', enabled: true, time: '09:00', timezone: 'Europe/Madrid', dayOfWeek: 0 }])).toEqual([
+      { id: 'schedule:weekly:09:00:Europe/Madrid', mode: 'preset', preset: 'weekly', enabled: true, time: '09:00', timezone: 'Europe/Madrid', dayOfWeek: 1 }
+    ]);
+    expect(toScheduleDefinitions([{ kind: 'weekly', enabled: true, time: '09:00', timezone: 'Europe/Madrid', dayOfWeek: 6 }])).toEqual([
+      { id: 'schedule:weekly:09:00:Europe/Madrid', mode: 'preset', preset: 'weekly', enabled: true, time: '09:00', timezone: 'Europe/Madrid', dayOfWeek: 7 }
+    ]);
   });
 
   it('returns schema-valid combined history after repairing legacy reports beside failed and successful v2 entries', async () => {

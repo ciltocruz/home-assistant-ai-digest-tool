@@ -1,7 +1,7 @@
 import { Temporal } from '@js-temporal/polyfill';
 import type { DigestJobStore } from '../domain/jobs.js';
 
-type Weekday = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+export type Weekday = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 type ScheduleBase = { id: string; enabled: boolean; time: `${number}${number}:${number}${number}`; timezone?: string };
 export type ScheduleDefinition =
   | (ScheduleBase & { mode: 'preset'; preset: 'daily' | 'weekdays' | 'weekly'; dayOfWeek?: Weekday })

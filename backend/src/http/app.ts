@@ -22,6 +22,7 @@ export type BackendApiServices = {
   settings: { get(): Promise<EditableSettingsDto>; update(input: SettingsUpdateCommand): Promise<EditableSettingsDto>; notificationTarget?(channel: 'telegram'): Promise<string> };
   digestJobs: Pick<DigestJobStore, 'enqueue' | 'get' | 'retryFailed'>;
   digestWorker?: { wake(): void };
+  scheduleTicker?: { tick(): Promise<void> };
   reports: { save?: ReportStore['save']; list(): Promise<DigestHistoryResponse>; get(id: string): Promise<DigestDetail | null>; remove(id: string): Promise<boolean>; removeBatch(ids: string[]): Promise<number> };
   notes: Pick<NoteStore, 'add' | 'listWindow'>;
   ignores: Pick<IgnoreRuleStore, 'add' | 'remove' | 'listActive'>;

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { DeliveryStatusSchema, type DigestSummary, type MaskedSettings, type RedactedSettingsDto, type SetupValidationRequest } from '@ha-digest/shared';
+import { DeliveryStatusSchema, type DigestSummary, type MaskedSettings, type RedactedSettingsDto, type ScheduleDto, type SetupValidationRequest } from '@ha-digest/shared';
 import { runMigrations } from './adapters/persistence/migrations.js';
 import { SQLiteDigestJobStore } from './adapters/persistence/sqlite-digest-job-store.js';
 import { SQLiteSecretStore } from './adapters/persistence/sqlite-secret-store.js';
@@ -16,11 +16,12 @@ import { HomeAssistantRestClient } from './adapters/ha/rest-client.js';
 import { HomeAssistantWebSocketClient, type HomeAssistantSocket } from './adapters/ha/websocket-client.js';
 import { createSignatureProvider, type ProviderHttpClient } from './adapters/ai/providers.js';
 import { TelegramNotifier, type NotifierHttpClient } from './adapters/notifiers/notifiers.js';
-import { SQLiteV2Stores } from './adapters/persistence/sqlite-v2-stores.js';
+import { SQLiteV2Stores, SQLiteScheduleStateStore } from './adapters/persistence/sqlite-v2-stores.js';
 import { SQLiteManualTelegramSendStore } from './adapters/persistence/sqlite-manual-telegram-send-store.js';
 import { SQLiteAuthStore } from './adapters/persistence/sqlite-auth-store.js';
 import { BatchReportRun } from './application/batch-report-run.js';
 import { DigestWorker, type DigestWorkerFailureEvent } from './application/digest-worker.js';
+import { Scheduler, type ScheduleDefinition, type Weekday } from './application/scheduler.js';
 import type { RuntimeOperationalEvent } from './runtime-logging.js';
 import { SettingsService, type SecretReplacement } from './application/settings.js';
 import { projectLegacyReportPresentation } from './application/report-presentation.js';
@@ -42,6 +43,8 @@ export type PersistentRuntimeOptions = {
   reportUrl?: (reportId: string) => string | undefined;
   digestFailureReporter?: (event: DigestWorkerFailureEvent) => void;
   operationalEventReporter?: (event: RuntimeOperationalEvent) => void;
+  /** Interval in milliseconds for the scheduled-run tick loop. 0 or omitted disables the loop (tests tick manually). */
+  scheduleTickMs?: number;
 };
 
 const SETTINGS_KEY = 'runtime';
@@ -105,8 +108,13 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
     now
   });
   let worker: DigestWorker | undefined;
+  let scheduleTimer: NodeJS.Timeout | undefined;
   const services: BackendApiServices = {
-    close: async () => { await worker?.stop(); db.close(); },
+    close: async () => {
+      if (scheduleTimer) clearInterval(scheduleTimer);
+      await worker?.stop();
+      db.close();
+    },
     health: {
       async check() {
         try {
@@ -272,8 +280,48 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
     });
     services.digestWorker = worker;
     worker.start();
+
+    const scheduleState = new SQLiteScheduleStateStore(db, now);
+    const scheduleTicker: { tick(): Promise<void> } = {
+      async tick() {
+        const current = await settingsStore.get();
+        const definitions = toScheduleDefinitions(current.schedules);
+        if (definitions.length === 0) return;
+        const scheduler = new Scheduler({ schedules: definitions, jobs: digestJobs, state: scheduleState, clock: { now }, defaultTimezone: 'UTC' });
+        const firstRunAt = await scheduleState.firstRunEnqueuedAt();
+        if (!firstRunAt) {
+          const { c } = db.prepare('select count(*) as c from v2_reports').get() as { c: number };
+          if (c === 0) {
+            const initial = await scheduler.runImmediateFirst();
+            if (initial.queued.length > 0) worker?.wake();
+          } else {
+            // Existing installs already have v2 reports; marking avoids a spurious initial run.
+            await scheduleState.markFirstRunEnqueued(now());
+          }
+        }
+        const due = await scheduler.runDue();
+        if (due.queued.length > 0) worker?.wake();
+      }
+    };
+    services.scheduleTicker = scheduleTicker;
+    if (options.scheduleTickMs && options.scheduleTickMs > 0) {
+      scheduleTimer = setInterval(() => { void scheduleTicker.tick().catch(() => undefined); }, options.scheduleTickMs);
+      scheduleTimer.unref?.();
+    }
   }
   return services;
+}
+
+/**
+ * Maps persisted schedule DTOs to scheduler definitions. The id is derived from the
+ * schedule shape so reordering schedules never resets the persisted last-scheduled state.
+ * Home Assistant convention (0=Sunday..6=Saturday) is shifted to the scheduler's 1=Monday..7=Sunday.
+ */
+export function toScheduleDefinitions(schedules: ScheduleDto[]): ScheduleDefinition[] {
+  // ScheduleDto validates HH:mm at runtime; the template-literal time type is narrower than string.
+  return schedules.map((schedule) => schedule.kind === 'daily'
+    ? { id: `schedule:${schedule.kind}:${schedule.time}:${schedule.timezone}`, mode: 'preset', preset: 'daily', enabled: schedule.enabled, time: schedule.time, timezone: schedule.timezone }
+    : { id: `schedule:${schedule.kind}:${schedule.time}:${schedule.timezone}`, mode: 'preset', preset: 'weekly', enabled: schedule.enabled, time: schedule.time, timezone: schedule.timezone, dayOfWeek: (schedule.dayOfWeek + 1) as Weekday }) as ScheduleDefinition[];
 }
 
 class SQLiteRuntimeSettingsStore {
