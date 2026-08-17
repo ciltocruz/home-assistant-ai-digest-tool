@@ -1,35 +1,41 @@
-# Home Assistant AI Digest Tool
+# 🏠 Home Assistant AI Digest Tool
 
-Home Assistant AI Digest Tool is a Docker-first web application that turns Home Assistant Core log incidents into structured, actionable reports. It reads one mounted `home-assistant.log` file, groups stable error signatures, enriches reports with Home Assistant integration status, and can analyze findings with AI providers.
+> Turn Home Assistant Core log incidents into structured, actionable reports — automatically, on a schedule, with AI summaries and Telegram alerts.
 
-> **Supported deployment:** a standalone container on the same host as **Home Assistant Core running in Docker**. Home Assistant OS, Supervised, add-ons, Supervisor APIs, Docker socket access, host networking, and privileged containers are not supported.
+[![CI](https://github.com/ciltocruz/home-assistant-ai-digest-tool/actions/workflows/ci.yml/badge.svg)](https://github.com/ciltocruz/home-assistant-ai-digest-tool/actions/workflows/ci.yml)
 
-## What it does
+Home Assistant AI Digest Tool is a **Docker-first web application** that watches one mounted `home-assistant.log` file, groups repeated errors into stable signatures, and produces a digest of what actually needs your attention — new problems, reactivated ones, and trends — enriched with Home Assistant integration status and optional AI analysis.
 
-- Reads only one narrow, read-only Home Assistant log mount; it never reads log rotations or a full HA configuration directory.
-- Keeps a byte cursor and permanent signature memory to identify new, recurring, reactivated, and latent errors.
-- Learns older available log entries as a silent baseline. The lookback is bounded by the history present in the current file; rotation files are never read to extend it.
-- Stores reports locally, retaining the newest 10 v2 reports by default without deleting signatures.
-- Supports OpenAI, Gemini, and Ollama through interchangeable provider adapters. Context is redacted and bounded per signature, while every detected signature is eligible for analysis.
-- Shows partial AI failures in the report. A complete AI failure is recorded in the web UI without advancing the log cursor.
-- Queries Home Assistant integration status once per report; an unavailable API appears as unavailable without discarding the report.
-- Sends a compact Telegram summary only for noteworthy findings. Add `PUBLIC_APP_URL` to include a link to the saved report; quiet runs and tool failures never send a Telegram message.
+![Dashboard](docs/readme-screenshots/01-dashboard.png)
 
-## Important operating limits
+## ✨ What it does
 
-AI costs scale with the number of error signatures analyzed and the schedule controls how often analysis runs. Review the provider's pricing and select a privacy level before enabling a production API key. The application minimizes provider input, but Home Assistant data remains sensitive.
+- 📖 **Reads one narrow, read-only log mount** — never log rotations, never a full HA configuration directory.
+- 🧠 **Remembers error signatures forever** — identifies new, recurring, reactivated, and latent errors instead of spamming you with duplicates.
+- 🤫 **Learns a silent baseline** on first run, bounded by the history in the current log file.
+- 🤖 **Analyzes with OpenAI, Gemini, or Ollama** through interchangeable adapters; context is redacted and bounded per signature.
+- 📅 **Runs on your schedule** (daily, weekly, or custom) with timezone-aware, DST-safe slots — no default interval.
+- 🔔 **Sends a compact Telegram summary** only when findings are noteworthy. Quiet runs stay quiet.
+- 📊 **Tracks integration status** via the Home Assistant WebSocket API; an unavailable API shows as unavailable without discarding the report.
+- 🔒 **Keeps everything local** — SQLite storage, encrypted secrets, no telemetry, no cloud account.
 
-The current runtime provides persisted report jobs, an immediate first report after onboarding, and manual report launches. Schedule definitions are stored with timezone and DST-safe slot logic; validate automated schedule behavior in your deployment before relying on it for unattended operations.
+## 🚫 What it does NOT do
 
-## Quick start
+- ❌ **Not for Home Assistant OS, Supervised, or add-ons** — the supported deployment is a standalone container beside **Home Assistant Core running in Docker**.
+- ❌ **Never mounts `/config`, the HA database, the Docker socket, or broad host paths.**
+- ❌ **No full-log analysis** — only the current log file from a persisted byte cursor; rotation files are never read.
+- ❌ **No silent failures** — a complete AI failure records in the web UI without advancing the log cursor, and tool failures never send a misleading Telegram message.
+- ❌ **No bootstrap credentials** — the web UI is protected by an admin account created during onboarding; there are no tokens in Compose or `.env`.
+
+## 🚀 Quick start
 
 ### Requirements
 
 - Docker Engine with Docker Compose.
-- Home Assistant Core running in Docker on the same host.
-- One readable Home Assistant log file on that host.
+- Home Assistant Core running in Docker **on the same host**.
+- One readable `home-assistant.log` file on that host.
 
-Copy the environment template and set the log source:
+### Run it
 
 ```bash
 cp .env.example .env
@@ -37,36 +43,37 @@ cp .env.example .env
 docker compose up --build --detach
 ```
 
-Open `http://127.0.0.1:3000`. Local mode binds only to loopback.
+Open **http://127.0.0.1:3000** and follow the guided onboarding — six screens: language and admin account, Home Assistant connection, AI provider, optional Telegram, schedule, and privacy.
 
-Set `PUBLIC_APP_URL` only when the application's browser-accessible HTTP(S) origin is stable, for example `https://digest.example/`. It must not include a path prefix, credentials, a query string, or a fragment. Invalid values are ignored and Telegram summaries remain unlinked.
+![Onboarding](docs/readme-screenshots/04-onboarding.png)
 
-## Release-based deployment
+Set `PUBLIC_APP_URL` only when the application has a stable browser-accessible origin (for example `https://digest.example/`); invalid values are ignored and Telegram summaries remain unlinked.
 
-Deployments always point to a **release**, never to a branch or an ad-hoc commit. The Compose service references a versioned local image (`home-assistant-ai-digest-tool:<version>`), and the source transferred to the host is the release tag archive:
+## 📋 What a report looks like
+
+Reports rank findings into **attention items** (before observations and positive status), backed by recommendations and evidence.
+
+![Report detail](docs/readme-screenshots/02-report-detail.png)
+
+The dashboard shows the current state, the latest report, and history at a glance:
+
+![Configuration](docs/readme-screenshots/03-configuration.png)
+
+## 🧰 Configuration
+
+Settings are editable after setup: Home Assistant connection, AI provider, Telegram target (with test-send), schedule, privacy level, report retention, password, ignored signatures, and operator notes. Masked secrets are preserved unless you explicitly replace them.
+
+See [Configuration and integration status](docs/configuration.md) and [Docker Runtime Operations](docs/operations/docker-runtime.md) for providers, privacy, cost controls, backup, restore, and rollback.
+
+## 📦 Release-based deployment
+
+Deployments always point to a **release tag**, never to a branch or ad-hoc commit:
 
 1. Create a release in the repository (for example `v1.0.0`).
-2. Transfer the release source to the deployment host and update the image tag in `compose.yaml` to the release version.
-3. Build and start from that release source only:
+2. Transfer the release source to the deployment host and set the image tag in `compose.yaml` to the release version.
+3. Build and start from that release source only: `docker compose up --build --detach`.
 
-   ```bash
-   docker compose up --build --detach
-   ```
-
-Roll back by redeploying the previous release (previous source + previous image tag); the image tag and the deployed source always carry the same release version.
-
-## Six-screen onboarding
-
-The first browser visit selects a language, creates the admin account, then resumes the protected onboarding flow:
-
-1. Home Assistant URL and long-lived access token.
-2. OpenAI, Gemini, or Ollama provider configuration.
-3. Optional Telegram bot token and chat ID.
-4. Required schedule and timezone.
-5. Privacy level and report retention.
-6. An immediate first report.
-
-Secrets are encrypted in `/data`, returned only as masks, and must never be committed, logged, or pasted into support requests. There are no bootstrap credentials in Compose or `.env`.
+Roll back by redeploying the previous release — the image tag and the deployed source always carry the same release version.
 
 For TLS behind a controlled reverse proxy:
 
@@ -74,42 +81,33 @@ For TLS behind a controlled reverse proxy:
 docker compose -f compose.yaml -f compose.reverse-proxy.yaml up --build --detach
 ```
 
-The override enables trusted proxy headers and Secure cookies while the application port remains loopback-only.
+The override enables trusted proxy headers and Secure cookies while the application port stays loopback-only.
 
-## Report job lifecycle
-
-The current runtime provides persisted report jobs, an immediate first report after onboarding, and manual report launches. Schedule definitions are stored with timezone and DST-safe slot logic; validate automated schedule behavior in your deployment before relying on it for unattended operations.
-
-## Configuration
-
-Settings are editable after setup. You can update the Home Assistant connection, AI provider, optional Telegram target and test-send, schedule, privacy level, report retention, password, ignored signatures, and operator notes. A masked secret is preserved unless you explicitly choose to replace it.
-
-See [Configuration and integration status](docs/configuration.md) for provider, Telegram, privacy, cost, and troubleshooting details. See [Docker Runtime Operations](docs/operations/docker-runtime.md) for runtime verification, backup, restore, and rollback.
-
-## Verification
+## ✅ Verification
 
 ```bash
-pnpm run ci
-pnpm verify:docker
+pnpm run ci          # typecheck + unit tests + focused checks + smoke tests + build
+pnpm verify:docker   # isolated Compose verification with fake provider/HA
 ```
 
-The Docker verifier creates isolated local and reverse-proxy Compose projects, tests readiness and persistence, and removes its disposable resources on exit. It never needs your production Home Assistant or provider credentials.
+The Docker verifier creates disposable local and reverse-proxy Compose projects, tests readiness and persistence, and removes its resources on exit. It never needs your production credentials.
 
-## Security and data handling
+## 🔒 Security and data handling
 
-- Keep the complete `/data` volume private: it contains SQLite data, the encryption key, encrypted credential records, and runtime logs.
-- Back up `app.db` and `app.key` together; neither can restore encrypted settings alone.
-- Use a dedicated Home Assistant long-lived token and only the required access scope.
-- Do not mount `/config`, a Home Assistant database, Docker socket, or broad host paths.
-- Use local mode only on a trusted host. For network access, terminate TLS at a controlled reverse proxy.
+- Keep the complete `/data` volume private: it holds SQLite data, the encryption key, encrypted credential records, and runtime logs.
+- Back up `app.db` and `app.key` **together** — neither can restore encrypted settings alone.
+- Use a dedicated Home Assistant long-lived token with only the required scope.
+- AI costs scale with signatures analyzed and schedule frequency — review provider pricing and pick a privacy level before enabling a production API key.
 
-## Development
+## 💻 Development
 
-Use pnpm only:
+Use **pnpm** only:
 
 ```bash
 pnpm install
 pnpm run ci
 ```
+
+Regenerate README screenshots with `pnpm screenshots` (Playwright against the mocked runtime API — no backend, no credentials needed).
 
 This is a clean-room implementation inspired by the product shape of Home Assistant incident digests; it is not a fork.
