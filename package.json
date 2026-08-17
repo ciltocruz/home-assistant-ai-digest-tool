@@ -6,7 +6,7 @@
   "packageManager": "pnpm@9.15.4",
   "scripts": {
     "build": "pnpm -r build",
-    "ci": "pnpm typecheck && pnpm test && pnpm test:focused && pnpm test:smoke && pnpm build",
+    "ci": "pnpm -r build && pnpm typecheck && pnpm test && pnpm test:focused && pnpm test:smoke",
     "test:smoke": "playwright install chromium && playwright test",
     "test": "vitest run",
     "test:focused": "node scripts/check-focused-tests.mjs",
