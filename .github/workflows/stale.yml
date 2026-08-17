@@ -1,0 +1,29 @@
+name: Stale issues
+
+on:
+  schedule:
+    - cron: "30 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  stale:
+    name: Mark inactive issues
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/stale@v9
+        with:
+          days-before-issue-stale: 60
+          days-before-issue-close: 14
+          stale-issue-label: stale
+          stale-issue-message: |
+            This issue has been inactive for 60 days. If it is still relevant, leave a comment to keep it open.
+            It will be closed in 14 days otherwise.
+          close-issue-message: |
+            This issue was closed because it has been inactive for 74 days. If the problem persists or the request is still relevant, open a new issue with the current details.
+          days-before-pr-stale: -1
+          days-before-pr-close: -1
+          exempt-issue-labels: enhancement,help wanted,good first issue
