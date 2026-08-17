@@ -318,7 +318,7 @@ test('rotates settings secrets without preloading or reflecting their raw values
   const panel = page.locator('.settings-panel');
   await expect(panel.getByText('••••AI')).toBeVisible();
   await expect(panel.locator('input[name="aiKey"]')).toHaveCount(0);
-  await panel.locator('input[value="replace-ai-key"]').check();
+  await panel.locator('label.secret-radio-card:has(input[value="replace-ai-key"])').click();
   await panel.locator('input[name="aiKey"]').fill(replacement);
   await panel.getByRole('button', { name: 'Guardar ajustes' }).click();
 
