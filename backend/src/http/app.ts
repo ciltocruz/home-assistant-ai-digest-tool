@@ -174,7 +174,10 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
       const settings = await options.services.onboarding.complete();
        return reply.send({ settings });
     } catch (error) {
-      if (error instanceof Error && error.message === 'ONBOARDING_INCOMPLETE') return sendError(reply, 400, 'ONBOARDING_INCOMPLETE', 'Complete todos los pasos requeridos antes de lanzar el informe.', request.id);
+      if (error instanceof Error && error.message === 'ONBOARDING_INCOMPLETE') {
+        const spanish = (await requireAuthStore(auth).language()) === 'es';
+        return sendError(reply, 400, 'ONBOARDING_INCOMPLETE', spanish ? 'Complete todos los pasos requeridos antes de lanzar el informe.' : 'Complete all required steps before generating the report.', request.id);
+      }
       throw error;
     }
   });
@@ -211,18 +214,26 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
   app.post('/api/digests/run', async (request, reply): Promise<RunDigestResponse | FastifyReply> => {
     const input = parseRequest(RunDigestRequestSchema, request.body, reply, request.id);
     if (!input.ok) return input.response;
-    if (!options.services.digestWorker) return sendError(reply, 503, 'ANALYSIS_UNAVAILABLE', 'El análisis manual no está disponible. Revise la configuración del servicio.', request.id);
+    if (!options.services.digestWorker) {
+      const spanish = (await requireAuthStore(auth).language()) === 'es';
+      return sendError(reply, 503, 'ANALYSIS_UNAVAILABLE', spanish ? 'El análisis manual no está disponible. Revise la configuración del servicio.' : 'Manual analysis is not available. Check the service configuration.', request.id);
+    }
     const result = await options.services.digestJobs.enqueue({ kind: input.value.kind, triggerWindowId: buildTriggerWindowId(input.value, now()), settingsSnapshot: await options.services.settings.get() });
     options.services.digestWorker.wake();
     return reply.code(202).send(result);
   });
   app.get('/api/digests/jobs/:id', async (request, reply): Promise<DigestJobStatus | FastifyReply> => {
     const job = await options.services.digestJobs.get(String((request.params as { id: string }).id));
-    return job ? presentJob(job) : sendError(reply, 404, 'NOT_FOUND', 'No se encontró el trabajo del informe.', request.id);
+    if (job) return presentJob(job);
+    const spanish = (await requireAuthStore(auth).language()) === 'es';
+    return sendError(reply, 404, 'NOT_FOUND', spanish ? 'No se encontró el trabajo del informe.' : 'The report job was not found.', request.id);
   });
   app.post('/api/digests/jobs/:id/retry', async (request, reply): Promise<DigestJobStatus | FastifyReply> => {
     const job = await options.services.digestJobs.retryFailed(String((request.params as { id: string }).id));
-    if (!job) return sendError(reply, 404, 'NOT_FOUND', 'No se encontró el trabajo del informe.', request.id);
+    if (!job) {
+      const spanish = (await requireAuthStore(auth).language()) === 'es';
+      return sendError(reply, 404, 'NOT_FOUND', spanish ? 'No se encontró el trabajo del informe.' : 'The report job was not found.', request.id);
+    }
     if (job.status === 'queued') options.services.digestWorker?.wake();
     return reply.code(202).send(presentJob(job));
   });

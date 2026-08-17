@@ -209,6 +209,21 @@
         "unknown": "Open the detail to review the available analysis"
       }
     },
+    "kpi": {
+      "healthLabel": "System health",
+      "healthy": "Healthy",
+      "attention": "Attention",
+      "noIncidents": "No incidents",
+      "incidentCount": "{count} incident",
+      "severityLabel": "Severity",
+      "severitySubtext": "Critical / Warnings",
+      "providerLabel": "AI provider",
+      "analysisActive": "Analysis active",
+      "telegramLabel": "Telegram",
+      "delivered": "Sent",
+      "pending": "Pending",
+      "notificationsSubtext": "Notifications"
+    },
     "jobLifecycle": {
       "ariaLabel": "Active report status",
       "eyebrow": { "queued": "Queued report", "running": "Report in progress", "completed": "Completed report", "failed": "Report requiring attention" },
@@ -324,6 +339,9 @@
       "failure": "What happened",
       "failureInvalidAnalysis": "AI could not produce a usable explanation for some of the detected problems.",
       "failureGeneric": "AI analysis could not be completed for the detected problems.",
+      "warningQuota": "⚠️ AI quota limit reached (HTTP 429 - Free Tier): {code}",
+      "warningProvider": "⚠️ AI provider error: {code}",
+      "failureQuota": "Free request quota or rate limit reached (HTTP 429). Wait 1 minute before generating another report. ({message})",
       "trend": "Trend: {trend}",
       "occurrencesSingular": "1 occurrence",
       "occurrencesPlural": "{count} occurrences",

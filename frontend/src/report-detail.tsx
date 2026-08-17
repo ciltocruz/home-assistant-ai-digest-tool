@@ -240,10 +240,10 @@ function capitalize(value: DigestDetail['summary']['deliveryStatus']): 'Sent' | 
 
 function warningLabel(code: string): string {
   if (code.includes('429') || code.includes('quota') || code.includes('Quota') || code.includes('billing')) {
-    return `⚠️ Límite de cuota de IA superado (HTTP 429 - Free Tier): ${code}`;
+    return t('report.batch.warningQuota').replace('{code}', code);
   }
   if (code.startsWith('Gemini') || code.startsWith('OpenAI') || code.startsWith('AIProviderError')) {
-    return `⚠️ Error de proveedor de IA: ${code}`;
+    return t('report.batch.warningProvider').replace('{code}', code);
   }
   if (code === 'AI_ANALYSIS_PARTIAL') return t('report.batch.warningPartial');
   if (code === 'AI_ANALYSIS_UNAVAILABLE') return t('report.batch.warningUnavailable');
@@ -254,7 +254,7 @@ function warningLabel(code: string): string {
 function failureLabel(message?: string): string {
   if (!message) return t('report.batch.failureGeneric');
   if (message.includes('429') || message.includes('quota') || message.includes('Quota') || message.includes('billing')) {
-    return `Límite de cuota o ratio de peticiones gratuito superado (HTTP 429). Espera 1 minuto antes de generar otro informe. (${message})`;
+    return t('report.batch.failureQuota').replace('{message}', message);
   }
   if (message === 'invalid signature analysis'
     || message === 'OpenAI provider returned an invalid signature analysis'

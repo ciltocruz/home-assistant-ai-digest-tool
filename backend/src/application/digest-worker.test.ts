@@ -45,8 +45,21 @@ describe('DigestWorker', () => {
 
     await worker.runOnce();
 
-    expect(fail).toHaveBeenCalledWith('job-1', 'HOME_ASSISTANT_UNAVAILABLE', 'No se pudieron recopilar datos de Home Assistant. Revise la conexión y el token.');
+    expect(fail).toHaveBeenCalledWith('job-1', 'HOME_ASSISTANT_UNAVAILABLE', 'Home Assistant data could not be collected. Check the connection and token.');
     expect(JSON.stringify(fail.mock.calls)).not.toContain('token-value-must-not-leak');
+  });
+
+  it('localizes safe failure messages using the admin language', async () => {
+    const fail = vi.fn(async () => undefined);
+    const worker = new DigestWorker({
+      jobs: { leaseNext: async () => job, setStage: async () => undefined, complete: async () => undefined, fail },
+      language: async () => 'es' as const,
+      analysis: { runWithStages: async () => { throw new Error('ANALYSIS_SOURCE_FAILED: token-value-must-not-leak'); } }
+    });
+
+    await worker.runOnce();
+
+    expect(fail).toHaveBeenCalledWith('job-1', 'HOME_ASSISTANT_UNAVAILABLE', 'No se pudieron recopilar datos de Home Assistant. Revise la conexión y el token.');
   });
 
   it('preserves detailed provider failures for storage and reporting while redacting credentials', async () => {

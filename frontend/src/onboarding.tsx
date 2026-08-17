@@ -197,7 +197,7 @@ export async function completeOnboarding(
     onSessionCreated?.();
     return persistSettingsAndQueueDigest(state, api, { maskedSettings: setup.settings });
   } catch (error) {
-    return { ...state, draft: scrubSecrets(state.draft), status: 'failed', errors: { form: [redactSensitiveText(error instanceof Error ? error.message : 'Could not complete onboarding.')] } };
+    return { ...state, draft: scrubSecrets(state.draft), status: 'failed', errors: { form: [redactSensitiveText(error instanceof Error ? error.message : copy('Could not complete onboarding.', 'No se pudo completar la configuración.'))] } };
   }
 
   const errors = steps.slice(0, -1).reduce<Record<string, string[]>>(
@@ -214,7 +214,7 @@ export async function completeOnboarding(
     return persistSettingsAndQueueDigest(state, api, { maskedSettings: setup.settings });
   } catch (error) {
     const fieldErrors = error instanceof ApiClientError ? redactErrors(error.fieldErrors, state.draft) : undefined;
-    return { ...state, draft: scrubSecrets(state.draft), status: 'failed', step: stepForField(Object.keys(fieldErrors ?? {})[0] ?? ''), errors: fieldErrors ?? { form: [redactSensitiveText(error instanceof Error ? error.message : 'Could not complete onboarding.')] } };
+    return { ...state, draft: scrubSecrets(state.draft), status: 'failed', step: stepForField(Object.keys(fieldErrors ?? {})[0] ?? ''), errors: fieldErrors ?? { form: [redactSensitiveText(error instanceof Error ? error.message : copy('Could not complete onboarding.', 'No se pudo completar la configuración.'))] } };
   }
 }
 
@@ -797,7 +797,7 @@ async function persistSettingsAndQueueDigest(
       draft: scrubSecrets(state.draft),
       status: 'failed',
       step: stepForField(Object.keys(fieldErrors ?? {})[0] ?? ''),
-      errors: fieldErrors ?? { form: [redactSensitiveText(error instanceof Error ? error.message : 'No se pudo completar la configuración.')] },
+      errors: fieldErrors ?? { form: [redactSensitiveText(error instanceof Error ? error.message : copy('Could not complete onboarding.', 'No se pudo completar la configuración.'))] },
       maskedSettings: nextProgress.maskedSettings,
       setupProgress: nextProgress,
       firstDigestJob: undefined,

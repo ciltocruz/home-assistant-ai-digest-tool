@@ -16,7 +16,7 @@ export class DigestWorker {
   private active: Promise<void> | null = null;
   private stopping = false;
 
-  constructor(private readonly dependencies: { jobs: WorkerJobs; analysis: WorkerAnalysis; failureReporter?: (event: DigestWorkerFailureEvent) => void; eventReporter?: (event: DigestWorkerEvent) => void }) {}
+  constructor(private readonly dependencies: { jobs: WorkerJobs; analysis: WorkerAnalysis; language?: () => Promise<'en' | 'es'>; failureReporter?: (event: DigestWorkerFailureEvent) => void; eventReporter?: (event: DigestWorkerEvent) => void }) {}
 
   start(): void { this.stopping = false; this.wake(); }
 
@@ -54,7 +54,8 @@ export class DigestWorker {
       await this.dependencies.jobs.complete(job.id, result.reportId);
       this.report({ event: 'job_completed', jobId: job.id, reportId: result.reportId });
     } catch (error) {
-      const failure = safeFailure(error);
+      const language = await this.dependencies.language?.() ?? 'en';
+      const failure = safeFailure(error, language);
       await this.dependencies.jobs.fail(job.id, failure.code, failure.message);
       this.report({ event: 'job_failed', jobId: job.id, errorCode: failure.code });
       try {
@@ -71,15 +72,16 @@ export class DigestWorker {
   }
 }
 
-function safeFailure(error: unknown): { code: string; message: string } {
+function safeFailure(error: unknown, language: 'en' | 'es'): { code: string; message: string } {
   const rawMessage = error instanceof Error ? error.message : '';
   const code = rawMessage.split(':')[0];
-  if (code === 'ANALYSIS_SOURCE_FAILED') return { code: 'HOME_ASSISTANT_UNAVAILABLE', message: 'No se pudieron recopilar datos de Home Assistant. Revise la conexión y el token.' };
-  if (code === 'ANALYSIS_PROCESSING_FAILED') return { code: 'AI_PROVIDER_UNAVAILABLE', message: detailedFailureMessage(rawMessage, code, 'No se pudo generar el informe con el proveedor de IA. Revise la configuración e inténtelo de nuevo.') };
-  if (code === 'AI_ANALYSIS_UNAVAILABLE') return { code: 'AI_PROVIDER_UNAVAILABLE', message: detailedFailureMessage(rawMessage, code, 'No se pudo generar el informe con el proveedor de IA. Revise la configuración e inténtelo de nuevo.') };
-  if (code === 'ANALYSIS_SAVE_FAILED') return { code: 'REPORT_STORAGE_UNAVAILABLE', message: 'El informe se generó, pero no se pudo guardar. Revise el almacenamiento e inténtelo de nuevo.' };
-  if (code === 'ANALYSIS_DEADLINE_EXCEEDED') return { code: 'ANALYSIS_TIMEOUT', message: 'El análisis superó el tiempo límite. Reduzca el alcance e inténtelo de nuevo.' };
-  return { code: 'ANALYSIS_FAILED', message: 'No se pudo completar el análisis. Revise la configuración e inténtelo de nuevo.' };
+  const spanish = language === 'es';
+  if (code === 'ANALYSIS_SOURCE_FAILED') return { code: 'HOME_ASSISTANT_UNAVAILABLE', message: spanish ? 'No se pudieron recopilar datos de Home Assistant. Revise la conexión y el token.' : 'Home Assistant data could not be collected. Check the connection and token.' };
+  if (code === 'ANALYSIS_PROCESSING_FAILED') return { code: 'AI_PROVIDER_UNAVAILABLE', message: detailedFailureMessage(rawMessage, code, spanish ? 'No se pudo generar el informe con el proveedor de IA. Revise la configuración e inténtelo de nuevo.' : 'The report could not be generated with the AI provider. Check the configuration and try again.') };
+  if (code === 'AI_ANALYSIS_UNAVAILABLE') return { code: 'AI_PROVIDER_UNAVAILABLE', message: detailedFailureMessage(rawMessage, code, spanish ? 'No se pudo generar el informe con el proveedor de IA. Revise la configuración e inténtelo de nuevo.' : 'The report could not be generated with the AI provider. Check the configuration and try again.') };
+  if (code === 'ANALYSIS_SAVE_FAILED') return { code: 'REPORT_STORAGE_UNAVAILABLE', message: spanish ? 'El informe se generó, pero no se pudo guardar. Revise el almacenamiento e inténtelo de nuevo.' : 'The report was generated, but could not be saved. Check storage and try again.' };
+  if (code === 'ANALYSIS_DEADLINE_EXCEEDED') return { code: 'ANALYSIS_TIMEOUT', message: spanish ? 'El análisis superó el tiempo límite. Reduzca el alcance e inténtelo de nuevo.' : 'The analysis exceeded the time limit. Reduce the scope and try again.' };
+  return { code: 'ANALYSIS_FAILED', message: spanish ? 'No se pudo completar el análisis. Revise la configuración e inténtelo de nuevo.' : 'The analysis could not be completed. Check the configuration and try again.' };
 }
 
 function detailedFailureMessage(rawMessage: string, code: string, fallback: string): string {

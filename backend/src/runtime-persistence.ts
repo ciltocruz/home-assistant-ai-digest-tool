@@ -264,6 +264,7 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
     });
     worker = new DigestWorker({
       jobs: digestJobs,
+      language: () => auth.language(),
       failureReporter: options.digestFailureReporter,
       eventReporter: options.operationalEventReporter,
       analysis: {

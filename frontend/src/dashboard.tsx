@@ -69,24 +69,24 @@ function renderCurrentState(state: DashboardHistoryState, onRetry: () => void) {
     <p>{attentionCount === 0 ? t('dashboard.currentState.ready.clear') : t('dashboard.currentState.ready.attention').replace('{count}', String(attentionCount))}</p>
     {latest ? <div className="dashboard-kpi-grid">
       <div className={`kpi-card kpi-card--health ${isHealthy ? 'kpi-card--ok' : 'kpi-card--attention'}`}>
-        <div className="kpi-header"><span className="kpi-dot" /><span className="kpi-label">Salud del Sistema</span></div>
-        <div className="kpi-value">{isHealthy ? 'Saludable' : 'Atención'}</div>
-        <div className="kpi-subtext">{isHealthy ? 'Sin incidencias' : `${attentionCount} avisos`}</div>
+        <div className="kpi-header"><span className="kpi-dot" /><span className="kpi-label">{t('dashboard.kpi.healthLabel')}</span></div>
+        <div className="kpi-value">{isHealthy ? t('dashboard.kpi.healthy') : t('dashboard.kpi.attention')}</div>
+        <div className="kpi-subtext">{isHealthy ? t('dashboard.kpi.noIncidents') : t('dashboard.kpi.incidentCount').replace('{count}', String(attentionCount))}</div>
       </div>
       <div className="kpi-card kpi-card--severity">
-        <div className="kpi-header"><span className="kpi-label">Severidad</span></div>
+        <div className="kpi-header"><span className="kpi-label">{t('dashboard.kpi.severityLabel')}</span></div>
         <div className="kpi-value">{latest.severityCounts.critical} / {latest.severityCounts.warning}</div>
-        <div className="kpi-subtext">Críticas / Avisos</div>
+        <div className="kpi-subtext">{t('dashboard.kpi.severitySubtext')}</div>
       </div>
       <div className="kpi-card kpi-card--ai">
-        <div className="kpi-header"><span className="kpi-label">Proveedor IA</span></div>
+        <div className="kpi-header"><span className="kpi-label">{t('dashboard.kpi.providerLabel')}</span></div>
         <div className="kpi-value">Gemini</div>
-        <div className="kpi-subtext">Análisis Activo</div>
+        <div className="kpi-subtext">{t('dashboard.kpi.analysisActive')}</div>
       </div>
       <div className="kpi-card kpi-card--telegram">
-        <div className="kpi-header"><span className="kpi-label">Telegram</span></div>
-        <div className="kpi-value">{latest.deliveryStatus === 'sent' ? 'Enviado' : 'Pendiente'}</div>
-        <div className="kpi-subtext">Notificaciones</div>
+        <div className="kpi-header"><span className="kpi-label">{t('dashboard.kpi.telegramLabel')}</span></div>
+        <div className="kpi-value">{latest.deliveryStatus === 'sent' ? t('dashboard.kpi.delivered') : t('dashboard.kpi.pending')}</div>
+        <div className="kpi-subtext">{t('dashboard.kpi.notificationsSubtext')}</div>
       </div>
     </div> : null}
   </>;

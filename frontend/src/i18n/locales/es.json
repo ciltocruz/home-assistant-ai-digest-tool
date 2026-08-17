@@ -209,6 +209,21 @@
         "unknown": "Consulta el detalle para ver el análisis disponible"
       }
     },
+    "kpi": {
+      "healthLabel": "Salud del sistema",
+      "healthy": "Saludable",
+      "attention": "Atención",
+      "noIncidents": "Sin incidencias",
+      "incidentCount": "{count} aviso",
+      "severityLabel": "Severidad",
+      "severitySubtext": "Críticas / Avisos",
+      "providerLabel": "Proveedor de IA",
+      "analysisActive": "Análisis activo",
+      "telegramLabel": "Telegram",
+      "delivered": "Enviado",
+      "pending": "Pendiente",
+      "notificationsSubtext": "Notificaciones"
+    },
     "jobLifecycle": {
       "ariaLabel": "Estado de informes activos",
       "eyebrow": { "queued": "Informe en cola", "running": "Informe en curso", "completed": "Informe completado", "failed": "Informe que requiere atención" },
@@ -324,6 +339,9 @@
       "failure": "Qué ocurrió",
       "failureInvalidAnalysis": "La IA no pudo generar una explicación útil para algunos de los problemas detectados.",
       "failureGeneric": "No se pudo completar el análisis de IA de los problemas detectados.",
+      "warningQuota": "⚠️ Límite de cuota de IA superado (HTTP 429 - Free Tier): {code}",
+      "warningProvider": "⚠️ Error de proveedor de IA: {code}",
+      "failureQuota": "Límite de cuota o ratio de peticiones gratuito superado (HTTP 429). Espera 1 minuto antes de generar otro informe. ({message})",
       "trend": "Tendencia: {trend}",
       "occurrencesSingular": "1 aparición",
       "occurrencesPlural": "{count} apariciones",
