@@ -258,7 +258,7 @@ export function OnboardingFlow({
           setState({
             ...state,
             status: 'failed',
-            errors: { form: [redactSensitiveText(error instanceof Error ? error.message : 'No se pudo guardar el progreso.')] },
+            errors: { form: [redactSensitiveText(error instanceof Error ? error.message : copy('Could not save progress.', 'No se pudo guardar el progreso.'))] },
           }),
         );
       return;
@@ -290,7 +290,7 @@ export function OnboardingFlow({
           <div className="onboarding-brand-icon">🏡</div>
           <div className="onboarding-brand-name">
             HA AI Digest
-            <span>Configuración inicial</span>
+            <span>{copy('Initial setup', 'Configuración inicial')}</span>
           </div>
         </div>
         <ol className="onboarding-steps" aria-label={t('onboarding.progressLabel')}>
@@ -327,7 +327,7 @@ export function OnboardingFlow({
         {isComplete ? (
           <CompleteScreen job={state.firstDigestJob} onContinue={onCompleted} />
         ) : (
-          <form key={state.step} className="onboarding-step-content" onSubmit={submit} aria-label="Configuración guiada" noValidate>
+          <form key={state.step} className="onboarding-step-content" onSubmit={submit} aria-label={copy('Guided setup', 'Configuración guiada')} noValidate>
             <StepContent
               state={state}
               updateDraft={updateDraft}

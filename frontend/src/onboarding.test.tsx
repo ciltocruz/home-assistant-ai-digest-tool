@@ -43,6 +43,13 @@ afterEach(() => {
 });
 
 describe('onboarding flow', () => {
+  test('localizes the brand subtitle with the active locale', () => {
+    setLocale('en');
+    expect(renderToStaticMarkup(<OnboardingFlow state={createInitialOnboardingState()} />)).toContain('Initial setup');
+    setLocale('es');
+    expect(renderToStaticMarkup(<OnboardingFlow state={createInitialOnboardingState()} />)).toContain('Configuración inicial');
+  });
+
   test('creates one safe checkpoint command per screen without carrying unrelated secrets', () => {
     const checkpoint = createOnboardingCheckpoint({ ...createInitialOnboardingState(), draft: validDraft });
 
