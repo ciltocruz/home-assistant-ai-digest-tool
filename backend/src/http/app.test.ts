@@ -467,6 +467,193 @@ describe('account authentication boundary', () => {
   });
 });
 
+describe('residual HTTP route coverage', () => {
+  let app: FastifyInstance | undefined;
+  afterEach(async () => { await app?.close(); app = undefined; });
+
+  async function registerApp(overrides: Partial<BackendApiServices> = {}, language = 'en') {
+    app = createApp({ services: { ...services(), ...overrides }, auth: { sessionTtlMs: 60_000 } });
+    const registered = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: 'long-enough-password', language } });
+    return { cookie: registered.headers['set-cookie'], csrfToken: registered.json<{ csrfToken: string }>().csrfToken };
+  }
+
+  const settingsCommand = {
+    homeAssistant: { url: 'http://homeassistant.local:8123', token: { operation: 'keep_current' as const } },
+    ai: { provider: 'gemini' as const, key: { operation: 'keep_current' as const } },
+    notifications: { channel: 'none' as const },
+    schedules: [{ kind: 'daily' as const, enabled: true, time: '08:00', timezone: 'UTC' }],
+    privacyLevel: 'balanced' as const,
+    retentionDays: 10
+  };
+
+  it('logs out with DELETE /api/session and expires both cookies', async () => {
+    const { cookie, csrfToken } = await registerApp();
+    const logout = await app!.inject({ method: 'DELETE', url: '/api/session', headers: { cookie, 'x-csrf-token': csrfToken } });
+    const setCookies = Array.isArray(logout.headers['set-cookie']) ? logout.headers['set-cookie'] : [logout.headers['set-cookie'] ?? ''];
+    expect(logout.statusCode).toBe(204);
+    expect(setCookies.join('; ')).toContain('Max-Age=0');
+    expect((await app!.inject({ method: 'GET', url: '/api/settings', headers: { cookie } })).statusCode).toBe(401);
+  });
+
+  it('serves and persists onboarding progress and completes setup', async () => {
+    const { cookie, csrfToken } = await registerApp();
+    const fetched = await app!.inject({ method: 'GET', url: '/api/onboarding', headers: { cookie } });
+    expect(fetched.statusCode).toBe(200);
+    expect(fetched.json()).toMatchObject({ currentStep: 'home_assistant', completed: false });
+
+    const saved = await app!.inject({
+      method: 'PATCH', url: '/api/onboarding', headers: { cookie, 'x-csrf-token': csrfToken },
+      payload: { step: 'ai_provider', draft: {}, secrets: {} }
+    });
+    expect(saved.statusCode).toBe(200);
+
+    const completed = await app!.inject({ method: 'POST', url: '/api/onboarding/complete', headers: { cookie, 'x-csrf-token': csrfToken } });
+    expect(completed.statusCode).toBe(200);
+    expect(completed.json()).toMatchObject({ settings: { ai: { provider: 'gemini' } } });
+  });
+
+  it('returns 400 in the session language when onboarding is incomplete', async () => {
+    const overridden: BackendApiServices = {
+      ...services(),
+      onboarding: { get: async () => ({ currentStep: 'home_assistant', completedSteps: [], draft: {}, secretMetadata: {}, completed: false }), save: async () => ({ currentStep: 'home_assistant', completedSteps: [], draft: {}, secretMetadata: {}, completed: false }), complete: async () => { throw new Error('ONBOARDING_INCOMPLETE'); } }
+    };
+    const { cookie, csrfToken } = await registerApp(overridden, 'es');
+    const completed = await app!.inject({ method: 'POST', url: '/api/onboarding/complete', headers: { cookie, 'x-csrf-token': csrfToken } });
+    expect(completed.statusCode).toBe(400);
+    expect(completed.json()).toMatchObject({ code: 'ONBOARDING_INCOMPLETE', message: expect.stringContaining('Complete todos los pasos') });
+  });
+
+  it('updates settings and maps secret failures to the HTTP error surface', async () => {
+    const { cookie, csrfToken } = await registerApp();
+    const ok = await app!.inject({ method: 'PUT', url: '/api/settings', headers: { cookie, 'x-csrf-token': csrfToken }, payload: settingsCommand });
+    expect(ok.statusCode).toBe(200);
+
+    const requiredSecret: BackendApiServices = {
+      ...services(),
+      settings: { get: async () => ({ homeAssistant: { url: 'http://homeassistant.local:8123', token: { configured: true, mask: '••••ha' } }, ai: { provider: 'gemini' as const, key: { configured: true, mask: '••••ai' } }, notifications: { channel: 'none' as const }, schedules: [{ kind: 'daily' as const, enabled: true, time: '08:00', timezone: 'UTC' }], privacyLevel: 'balanced' as const, retentionDays: 10 }), update: async () => { throw new Error('SETTINGS_REQUIRED_SECRET:haTokenRef'); } }
+    };
+    const requiredSession = await registerApp(requiredSecret);
+    const missing = await app!.inject({ method: 'PUT', url: '/api/settings', headers: { cookie: requiredSession.cookie, 'x-csrf-token': requiredSession.csrfToken }, payload: settingsCommand });
+    expect(missing.statusCode).toBe(400);
+    expect(missing.json()).toMatchObject({ code: 'SETTINGS_REQUIRED_SECRET' });
+
+    const saveFailed: BackendApiServices = { ...services(), settings: { get: async () => ({ homeAssistant: { url: 'http://homeassistant.local:8123', token: { configured: true, mask: '••••ha' } }, ai: { provider: 'gemini' as const, key: { configured: true, mask: '••••ai' } }, notifications: { channel: 'none' as const }, schedules: [{ kind: 'daily' as const, enabled: true, time: '08:00', timezone: 'UTC' }], privacyLevel: 'balanced' as const, retentionDays: 10 }), update: async () => { throw new Error('SETTINGS_SAVE_FAILED'); } } };
+    const failedSession = await registerApp(saveFailed);
+    const failed = await app!.inject({ method: 'PUT', url: '/api/settings', headers: { cookie: failedSession.cookie, 'x-csrf-token': failedSession.csrfToken }, payload: settingsCommand });
+    expect(failed.statusCode).toBe(503);
+    expect(failed.json()).toMatchObject({ code: 'SETTINGS_SAVE_FAILED' });
+  });
+
+  it('rejects manual runs without a worker, and 404s unknown jobs and retries', async () => {
+    const { cookie, csrfToken } = await registerApp({}, 'es');
+    const run = await app!.inject({ method: 'POST', url: '/api/digests/run', headers: { cookie, 'x-csrf-token': csrfToken }, payload: { kind: 'manual' } });
+    expect(run.statusCode).toBe(503);
+    expect(run.json()).toMatchObject({ code: 'ANALYSIS_UNAVAILABLE', message: expect.stringContaining('análisis manual') });
+
+    const job = await app!.inject({ method: 'GET', url: '/api/digests/jobs/unknown', headers: { cookie } });
+    expect(job.statusCode).toBe(404);
+    const retry = await app!.inject({ method: 'POST', url: '/api/digests/jobs/unknown/retry', headers: { cookie, 'x-csrf-token': csrfToken } });
+    expect(retry.statusCode).toBe(404);
+  });
+
+  it('enqueues manual runs and retries jobs when a worker is present', async () => {
+    const woken: number[] = [];
+    const withWorker: BackendApiServices = {
+      ...services(),
+      digestJobs: { enqueue: async () => ({ status: 'queued' as const, jobId: 'job-1' }), get: async () => null, retryFailed: async () => ({ id: 'job-2', triggerWindowId: 'v2:retry', kind: 'manual' as const, status: 'queued' as const, stage: 'queued', attempts: 1, retryCount: 0, availableAt: '2026-08-03T10:00:00.000Z', retryAvailable: true, createdAt: '2026-08-03T10:00:00.000Z', updatedAt: '2026-08-03T10:00:00.000Z' }) },
+      digestWorker: { wake: () => { woken.push(1); } } as unknown as BackendApiServices['digestWorker']
+    };
+    app = createApp({ services: withWorker, auth: { sessionTtlMs: 60_000 } });
+    const registered = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: 'long-enough-password', language: 'en' } });
+    const cookie = registered.headers['set-cookie'];
+    const csrfToken = registered.json<{ csrfToken: string }>().csrfToken;
+    const run = await app!.inject({ method: 'POST', url: '/api/digests/run', headers: { cookie, 'x-csrf-token': csrfToken }, payload: { kind: 'manual' } });
+    expect(run.statusCode).toBe(202);
+    const retry = await app!.inject({ method: 'POST', url: '/api/digests/jobs/job-2/retry', headers: { cookie, 'x-csrf-token': csrfToken } });
+    expect(retry.statusCode).toBe(202);
+    expect(retry.json()).toMatchObject({ id: 'job-2', status: 'queued' });
+    expect(woken).toHaveLength(2);
+  });
+
+  it('maps manual Telegram failures to their HTTP status codes', async () => {
+    const cases: Array<{ error: string; status: number; code: string }> = [
+      { error: 'REPORT_NOT_FOUND', status: 404, code: 'NOT_FOUND' },
+      { error: 'REPORT_NOT_SENDABLE', status: 409, code: 'REPORT_NOT_SENDABLE' },
+      { error: 'MANUAL_TELEGRAM_SEND_IN_FLIGHT', status: 409, code: 'SEND_IN_FLIGHT' }
+    ];
+    for (const testCase of cases) {
+      const withManual: BackendApiServices = { ...services(), manualTelegram: { send: async () => { throw new Error(testCase.error); } } };
+      app = createApp({ services: withManual, auth: { sessionTtlMs: 60_000 } });
+      const registered = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { password: 'long-enough-password', language: 'en' } });
+      const cookie = registered.headers['set-cookie'];
+      const csrfToken = registered.json<{ csrfToken: string }>().csrfToken;
+      const response = await app!.inject({
+        method: 'POST', url: '/api/digests/report-1/manual-telegram-sends',
+        headers: { cookie, 'x-csrf-token': csrfToken },
+        payload: { actionId: '11111111-1111-4111-8111-111111111111', confirmed: true }
+      });
+      expect(response.statusCode).toBe(testCase.status);
+      expect(response.json()).toMatchObject({ code: testCase.code });
+      await app?.close();
+      app = undefined;
+    }
+  });
+
+  it('lists notes with a digest window and manages ignore rules', async () => {
+    const { cookie, csrfToken } = await registerApp();
+    const notes = await app!.inject({ method: 'GET', url: '/api/notes', headers: { cookie }, query: { from: '2026-08-01T00:00:00.000Z', to: '2026-08-03T00:00:00.000Z' } });
+    expect(notes.statusCode).toBe(200);
+
+    const created = await app!.inject({ method: 'POST', url: '/api/ignores', headers: { cookie, 'x-csrf-token': csrfToken }, payload: { match: 'component:error', reason: 'known noise' } });
+    expect(created.statusCode).toBe(201);
+    expect(created.json()).toMatchObject({ match: 'component:error' });
+
+    const removed = await app!.inject({ method: 'DELETE', url: '/api/ignores/ignore-1', headers: { cookie, 'x-csrf-token': csrfToken } });
+    expect(removed.statusCode).toBe(204);
+  });
+
+  it('tests, tests current, and sends through the notifier surface', async () => {
+    const { cookie, csrfToken } = await registerApp();
+    const tested = await app!.inject({ method: 'POST', url: '/api/notifiers/test', headers: { cookie, 'x-csrf-token': csrfToken }, payload: { channel: 'telegram', targetRef: 'telegram:abc' } });
+    expect(tested.statusCode).toBe(200);
+    expect(tested.json()).toMatchObject({ status: 'success' });
+
+    const sent = await app!.inject({ method: 'POST', url: '/api/notifiers/send', headers: { cookie, 'x-csrf-token': csrfToken }, payload: { digestId: 'digest-1', targetRef: 'telegram:abc' } });
+    expect(sent.statusCode).toBe(200);
+    expect(sent.json()).toMatchObject({ status: 'skipped' });
+
+    const wrongChannel = await app!.inject({ method: 'POST', url: '/api/notifiers/test-current', headers: { cookie, 'x-csrf-token': csrfToken }, payload: { channel: 'email' } });
+    expect(wrongChannel.statusCode).toBe(400);
+    expect(wrongChannel.json()).toMatchObject({ code: 'VALIDATION_FAILED' });
+
+    const unavailable = await app!.inject({ method: 'POST', url: '/api/notifiers/test-current', headers: { cookie, 'x-csrf-token': csrfToken }, payload: { channel: 'telegram' } });
+    expect(unavailable.statusCode).toBe(503);
+    expect(unavailable.json()).toMatchObject({ code: 'NOTIFIER_UNAVAILABLE' });
+
+    const withTarget: BackendApiServices = {
+      ...services(),
+      settings: {
+        get: async () => ({ homeAssistant: { url: 'http://homeassistant.local:8123', token: { configured: true, mask: '••••ha' } }, ai: { provider: 'gemini' as const, key: { configured: true, mask: '••••ai' } }, notifications: { channel: 'telegram' as const, chatId: '42', botToken: { configured: true, mask: '••••tg' } }, schedules: [{ kind: 'daily' as const, enabled: true, time: '08:00', timezone: 'UTC' }], privacyLevel: 'balanced' as const, retentionDays: 10 }),
+        update: async () => ({ homeAssistant: { url: 'http://homeassistant.local:8123', token: { configured: true, mask: '••••ha' } }, ai: { provider: 'gemini' as const, key: { configured: true, mask: '••••ai' } }, notifications: { channel: 'telegram' as const, chatId: '42', botToken: { configured: true, mask: '••••tg' } }, schedules: [{ kind: 'daily' as const, enabled: true, time: '08:00', timezone: 'UTC' }], privacyLevel: 'balanced' as const, retentionDays: 10 }),
+        notificationTarget: async () => 'telegram:target-ref'
+      }
+    };
+    const withTargetSession = await registerApp(withTarget);
+    const current = await app!.inject({ method: 'POST', url: '/api/notifiers/test-current', headers: { cookie: withTargetSession.cookie, 'x-csrf-token': withTargetSession.csrfToken }, payload: { channel: 'telegram' } });
+    expect(current.statusCode).toBe(200);
+    expect(current.json()).toMatchObject({ status: 'success' });
+
+    const secretBroken: BackendApiServices = {
+      ...services(),
+      settings: { ...withTarget.settings, notificationTarget: async () => { throw new Error('SETTINGS_REQUIRED_SECRET:telegramBotTokenRef'); } }
+    };
+    const brokenSession = await registerApp(secretBroken);
+    const missingSecret = await app!.inject({ method: 'POST', url: '/api/notifiers/test-current', headers: { cookie: brokenSession.cookie, 'x-csrf-token': brokenSession.csrfToken }, payload: { channel: 'telegram' } });
+    expect(missingSecret.statusCode).toBe(400);
+    expect(missingSecret.json()).toMatchObject({ code: 'SETTINGS_REQUIRED_SECRET' });
+  });
+});
+
 describe('GET /api/entities/stale endpoint', () => {
   let app: FastifyInstance | undefined;
   afterEach(async () => { await app?.close(); app = undefined; });
