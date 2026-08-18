@@ -98,6 +98,102 @@ describe('HomeAssistantWebSocketClient', () => {
 
     await expect(snapshot).resolves.toEqual({ available: false, reason: 'auth_required_missing' });
   });
+
+  it('rejects non-JSON messages with invalid_result instead of leaking payload text', async () => {
+    const socket = fakeSocket();
+    const client = new HomeAssistantWebSocketClient({ haUrl: 'http://ha.local:8123', haTokenRef: 'ha', secrets: { resolve: async () => 'token' }, webSocketFactory: () => socket.socket });
+    const snapshot = client.snapshot();
+
+    await tick(); socket.open(); await tick(); socket.message({ type: 'auth_required' });
+    await tick();
+    socket.socket.onmessage?.({ data: 'not-json: secret-bearing-provider-text' });
+
+    await expect(snapshot).resolves.toEqual({ available: false, reason: 'invalid_result' });
+  });
+});
+
+describe('HomeAssistantWebSocketClient.fetchDeviceRegistryMap', () => {
+  it('builds a device map preferring name_by_user over name and model', async () => {
+    const socket = fakeSocket();
+    const client = new HomeAssistantWebSocketClient({ haUrl: 'http://ha.local:8123', haTokenRef: 'ha', secrets: { resolve: async () => 'token' }, webSocketFactory: () => socket.socket });
+
+    const mapPromise = client.fetchDeviceRegistryMap();
+    await tick(); socket.open(); await tick(); socket.message({ type: 'auth_required' }); await tick(); socket.message({ type: 'auth_ok' });
+    await tick(); socket.message({ id: 1, type: 'result', success: true, result: [
+      { entity_id: 'sensor.with_device', device_id: 'dev-1' },
+      { entity_id: 'sensor.with_device_name', device_id: 'dev-2' },
+      { entity_id: 'sensor.model_only', device_id: 'dev-3' },
+      { entity_id: 'sensor.no_device' },
+      null,
+      { device_id: 'dev-1' }
+    ] });
+    await tick(); socket.message({ id: 2, type: 'result', success: true, result: [
+      { id: 'dev-1', name_by_user: 'Salón', name: 'Living', model: 'Hub' },
+      { id: 'dev-2', name: 'Cocina', model: 'Hub' },
+      { id: 'dev-3', model: 'Bridge' },
+      { id: 42, name: 'Not a string id' },
+      null
+    ] });
+
+    const map = await mapPromise;
+    expect(map).toEqual(new Map([
+      ['sensor.with_device', { deviceId: 'dev-1', deviceName: 'Salón' }],
+      ['sensor.with_device_name', { deviceId: 'dev-2', deviceName: 'Cocina' }],
+      ['sensor.model_only', { deviceId: 'dev-3', deviceName: 'Bridge' }]
+    ]));
+    expect(socket.closed).toBe(true);
+  });
+
+  it('returns an empty map when auth_required never arrives', async () => {
+    const socket = fakeSocket();
+    const client = new HomeAssistantWebSocketClient({ haUrl: 'http://ha.local:8123', haTokenRef: 'ha', secrets: { resolve: async () => 'token' }, webSocketFactory: () => socket.socket });
+
+    const mapPromise = client.fetchDeviceRegistryMap();
+    await tick(); socket.open(); await tick(); socket.message({ type: 'auth_ok' });
+
+    await expect(mapPromise).resolves.toEqual(new Map());
+  });
+
+  it('returns an empty map when authentication is rejected', async () => {
+    const socket = fakeSocket();
+    const client = new HomeAssistantWebSocketClient({ haUrl: 'http://ha.local:8123', haTokenRef: 'ha', secrets: { resolve: async () => 'token' }, webSocketFactory: () => socket.socket });
+
+    const mapPromise = client.fetchDeviceRegistryMap();
+    await tick(); socket.open(); await tick(); socket.message({ type: 'auth_required' }); await tick(); socket.message({ type: 'auth_invalid' });
+
+    await expect(mapPromise).resolves.toEqual(new Map());
+  });
+
+  it.each([
+    ['entity registry', 1],
+    ['device registry', 2]
+  ] as const)('returns an empty map when the %s result is not an array', async (_label, failingId) => {
+    const socket = fakeSocket();
+    const client = new HomeAssistantWebSocketClient({ haUrl: 'http://ha.local:8123', haTokenRef: 'ha', secrets: { resolve: async () => 'token' }, webSocketFactory: () => socket.socket });
+
+    const mapPromise = client.fetchDeviceRegistryMap();
+    await tick(); socket.open(); await tick(); socket.message({ type: 'auth_required' }); await tick(); socket.message({ type: 'auth_ok' });
+    await tick(); socket.message({ id: failingId, type: 'result', success: true, result: {} });
+
+    await expect(mapPromise).resolves.toEqual(new Map());
+  });
+
+  it('returns an empty map when the token cannot be resolved', async () => {
+    const socket = fakeSocket();
+    const client = new HomeAssistantWebSocketClient({ haUrl: 'http://ha.local:8123', haTokenRef: 'ha', secrets: { resolve: async () => { throw new Error('token-secret'); } }, webSocketFactory: () => socket.socket });
+
+    await expect(client.fetchDeviceRegistryMap()).resolves.toEqual(new Map());
+  });
+
+  it('returns an empty map when the socket errors mid-conversation', async () => {
+    const socket = fakeSocket();
+    const client = new HomeAssistantWebSocketClient({ haUrl: 'http://ha.local:8123', haTokenRef: 'ha', secrets: { resolve: async () => 'token' }, webSocketFactory: () => socket.socket });
+
+    const mapPromise = client.fetchDeviceRegistryMap();
+    await tick(); socket.open(); await tick(); socket.message({ type: 'auth_required' }); await tick(); socket.error();
+
+    await expect(mapPromise).resolves.toEqual(new Map());
+  });
 });
 
 function fakeSocket() {

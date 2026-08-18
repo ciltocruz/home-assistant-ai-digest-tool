@@ -12,8 +12,6 @@
   <a href="https://github.com/ciltocruz/home-assistant-ai-digest-tool/actions/workflows/ci.yml"><img src="https://github.com/ciltocruz/home-assistant-ai-digest-tool/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/ciltocruz/home-assistant-ai-digest-tool/releases"><img src="https://img.shields.io/github/v/release/ciltocruz/home-assistant-ai-digest-tool" alt="Release"></a>
   <a href="https://app.codecov.io/gh/ciltocruz/home-assistant-ai-digest-tool"><img src="https://img.shields.io/codecov/c/github/ciltocruz/home-assistant-ai-digest-tool" alt="Coverage"></a>
-  <a href="https://github.com/ciltocruz/home-assistant-ai-digest-tool/pkgs/container/home-assistant-ai-digest-tool"><img src="https://img.shields.io/ghcr/v/ciltocruz/home-assistant-ai-digest-tool" alt="GHCR image"></a>
-  <a href="https://github.com/ciltocruz/home-assistant-ai-digest-tool/pkgs/container/home-assistant-ai-digest-tool"><img src="https://img.shields.io/ghcr/pulls/ciltocruz/home-assistant-ai-digest-tool" alt="GHCR pulls"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/ciltocruz/home-assistant-ai-digest-tool" alt="License"></a>
 </p>
 

@@ -861,6 +861,232 @@ describe('persistent runtime services', () => {
     db.close();
     await services.close?.();
   });
+
+  it('reports persistence_unavailable after the database is closed and resolves notification targets', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-health-'));
+    const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
+    expect(await services.health!.check()).toEqual({ ok: true });
+    await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET, telegram: { botToken: TELEGRAM_SECRET, chatId: '42' } });
+    expect(await services.settings.notificationTarget!('telegram')).toBeTruthy();
+    await services.close?.();
+    expect(await services.health!.check()).toEqual({ ok: false, reason: 'persistence_unavailable' });
+
+    const freshDataDir = await mkdtemp(join(tmpdir(), 'ha-digest-health-fresh-'));
+    const fresh = await createPersistentRuntimeServices({ dataDir: freshDataDir, now: () => NOW });
+    await expect(fresh.settings.notificationTarget!('telegram')).rejects.toThrow('SETTINGS_REQUIRED_SECRET:telegramBotTokenRef');
+    await fresh.close?.();
+  });
+
+  it('removes legacy reports in batch and manages ignore rules through the service surface', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-batch-'));
+    const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
+    await (services.reports as unknown as ReportStore).save(report('batch-a', '2026-07-12T08:00:00.000Z'));
+    await (services.reports as unknown as ReportStore).save(report('batch-b', '2026-07-12T08:30:00.000Z'));
+    expect(await services.reports.removeBatch(['batch-a', 'batch-b', 'missing'])).toBe(2);
+    expect(await services.reports.removeBatch([])).toBe(0);
+
+    const rule = await services.ignores.add({ match: 'component:error' });
+    expect(await services.ignores.listActive('2026-07-12T10:00:00.000Z')).toEqual([expect.objectContaining({ match: 'component:error' })]);
+    await services.ignores.remove(rule.id);
+    expect(await services.ignores.listActive('2026-07-12T10:00:00.000Z')).toEqual([]);
+    await services.close?.();
+  });
+
+  it('tests and sends through the notifier surface including failure paths', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-notifier-'));
+    const originalFetch = globalThis.fetch;
+    try {
+      const telegramRequests: Array<{ body: unknown }> = [];
+      const services = await createPersistentRuntimeServices({
+        dataDir,
+        now: () => NOW,
+        telegramHttpClient: async (request) => { telegramRequests.push({ body: request.body }); return { status: 200, json: async () => ({ ok: true }) }; }
+      });
+      const setup = await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET, telegram: { botToken: TELEGRAM_SECRET, chatId: '42' } });
+      const telegramRef = setup.notifiers[0]!.targetRef;
+      await (services.reports as unknown as ReportStore).save(report('notifier-digest', '2026-07-12T08:00:00.000Z'));
+
+      globalThis.fetch = async () => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+      const tested = await services.notifiers.test({ channel: 'telegram', targetRef: telegramRef });
+      expect(tested.status).toBe('success');
+
+      const sent = await services.notifiers.send({ digestId: 'notifier-digest', targetRef: telegramRef });
+      expect(sent.status).toBe('sent');
+      expect(await services.notifiers.send({ digestId: 'missing', targetRef: telegramRef })).toEqual({ status: 'failed', targetRef: telegramRef, message: 'Report not found.' });
+
+      const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
+      const db = new DatabaseSync(join(dataDir, 'app.db'));
+      db.prepare('update secrets set encrypted_value = ?, iv = ?, auth_tag = ? where id = ?').run('garbage', 'garbage', 'garbage', telegramRef);
+      const failedTest = await services.notifiers.test({ channel: 'telegram', targetRef: telegramRef });
+      expect(failedTest).toMatchObject({ status: 'failed', message: 'Could not resolve Telegram credentials.' });
+      const failedSend = await services.notifiers.send({ digestId: 'notifier-digest', targetRef: telegramRef });
+      expect(failedSend).toMatchObject({ status: 'failed', message: 'Could not resolve Telegram credentials.' });
+      db.close();
+      await services.close?.();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('fetches HA states through the REST client with a configured token and degrades on errors', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-rest-'));
+    const originalFetch = globalThis.fetch;
+    try {
+      const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
+      expect(await services.ha!.getStates!()).toEqual([]);
+      await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET });
+      globalThis.fetch = async () => new Response(JSON.stringify([{ entity_id: 'sensor.a', state: 'on', last_changed: NOW, last_updated: NOW, attributes: {} }]), { status: 200 });
+      expect(await services.ha!.getStates!()).toEqual([{ entity_id: 'sensor.a', state: 'on', last_changed: NOW, last_updated: NOW, attributes: {} }]);
+      globalThis.fetch = async () => { throw new Error('network down'); };
+      expect(await services.ha!.getStates!()).toEqual([]);
+      await services.close?.();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('builds the device map through the WebSocket client and degrades to an empty map', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-devmap-'));
+    const registrySocket = () => {
+      const socket = {
+        onopen: null as ((event: unknown) => void) | null,
+        onmessage: null as ((event: { data: unknown }) => void) | null,
+        onerror: null as ((event: unknown) => void) | null,
+        onclose: null as ((event: unknown) => void) | null,
+        close: () => undefined,
+        send: (data: string) => {
+          const request = JSON.parse(data) as { type: string; id?: number };
+          if (request.type === 'auth') queueMicrotask(() => socket.onmessage?.({ data: JSON.stringify({ type: 'auth_ok' }) }));
+          if (request.type === 'config/entity_registry/list') queueMicrotask(() => socket.onmessage?.({ data: JSON.stringify({ type: 'result', id: request.id, success: true, result: [{ entity_id: 'sensor.living_temp', device_id: 'device-1' }] }) }));
+          if (request.type === 'config/device_registry/list') queueMicrotask(() => socket.onmessage?.({ data: JSON.stringify({ type: 'result', id: request.id, success: true, result: [{ id: 'device-1', name: 'Salón', name_by_user: 'Salón' }] }) }));
+        }
+      };
+      queueMicrotask(() => {
+        socket.onopen?.({});
+        queueMicrotask(() => socket.onmessage?.({ data: JSON.stringify({ type: 'auth_required', ha_version: '2026.8.0' }) }));
+      });
+      return socket;
+    };
+    const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW, haWebSocketFactory: registrySocket });
+    expect(await services.ha!.getDeviceMap!()).toEqual(new Map());
+    await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET });
+    expect((await services.ha!.getDeviceMap!()).get('sensor.living_temp')).toEqual({ deviceId: 'device-1', deviceName: 'Salón' });
+    await services.close?.();
+  });
+
+  it('commits settings replacements atomically and rolls back a failed save', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-commit-'));
+    const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
+    await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET, telegram: { botToken: TELEGRAM_SECRET, chatId: '42' } });
+    const current = await services.settings.get();
+
+    const rotated = await services.settings.update({
+      homeAssistant: { url: 'http://ha.local:8123', token: { operation: 'replace', value: 'new-ha-secret' } },
+      ai: { provider: current.ai.provider, key: { operation: 'keep_current' } },
+      notifications: { channel: 'telegram', chatId: '99', botToken: { operation: 'keep_current' } },
+      schedules: [{ kind: 'daily', enabled: true, time: '08:00', timezone: 'UTC' }],
+      privacyLevel: current.privacyLevel,
+      retentionDays: current.retentionDays
+    });
+    expect(rotated.homeAssistant.url).toBe('http://ha.local:8123');
+
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
+    const db = new DatabaseSync(join(dataDir, 'app.db'));
+    db.exec('drop table secrets');
+    await expect(services.settings.update({
+      homeAssistant: { url: 'http://ha.local:8123', token: { operation: 'replace', value: 'another-secret' } },
+      ai: { provider: current.ai.provider, key: { operation: 'keep_current' } },
+      notifications: { channel: 'none' },
+      schedules: [{ kind: 'daily', enabled: true, time: '08:00', timezone: 'UTC' }],
+      privacyLevel: current.privacyLevel,
+      retentionDays: current.retentionDays
+    })).rejects.toThrow('SETTINGS_SAVE_FAILED');
+    db.close();
+    await services.close?.();
+  });
+
+  it('rolls back a legacy report removal when the delivery cleanup fails', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-removerollback-'));
+    const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
+    await (services.reports as unknown as ReportStore).save(report('rollback-digest', '2026-07-12T08:00:00.000Z'));
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
+    const db = new DatabaseSync(join(dataDir, 'app.db'));
+    db.exec('drop table deliveries');
+    await expect(services.reports.remove('rollback-digest')).rejects.toThrow();
+    expect(db.prepare('select count(*) as count from reports where id = ?').get('rollback-digest')).toEqual({ count: 1 });
+    db.close();
+    await services.close?.();
+  });
+
+  it('normalizes a corrupt legacy payload to a pending delivery status', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-corruptpayload-'));
+    const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
+    await (services.reports as unknown as ReportStore).save(report('corrupt-digest', '2026-07-12T08:00:00.000Z'));
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
+    const db = new DatabaseSync(join(dataDir, 'app.db'));
+    db.prepare('update reports set compressed_payload = ? where id = ?').run(Buffer.from('not-gzip'), 'corrupt-digest');
+    const history = await services.reports.list();
+    expect(history).toEqual([expect.objectContaining({ id: 'corrupt-digest', deliveryStatus: 'pending' })]);
+    db.close();
+    await services.close?.();
+  });
+
+  it('runs the scheduled tick loop when a positive schedule interval is configured', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-ticker-'));
+    const logPath = join(dataDir, 'home-assistant.log');
+    await writeFile(logPath, '2026-07-12 10:00:00 ERROR [mqtt] private trace content\n');
+    const services = await createPersistentRuntimeServices({
+      dataDir,
+      now: () => NOW,
+      haLogPath: logPath,
+      scheduleTickMs: 5,
+      providerHttpClient: async () => ({ status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'MQTT failed', recommendation: 'Restart MQTT' }) }] } }] }) })
+    });
+    await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await services.close?.();
+  });
+
+  it('reports a failed Telegram delivery for the worker when the stored secret is corrupt', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-workercatch-'));
+    const logPath = join(dataDir, 'home-assistant.log');
+    await writeFile(logPath, '2026-07-12 10:00:00 ERROR [mqtt] private trace content\n');
+    const services = await createPersistentRuntimeServices({
+      dataDir,
+      now: () => NOW,
+      haLogPath: logPath,
+      providerHttpClient: async () => ({ status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'MQTT failed', recommendation: 'Restart MQTT' }) }] } }] }) })
+    });
+    const setup = await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET, telegram: { botToken: TELEGRAM_SECRET, chatId: '42' } });
+    const telegramRef = setup.notifiers[0]!.targetRef;
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
+    const db = new DatabaseSync(join(dataDir, 'app.db'));
+    db.prepare('update secrets set encrypted_value = ?, iv = ?, auth_tag = ? where id = ?').run('garbage', 'garbage', 'garbage', telegramRef);
+    db.close();
+    const queued = await services.digestJobs.enqueue({ kind: 'manual', triggerWindowId: 'v2:worker-catch' });
+    await (services.digestWorker as unknown as { runOnce(): Promise<void> }).runOnce();
+    const job = await services.digestJobs.get(queued.jobId);
+    expect(job).toMatchObject({ status: 'completed', reportId: expect.stringMatching(/^v2-report:/) });
+    const reportId = job?.reportId ?? 'missing';
+    const detail = await services.reports.get(reportId);
+    expect(detail?.summary.deliveryStatus).toBe('failed');
+    await services.close?.();
+  });
+
+  it('fails a manual Telegram send when the stored secret cannot be resolved', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-manualcatch-'));
+    const services = await createPersistentRuntimeServices({ dataDir, now: () => NOW });
+    const setup = await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET, telegram: { botToken: TELEGRAM_SECRET, chatId: '42' } });
+    const telegramRef = setup.notifiers[0]!.targetRef;
+    await (services.reports as unknown as ReportStore).save(report('manual-catch-digest', '2026-07-12T08:00:00.000Z'));
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
+    const db = new DatabaseSync(join(dataDir, 'app.db'));
+    db.prepare('update secrets set encrypted_value = ?, iv = ?, auth_tag = ? where id = ?').run('garbage', 'garbage', 'garbage', telegramRef);
+    db.close();
+    const result = await services.manualTelegram?.send('manual-catch-digest', '11111111-1111-4111-8111-111111111111');
+    expect(result).toMatchObject({ attempt: { status: 'failed' } });
+    await services.close?.();
+  });
 });
 
 function authOptions() {
