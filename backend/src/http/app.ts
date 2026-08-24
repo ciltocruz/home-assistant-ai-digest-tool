@@ -263,7 +263,9 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     if (!owned) return sendError(reply, 404, 'PROBLEM_NOT_FOUND', 'The technical fingerprint does not belong to this report.', request.id);
     const existing = (await options.services.ignores.listActive(now())).find((rule) => rule.type === 'signature' && rule.match === signature);
     if (existing) return ExactProblemIgnoreResultSchema.parse({ rule: existing, alreadyIgnored: true });
-    const rule = await options.services.ignores.add({ match: signature, type: 'signature' });
+    const excerpt = owned.safeExcerpt?.lines[0] ? ` — ${owned.safeExcerpt.lines[0]}` : '';
+    const reason = `[${owned.level}] ${owned.component}${excerpt}`.slice(0, 500);
+    const rule = await options.services.ignores.add({ match: signature, type: 'signature', reason });
     return reply.code(201).send(ExactProblemIgnoreResultSchema.parse({ rule, alreadyIgnored: false }));
   });
   app.post('/api/digests/:reportId/manual-telegram-sends', async (request, reply) => {

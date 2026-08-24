@@ -171,7 +171,7 @@ export function SettingsPanel({ api, section }: { api?: SettingsApi; section?: s
      </form> : null}
      {selectedSection === 'context' ? <section id="settings-context" className="settings-context" aria-labelledby="settings-context-title"><p className="eyebrow">{copy('settings.context')}</p><h2 id="settings-context-title">{copy('settings.contextTitle')}</h2><p>{copy('settings.contextDescription')}</p>
        <div className="settings-context-grid"><article><h3>{copy('settings.operatorNotes')}</h3>{api.addNote ? <form className="control-form" aria-label={copy('settings.addNote')} onSubmit={(event) => void saveNote(event)}><label>{copy('settings.note')}<textarea name="noteText" value={noteText} onChange={(event) => setNoteText(event.currentTarget.value)} /></label><button type="submit" disabled={notesState === 'saving'}>{notesState === 'saving' ? copy('settings.savingNote') : copy('settings.saveNote')}</button></form> : <p className="muted-copy">{copy('settings.notesUnavailable')}</p>}<ContextList loading={copy('settings.loadingContext')} items={notes} state={notesState} empty={copy('settings.noNotes')} render={(note) => <><strong>{formatDate(note.occurredAt, locale)}</strong><span>{note.text}</span></>} /></article>
-       <article><h3>{copy('settings.ignoredWarnings')}</h3>{api.addIgnore ? <form className="control-form" aria-label={copy('settings.addIgnoredWarning')} onSubmit={(event) => void saveIgnore(event)}><label>{copy('settings.match')}<input name="ignoreMatch" autoComplete="off" value={ignoreMatch} onChange={(event) => setIgnoreMatch(event.currentTarget.value)} /></label><button type="submit" disabled={ignoresState === 'saving'}>{ignoresState === 'saving' ? copy('settings.savingWarning') : copy('settings.ignoreWarning')}</button></form> : <p className="muted-copy">{copy('settings.ignoresUnavailable')}</p>}<ContextList loading={copy('settings.loadingContext')} items={ignores} state={ignoresState} empty={copy('settings.noIgnores')} render={(rule) => <><strong>{rule.match}</strong><span>{rule.reason ?? copy('settings.noReason')}</span>{api.removeIgnore ? <button type="button" data-testid={`remove-ignore-${rule.id}`} onClick={(event) => { event.currentTarget.focus(); setRetryTarget(null); setRemoveTarget(rule); }}>{copy('settings.remove')}</button> : null}</>} /></article></div>
+        <article><h3>{copy('settings.ignoredWarnings')}</h3>{api.addIgnore ? <form className="control-form" aria-label={copy('settings.addIgnoredWarning')} onSubmit={(event) => void saveIgnore(event)}><label>{copy('settings.match')}<input name="ignoreMatch" autoComplete="off" value={ignoreMatch} onChange={(event) => setIgnoreMatch(event.currentTarget.value)} /></label><button type="submit" disabled={ignoresState === 'saving'}>{ignoresState === 'saving' ? copy('settings.savingWarning') : copy('settings.ignoreWarning')}</button></form> : <p className="muted-copy">{copy('settings.ignoresUnavailable')}</p>}<ContextList loading={copy('settings.loadingContext')} items={ignores} state={ignoresState} empty={copy('settings.noIgnores')} render={(rule) => <IgnoreItem rule={rule} onRemove={api.removeIgnore ? () => { setRetryTarget(null); setRemoveTarget(rule); } : undefined} copy={copy} />} /></article></div>
      </section> : null}
     <ConfirmDialog open={Boolean(removeTarget)} title={copy('settings.removeIgnoredTitle')} description={removeTarget ? copy('settings.removeIgnoredDescription').replace('{match}', removeTarget.match) : ''} confirmLabel={copy('settings.remove')} cancelLabel={copy('settings.cancel')} onCancel={() => setRemoveTarget(null)} onConfirm={() => void confirmIgnoreRemoval()} />
   </section>;
@@ -188,6 +188,31 @@ function ContextList<T extends { id: string }>({ items, state, empty, loading, r
   if (state === 'loading') return <p aria-live="polite">{loading}</p>;
   if (items.length === 0) return <p className="muted-copy">{empty}</p>;
   return <ul className="compact-list">{items.map((item) => <li key={item.id}>{render(item)}</li>)}</ul>;
+}
+
+function IgnoreItem({ rule, onRemove, copy }: { rule: IgnoreRuleDto; onRemove?: () => void; copy: (key: TranslationKey) => string }) {
+  const matchInfo = parseIgnoreReason(rule);
+  return <>
+    <div className="ignore-item-content">
+      <div className="ignore-item-header">
+        {matchInfo.level ? <span className={`ignore-badge ignore-badge--${matchInfo.level.toLowerCase()}`}>{matchInfo.level}</span> : null}
+        {matchInfo.component ? <span className="ignore-component">{matchInfo.component}</span> : <strong className="ignore-component">{rule.match}</strong>}
+      </div>
+      {matchInfo.message ? <span className="ignore-item-meta">{matchInfo.message}</span> : null}
+      {rule.type === 'signature' && matchInfo.component ? <span className="ignore-signature-hash" title={rule.match}>{rule.match.slice(0, 12)}…</span> : null}
+    </div>
+    {onRemove ? <button type="button" data-testid={`remove-ignore-${rule.id}`} onClick={(event) => { event.currentTarget.focus(); onRemove(); }}>{copy('settings.remove')}</button> : null}
+  </>;
+}
+
+function parseIgnoreReason(rule: IgnoreRuleDto): { level?: 'ERROR' | 'WARNING' | 'CRITICAL'; component?: string; message?: string } {
+  if (!rule.reason) return {};
+  const structured = /^\[(ERROR|WARNING|CRITICAL)\]\s+([^—]+?)(?:\s+—\s+(.+))?$/.exec(rule.reason);
+  if (structured) {
+    const [, level, component, message] = structured;
+    return { level: level as 'ERROR' | 'WARNING' | 'CRITICAL', component: component?.trim(), message: message?.trim() };
+  }
+  return { message: rule.reason };
 }
 
 function FieldError({ error, children }: { error?: string; children: React.ReactNode }) { return <>{children}{error ? <p className="field-error" role="alert">{error}</p> : null}</>; }

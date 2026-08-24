@@ -2435,6 +2435,68 @@ button, input, select, textarea { font: inherit; }
   font-size: 0.85rem;
 }
 
+.ignore-item-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.ignore-item-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.ignore-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.15rem 0.45rem;
+  border-radius: var(--radius-pill);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ignore-badge--error {
+  background: rgba(255, 77, 79, 0.15);
+  border: 1px solid rgba(255, 77, 79, 0.35);
+  color: #ff9a9c;
+}
+
+.ignore-badge--warning {
+  background: rgba(255, 169, 64, 0.15);
+  border: 1px solid rgba(255, 169, 64, 0.35);
+  color: #ffc069;
+}
+
+.ignore-badge--generic {
+  background: rgba(24, 255, 220, 0.1);
+  border: 1px solid rgba(24, 255, 220, 0.25);
+  color: var(--ha-teal);
+}
+
+.ignore-component {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.ignore-item-meta {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.ignore-signature-hash {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
 /* ── Legacy / utility ─────────────────────────────────────── */
 
 /* Fallback button styles for components not yet migrated */
