@@ -125,4 +125,43 @@ describe('batch log domain', () => {
     ]);
     expect(plan.signatures[0]?.occurrences).toHaveLength(2);
   });
+
+  it('debounces sporadic network timeout errors as WARNING but promotes them to ERROR when meeting 5-in-30m threshold', () => {
+    // Case A: Sporadic timeouts (e.g. 2 occurrences in 10 minutes) -> WARNING
+    const sporadicEntries = parseHomeAssistantLog([
+      '2026-08-24 05:26:00 ERROR (MainThread) [homeassistant.components.google.coordinator] Timeout while contacting DNS servers',
+      '2026-08-24 05:28:00 ERROR (MainThread) [homeassistant.components.google.coordinator] Timeout while contacting DNS servers'
+    ]);
+    const sporadicPlan = classifySignatures(sporadicEntries, [], { now: '2026-08-24T12:00:00.000Z' });
+    expect(sporadicPlan.signatures[0]?.level).toBe('WARNING');
+
+    // Case B: Persistent network breakdown (5 occurrences within 20 minutes) -> ERROR
+    const persistentEntries = parseHomeAssistantLog([
+      '2026-08-24 05:10:00 ERROR (MainThread) [homeassistant.components.google.coordinator] Timeout while contacting DNS servers',
+      '2026-08-24 05:15:00 ERROR (MainThread) [homeassistant.components.google.coordinator] Timeout while contacting DNS servers',
+      '2026-08-24 05:20:00 ERROR (MainThread) [homeassistant.components.google.coordinator] Timeout while contacting DNS servers',
+      '2026-08-24 05:25:00 ERROR (MainThread) [homeassistant.components.google.coordinator] Timeout while contacting DNS servers',
+      '2026-08-24 05:30:00 ERROR (MainThread) [homeassistant.components.google.coordinator] Timeout while contacting DNS servers'
+    ]);
+    const persistentPlan = classifySignatures(persistentEntries, [], { now: '2026-08-24T12:00:00.000Z' });
+    expect(persistentPlan.signatures[0]?.level).toBe('ERROR');
+
+    // Case C: 5 occurrences spread over 5 hours (no single 30m window has 5) -> WARNING
+    const sparseEntries = parseHomeAssistantLog([
+      '2026-08-24 01:00:00 ERROR (MainThread) [homeassistant.components.google.coordinator] Timeout while contacting DNS servers',
+      '2026-08-24 02:00:00 ERROR (MainThread) [homeassistant.components.google.coordinator] Timeout while contacting DNS servers',
+      '2026-08-24 03:00:00 ERROR (MainThread) [homeassistant.components.google.coordinator] Timeout while contacting DNS servers',
+      '2026-08-24 04:00:00 ERROR (MainThread) [homeassistant.components.google.coordinator] Timeout while contacting DNS servers',
+      '2026-08-24 05:00:00 ERROR (MainThread) [homeassistant.components.google.coordinator] Timeout while contacting DNS servers'
+    ]);
+    const sparsePlan = classifySignatures(sparseEntries, [], { now: '2026-08-24T12:00:00.000Z' });
+    expect(sparsePlan.signatures[0]?.level).toBe('WARNING');
+
+    // Case D: Non-network error (e.g. syntax or auth failure) remains ERROR even on 1 occurrence
+    const authErrorEntries = parseHomeAssistantLog([
+      '2026-08-24 05:26:00 ERROR (MainThread) [homeassistant.components.google.coordinator] Invalid authentication credentials'
+    ]);
+    const authPlan = classifySignatures(authErrorEntries, [], { now: '2026-08-24T12:00:00.000Z' });
+    expect(authPlan.signatures[0]?.level).toBe('ERROR');
+  });
 });
