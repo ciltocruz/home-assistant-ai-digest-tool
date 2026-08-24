@@ -97,6 +97,8 @@ See [Configuration and integration status](docs/configuration.md) and [Docker Ru
 
 ## 📦 Release-based deployment
 
+Releases are **manual by design**: merging to `main` only accumulates changes. Publish when you decide from the **Actions → Release → Run workflow** page (run on `main`), or by pushing a `v*` tag. One run produces a single release covering everything since the previous tag, with the version and notes computed from all accumulated conventional commits.
+
 Deployments always point to a **release tag**, never to a branch or ad-hoc commit:
 
 1. Create a release in the repository (for example `v1.0.0`).
