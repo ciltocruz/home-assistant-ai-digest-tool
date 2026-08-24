@@ -57,6 +57,19 @@ const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
 const DEFAULT_GEMINI_MODEL = 'gemini-flash-lite-latest';
 const DEFAULT_PROVIDER_TIMEOUT_MS = 30_000;
 
+/**
+ * Raised when the provider answered HTTP 200 but the body could not be parsed
+ * as a valid analysis. Some models occasionally wrap JSON in markdown fences or
+ * emit stray text despite the JSON response mime type; these generations are
+ * usually recoverable with one immediate retry.
+ */
+class TransientInvalidOutputError extends Error {
+  constructor(readonly status: number, readonly rawDetail: string, message: string) {
+    super(message);
+    this.name = 'TransientInvalidOutputError';
+  }
+}
+
 abstract class SignatureHttpProvider implements SignatureProvider {
   protected readonly httpClient: ProviderHttpClient;
   protected readonly timeoutMs: number;
@@ -69,11 +82,37 @@ abstract class SignatureHttpProvider implements SignatureProvider {
   }
 
   async analyze(context: BoundedSignatureContext, signal: AbortSignal, language: 'en' | 'es' = 'en'): Promise<SignatureAnalysis> {
-    const response = await requestProvider(this.name, this.model, this.timeoutMs, signal, (requestSignal) => this.request(context, language, requestSignal), undefined, this.options.apiKey);
     try {
-      return parseSignatureAnalysis(this.content(await response.json()), this.name, this.options.apiKey);
+      return await this.analyzeOnce(context, signal, language);
+    } catch (error) {
+      if (!(error instanceof TransientInvalidOutputError)) throw error;
+      try {
+        return await this.analyzeOnce(context, signal, language);
+      } catch (retryError) {
+        const last = retryError instanceof TransientInvalidOutputError ? retryError : error;
+        throw providerFailure(this.name, this.model, last.status, `${last.message} ${last.rawDetail}`, 'other', this.options.apiKey);
+      }
+    }
+  }
+
+  private async analyzeOnce(context: BoundedSignatureContext, signal: AbortSignal, language: 'en' | 'es'): Promise<SignatureAnalysis> {
+    const response = await requestProvider(this.name, this.model, this.timeoutMs, signal, (requestSignal) => this.request(context, language, requestSignal), undefined, this.options.apiKey);
+    let payload: unknown;
+    let content: string;
+    try {
+      payload = await response.json();
+      content = this.content(payload);
     } catch (error) {
       throw providerFailure(this.name, this.model, response.status, errorDetail(error), 'other', this.options.apiKey);
+    }
+    try {
+      return parseSignatureAnalysis(content, this.name, this.options.apiKey);
+    } catch {
+      throw new TransientInvalidOutputError(
+        response.status,
+        describeRawProviderOutput(payload, content),
+        `${this.name} provider returned an invalid signature analysis`
+      );
     }
   }
 
@@ -413,9 +452,39 @@ function extractGeminiContent(payload: unknown): string {
   return text;
 }
 
+function stripMarkdownFence(value: string): string {
+  const fenced = /^```[a-zA-Z]*\s*([\s\S]*?)\s*```$/.exec(value.trim());
+  return fenced && fenced.length > 1 ? fenced[1] ?? value : value;
+}
+
+/**
+ * Parses JSON that may arrive wrapped in markdown code fences or surrounded by
+ * stray prose — a recurring behavior of lightweight models even when the JSON
+ * response mime type is requested.
+ */
+function parseLooseJson(content: string): unknown {
+  const trimmed = stripMarkdownFence(content.trim());
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const start = trimmed.indexOf('{');
+    const end = trimmed.lastIndexOf('}');
+    if (start >= 0 && end > start) return JSON.parse(trimmed.slice(start, end + 1));
+    throw new Error('no JSON object found in provider output');
+  }
+}
+
+function describeRawProviderOutput(payload: unknown, content: string, apiKey?: string): string {
+  const candidates = asRecord(payload).candidates;
+  const firstCandidate = Array.isArray(candidates) ? asRecord(candidates[0]) : {};
+  const finishReason = typeof firstCandidate.finishReason === 'string' ? firstCandidate.finishReason : 'unknown';
+  const head = redactProviderError(content.replace(/\s+/g, ' ').trim().slice(0, 160), apiKey);
+  return `[raw output: finishReason=${finishReason}, head="${head}"]`;
+}
+
 function parseStructuredDigest(content: string, provider: string, apiKey?: string): StructuredDigest {
   try {
-    const parsed: unknown = JSON.parse(content);
+    const parsed: unknown = parseLooseJson(content);
     if (!isStructuredDigest(parsed)) throw new Error('invalid digest shape');
     return {
       severity: parsed.severity,
@@ -433,7 +502,7 @@ function parseStructuredDigest(content: string, provider: string, apiKey?: strin
 
 function parseSignatureAnalysis(content: string, provider: string, apiKey?: string): SignatureAnalysis {
   try {
-    const value = asRecord(JSON.parse(content));
+    const value = asRecord(parseLooseJson(content));
     if (typeof value.summary !== 'string' || typeof value.recommendation !== 'string') throw new Error('invalid analysis');
     return { summary: redactProviderError(value.summary, apiKey), recommendation: redactProviderError(value.recommendation, apiKey) };
   } catch {

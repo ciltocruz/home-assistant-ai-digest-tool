@@ -421,6 +421,90 @@ describe('AI provider adapters', () => {
     await expect(malformed.analyze(context, new AbortController().signal)).rejects.toThrow('Ollama provider returned an invalid signature analysis');
   });
 
+  it('parses markdown-fenced Gemini signature output without a retry', async () => {
+    const requests: HttpRequest[] = [];
+    const provider = createSignatureProvider('gemini', {
+      apiKey: 'provider-secret',
+      baseUrl: 'https://fake.gemini',
+      httpClient: async (request) => {
+        requests.push(request);
+        return { status: 200, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: '```json\n{"summary": "Fenced summary", "recommendation": "Check it"}\n```' }] } }] }) };
+      }
+    });
+
+    const result = await provider.analyze({ signature: 'sig-fence', component: 'mqtt', classification: 'new', occurrences: [] }, new AbortController().signal);
+
+    expect(result).toEqual({ summary: 'Fenced summary', recommendation: 'Check it' });
+    expect(requests).toHaveLength(1);
+  });
+
+  it('parses Gemini signature output wrapped in stray prose', async () => {
+    const provider = createSignatureProvider('gemini', {
+      apiKey: 'provider-secret',
+      baseUrl: 'https://fake.gemini',
+      httpClient: async () => ({ status: 200, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: 'Here is the analysis:\n{"summary": "Wrapped summary", "recommendation": "Restart it"}\nHope this helps.' }] } }] }) })
+    });
+
+    await expect(provider.analyze({ signature: 'sig-prose', component: 'mqtt', classification: 'new', occurrences: [] }, new AbortController().signal))
+      .resolves.toEqual({ summary: 'Wrapped summary', recommendation: 'Restart it' });
+  });
+
+  it('recovers transient malformed Gemini signature generations with one immediate retry', async () => {
+    const requests: HttpRequest[] = [];
+    let calls = 0;
+    const provider = createSignatureProvider('gemini', {
+      apiKey: 'provider-secret',
+      baseUrl: 'https://fake.gemini',
+      httpClient: async (request) => {
+        requests.push(request);
+        calls += 1;
+        const text = calls === 1 ? 'not-json-at-all' : '{"summary": "Recovered summary", "recommendation": "Retry worked"}';
+        return { status: 200, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text }] } }] }) };
+      }
+    });
+
+    const result = await provider.analyze({ signature: 'sig-retry', component: 'mqtt', classification: 'new', occurrences: [] }, new AbortController().signal);
+
+    expect(result).toEqual({ summary: 'Recovered summary', recommendation: 'Retry worked' });
+    expect(requests).toHaveLength(2);
+  });
+
+  it('reports safe raw-output diagnostics after exhausting the single malformed-output retry', async () => {
+    const requests: HttpRequest[] = [];
+    const provider = createSignatureProvider('gemini', {
+      apiKey: 'provider-secret',
+      baseUrl: 'https://fake.gemini',
+      httpClient: async (request) => {
+        requests.push(request);
+        return { status: 200, json: async () => ({ candidates: [{ finishReason: 'MAX_TOKENS', content: { parts: [{ text: 'broken prefix token=must-not-leak' }] } }] }) };
+      }
+    });
+
+    const failure = await provider.analyze({ signature: 'sig-broken', component: 'mqtt', classification: 'new', occurrences: ['token=must-not-leak'] }, new AbortController().signal).catch((error: unknown) => error) as Error;
+
+    expect(failure.message).toContain("Gemini 200: model 'gemini-flash-lite-latest' failed (classification: other)");
+    expect(failure.message).toContain('Gemini provider returned an invalid signature analysis [raw output: finishReason=MAX_TOKENS, head=');
+    expect(failure.message).not.toContain('must-not-leak');
+    expect(failure.message).not.toContain('provider-secret');
+    expect(requests).toHaveLength(2);
+  });
+
+  it('does not retry signature analysis on HTTP failures', async () => {
+    const requests: HttpRequest[] = [];
+    const provider = createSignatureProvider('gemini', {
+      apiKey: 'unused',
+      baseUrl: 'https://fake.gemini',
+      httpClient: async (request) => {
+        requests.push(request);
+        return { status: 503, json: async () => ({ error: { message: 'high demand' } }) };
+      }
+    });
+
+    await expect(provider.analyze({ signature: 'sig-http', component: 'mqtt', classification: 'new', occurrences: [] }, new AbortController().signal))
+      .rejects.toThrow("Gemini 503: model 'gemini-flash-lite-latest'");
+    expect(requests).toHaveLength(1);
+  });
+
   it('returns a safe Ollama timeout failure', async () => {
     vi.useFakeTimers();
     const provider = createSignatureProvider('ollama', { apiKey: 'unused', timeoutMs: 25, httpClient: async (request) => new Promise((_, reject) => request.signal?.addEventListener('abort', () => reject(new Error('ollama-secret')), { once: true })) });
