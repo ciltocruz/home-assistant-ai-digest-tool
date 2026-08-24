@@ -12,13 +12,13 @@ Thanks for helping improve the Home Assistant AI Digest tool. This document desc
 
 | Command | Purpose |
 |---------|---------|
-| `pnpm ci` | Full local gate: recursive build + typecheck + tests + focused-test guard |
+| `pnpm run ci` | Full local gate: recursive build + typecheck + tests + focused-test guard |
 | `pnpm test` | Vitest suite across workspaces |
 | `pnpm typecheck` | Strict TypeScript on every workspace |
 | `pnpm build` | Build backend, frontend, and shared packages |
 | `pnpm test:focused` | Guard against accidentally committed focused tests |
 
-Run `pnpm ci` locally before pushing — CI runs exactly this.
+Run `pnpm run ci` locally before pushing — CI runs exactly this.
 
 ## Change flow
 
