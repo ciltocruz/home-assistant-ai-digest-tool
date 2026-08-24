@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-const MIGRATION_VERSION = 12;
+const MIGRATION_VERSION = 13;
 
 export function runMigrations(db: DatabaseSync): void {
   db.exec('pragma foreign_keys = on');
@@ -131,6 +131,7 @@ function applyMigrations(db: DatabaseSync): void {
   repairLegacyReportWindows(db);
   addAuthenticationTables(db);
   addManualTelegramSendTable(db);
+  seedDefaultNoiseIgnoreRules(db);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(1);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(2);
   db.prepare('insert or ignore into schema_migrations(version) values (?)').run(3);
@@ -142,6 +143,7 @@ function applyMigrations(db: DatabaseSync): void {
     db.prepare('insert or ignore into schema_migrations(version) values (?)').run(9);
     db.prepare('insert or ignore into schema_migrations(version) values (?)').run(10);
      db.prepare('insert or ignore into schema_migrations(version) values (?)').run(11);
+     db.prepare('insert or ignore into schema_migrations(version) values (?)').run(12);
      db.prepare('insert or ignore into schema_migrations(version) values (?)').run(MIGRATION_VERSION);
   db.prepare(
     `insert or ignore into onboarding_state(singleton, current_step, completed_steps_json, draft_json, secret_refs_json, secret_metadata_json, completed, updated_at)
@@ -374,5 +376,16 @@ function backfillV2RunDeliveryStatuses(db: DatabaseSync): void {
   for (const row of rows) {
     const status = row.status === 'ready' ? 'pending' : row.status;
     if (status === 'pending' || status === 'sent' || status === 'failed' || status === 'skipped') update.run(status, row.run_id);
+  }
+}
+
+function seedDefaultNoiseIgnoreRules(db: DatabaseSync): void {
+  const insert = db.prepare('insert or ignore into ignore_rules(id, match, type, reason, expires_at, created_at) values (?, ?, ?, ?, ?, ?)');
+  const now = new Date().toISOString();
+  const defaults = [
+    { id: 'default-noise-zigpy-zdo', match: 'zigpy.zdo', type: 'integration', reason: '[WARNING] zigpy.zdo — Zigbee network retries and transient frame delivery warnings' }
+  ];
+  for (const rule of defaults) {
+    insert.run(rule.id, rule.match, rule.type, rule.reason, null, now);
   }
 }
