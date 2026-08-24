@@ -6,7 +6,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for the idea. Describe the problem you are solving, not just the solution you have in mind.
+        Describe the problem you are solving, not just the solution you have in mind.
+
+        Maintainers triage proposals and add the `status:approved` label once accepted; approved requests become linked pull requests. Check existing issues first to avoid duplicates.
   - type: textarea
     id: problem
     attributes:
