@@ -1,31 +1,32 @@
 name: Feature request
-description: Propose an improvement or new capability
+description: Suggest a new capability or an improvement to an existing one.
+title: "[Feature]: "
 labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: |
-        Describe the problem you want solved, not just the solution you imagine.
+        Describe the problem you are solving, not just the solution you have in mind.
 
-        Maintainers triage proposals and add `status:approved` once accepted; approved requests become linked pull requests. Check existing issues first to avoid duplicates.
+        Maintainers triage proposals and add the `status:approved` label once accepted; approved requests become linked pull requests. Check existing issues first to avoid duplicates.
   - type: textarea
     id: problem
     attributes:
-      label: Problem or motivation
-      description: What are you trying to achieve? What happens today, and why is it not enough?
+      label: What problem does this solve?
+      description: The situation or limitation that motivated the request.
     validations:
       required: true
   - type: textarea
     id: proposal
     attributes:
-      label: Proposed solution
-      description: What should happen instead? Keep it concrete about the outcome, not the implementation.
+      label: Proposed behavior
+      description: What should the application do once this exists?
     validations:
       required: true
   - type: textarea
     id: alternatives
     attributes:
       label: Alternatives considered
-      description: Other approaches, workarounds, or tools you evaluated.
+      description: Anything you already tried or thought about.
     validations:
       required: false

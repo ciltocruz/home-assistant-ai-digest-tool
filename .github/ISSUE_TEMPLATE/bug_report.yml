@@ -1,49 +1,59 @@
 name: Bug report
-description: Report something broken in the digest tool
+description: Report a problem with the application. Fill in every section so the issue can be reproduced.
+title: "[Bug]: "
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to report a problem.
+        Thanks for reporting — a complete report is the fastest way to a fix.
 
-        Please search existing issues first to avoid duplicates. Maintainers triage new issues and add the `status:approved` label once confirmed — approved issues are what pull requests link to.
-  - type: textarea
-    id: what-happened
-    attributes:
-      label: What happened?
-      description: Include the exact error text where possible. Redact secrets, tokens, and credentials — reports containing secrets will be sanitized or closed.
-      placeholder: A clear description of the failure, including any error message.
-    validations:
-      required: true
-  - type: textarea
-    id: steps-to-reproduce
-    attributes:
-      label: Steps to reproduce
-      placeholder: |
-        1. Go to '...'
-        2. Trigger '...'
-        3. See error
-    validations:
-      required: true
-  - type: textarea
-    id: expected-behavior
-    attributes:
-      label: What did you expect to happen?
-    validations:
-      required: true
+        Maintainers triage new issues and add the `status:approved` label once confirmed; approved issues are what pull requests link to.
   - type: input
     id: version
     attributes:
-      label: Version / deployment
-      description: Release tag (e.g. v1.2.0) or commit, and where it runs (Docker on NAS/server, local dev).
+      label: Application version
+      description: Version shown in the release notes or the container image tag (for example v1.2.0).
+      placeholder: "v1.2.0"
     validations:
-      required: false
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How is the application running?
+      options:
+        - Docker container
+        - Local development
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: What did you expect to happen, and what actually happened? Include exact error text where possible.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps that lead to the problem.
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
   - type: textarea
     id: logs
     attributes:
-      label: Relevant log output
-      description: Container logs or report warnings. Redact tokens and personal data.
+      label: Relevant logs or error messages
+      description: Paste redacted logs. Remove tokens, passwords, entity names, and other sensitive values first.
       render: shell
-    validations:
-      required: false
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed all secrets, tokens, and personal data from the information above.
+          required: true
