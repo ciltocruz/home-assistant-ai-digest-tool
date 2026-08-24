@@ -886,9 +886,9 @@ describe('persistent runtime services', () => {
     expect(await services.reports.removeBatch([])).toBe(0);
 
     const rule = await services.ignores.add({ match: 'component:error' });
-    expect(await services.ignores.listActive('2026-07-12T10:00:00.000Z')).toEqual([expect.objectContaining({ match: 'component:error' })]);
+    expect(await services.ignores.listActive('2026-07-12T10:00:00.000Z')).toContainEqual(expect.objectContaining({ match: 'component:error' }));
     await services.ignores.remove(rule.id);
-    expect(await services.ignores.listActive('2026-07-12T10:00:00.000Z')).toEqual([]);
+    expect((await services.ignores.listActive('2026-07-12T10:00:00.000Z')).some((item) => item.id === rule.id)).toBe(false);
     await services.close?.();
   });
 

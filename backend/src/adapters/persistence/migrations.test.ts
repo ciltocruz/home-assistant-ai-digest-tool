@@ -20,7 +20,7 @@ describe('SQLite migrations', () => {
       expect.arrayContaining(['admin_accounts', 'auth_sessions', 'deliveries', 'digest_jobs', 'ignore_rules', 'login_attempts', 'manual_telegram_sends', 'notes', 'onboarding_state', 'reports', 'schedule_state', 'secrets', 'settings', 'v2_log_cursor', 'v2_reports', 'v2_report_delivery_attempts', 'v2_runs', 'v2_signatures'])
     );
       expect(db.prepare('select version from schema_migrations').all().map((row) => ({ ...(row as { version: number }) }))).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }
     ]);
   });
 
@@ -44,7 +44,7 @@ describe('SQLite migrations', () => {
     runMigrations(db);
 
     expect(db.prepare('select version from schema_migrations').all().map((row) => ({ ...(row as { version: number }) }))).toEqual([
-      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }
     ]);
   });
 

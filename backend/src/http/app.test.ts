@@ -365,7 +365,7 @@ describe('account authentication boundary', () => {
     runtimeServices.ignores.add = async (input) => {
       const existing = rules.get(input.match);
       if (existing) return existing;
-      const rule = { id: `rule-${rules.size + 1}`, match: input.match, type: 'signature' as const, createdAt: '2026-08-14T12:30:00.000Z' };
+      const rule = { id: `rule-${rules.size + 1}`, match: input.match, type: 'signature' as const, ...(input.reason ? { reason: input.reason } : {}), createdAt: '2026-08-14T12:30:00.000Z' };
       rules.set(input.match, rule);
       return rule;
     };
@@ -385,7 +385,7 @@ describe('account authentication boundary', () => {
     const created = await app.inject({ method: 'POST', url, headers: { cookie, 'x-csrf-token': csrfToken }, payload: {} });
     const duplicate = await app.inject({ method: 'POST', url, headers: { cookie, 'x-csrf-token': csrfToken }, payload: {} });
     expect(created.statusCode).toBe(201);
-    expect(created.json()).toMatchObject({ rule: { match: 'signature-one', type: 'signature' }, alreadyIgnored: false });
+    expect(created.json()).toMatchObject({ rule: { match: 'signature-one', type: 'signature', reason: '[ERROR] homeassistant.components.demo' }, alreadyIgnored: false });
     expect(duplicate.statusCode).toBe(200);
     expect(duplicate.json()).toMatchObject({ rule: { id: created.json<{ rule: { id: string } }>().rule.id }, alreadyIgnored: true });
     expect([...rules.values()]).toHaveLength(1);

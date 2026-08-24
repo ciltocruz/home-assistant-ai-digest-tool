@@ -182,6 +182,25 @@ describe('SettingsPanel', () => {
     expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Retry removal')).toBe(true);
   });
 
+  it('renders structured ignore rules with level badge, component, and message excerpt', async () => {
+    const { container } = await mount({
+      getSettings: async () => settings(),
+      updateSettings: async () => settings(),
+      listIgnores: async () => [{
+        id: 'ignore-sig-1',
+        match: 'e26a54a5658b34a95bfb85f3',
+        type: 'signature' as const,
+        reason: '[WARNING] zigpy.zdo — Zigbee network retries',
+        createdAt: '2026-08-01T10:00:00.000Z'
+      }]
+    }, 'context');
+
+    expect(container.querySelector('.ignore-badge--warning')?.textContent).toBe('WARNING');
+    expect(container.querySelector('.ignore-component')?.textContent).toBe('zigpy.zdo');
+    expect(container.querySelector('.ignore-item-meta')?.textContent).toBe('Zigbee network retries');
+    expect(container.querySelector('.ignore-signature-hash')?.textContent).toContain('e26a54a5658b');
+  });
+
   it('uses the selected Spanish locale for settings labels, actions, and date formatting', async () => {
     setLocale('es');
     const { container } = await mount({
