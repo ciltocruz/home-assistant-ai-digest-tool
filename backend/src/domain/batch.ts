@@ -115,10 +115,11 @@ export function classifySignatures(entries: ParsedLogEntry[], known: KnownSignat
       : Date.parse(prior.firstSeenAt) < lookbackAt || hasHistoricalOccurrence ? 'latent'
         : Date.parse(prior.lastSeenAt) < reactivationAt ? 'reactivated'
           : 'recurring';
+    const effectiveLevel = resolveEffectiveLevel(first.level, first.normalizedMessage, inWindow);
     return [{
       signature: first.signature,
       component: first.component,
-      level: first.level,
+      level: effectiveLevel,
       normalizedMessage: first.normalizedMessage,
       ...(first.problemKind ? { problemKind: first.problemKind } : {}),
       classification,
@@ -148,4 +149,25 @@ function problemKindFor(component: string, normalizedMessage: string): ProblemKi
   return /(?:name\s*resolution\s*error|nameresolutionerror|failed to resolve|temporary failure in name resolution)/i.test(normalizedMessage)
     ? 'endpoint_resolution'
     : undefined;
+}
+
+const TRANSIENT_NETWORK_PATTERN = /(?:timeout|timed out|cannot connect|connection reset|connection refused|failed to connect|name resolution|temporary failure in name resolution|failed to resolve|clientconnectorerror|serverdisconnectederror)/i;
+const TRANSIENT_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
+const TRANSIENT_THRESHOLD_COUNT = 5;
+
+function resolveEffectiveLevel(level: LogLevel, normalizedMessage: string, occurrences: ParsedLogEntry[]): LogLevel {
+  if (level !== 'ERROR') return level;
+  if (!TRANSIENT_NETWORK_PATTERN.test(normalizedMessage)) return level;
+  return hasHighDensityInWindow(occurrences, TRANSIENT_WINDOW_MS, TRANSIENT_THRESHOLD_COUNT) ? 'ERROR' : 'WARNING';
+}
+
+function hasHighDensityInWindow(occurrences: ParsedLogEntry[], windowMs: number, minCount: number): boolean {
+  if (occurrences.length < minCount) return false;
+  const timestamps = occurrences.map((entry) => Date.parse(entry.at)).filter((ts) => !Number.isNaN(ts)).sort((a, b) => a - b);
+  for (let i = 0; i <= timestamps.length - minCount; i += 1) {
+    const start = timestamps[i]!;
+    const end = timestamps[i + minCount - 1]!;
+    if (end - start <= windowMs) return true;
+  }
+  return false;
 }
