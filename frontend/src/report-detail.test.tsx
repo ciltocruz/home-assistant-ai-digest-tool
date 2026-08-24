@@ -315,14 +315,18 @@ describe('ReportDetail', () => {
 
   test.each([
     { locale: 'en' as const, expected: 'AI could not produce a usable explanation for some of the detected problems.' },
-    { locale: 'es' as const, expected: 'La IA no pudo generar una explicación útil para algunos de los problemas detectados.' }
-  ])('maps malformed provider analysis to plain $locale failure copy', ({ locale, expected }) => {
+    { locale: 'es' as const, expected: 'La IA no pudo generar una explicación útil para algunos de los problemas detectados.' },
+    {
+      locale: 'es' as const,
+      expected: 'La IA no pudo generar una explicación útil para algunos de los problemas detectados.',
+      internalFailure: 'Gemini provider returned an invalid signature analysis [raw output: finishReason=STOP, head="{ broken"]'
+    }
+  ])('maps malformed provider analysis to plain $locale failure copy', ({ locale, expected, internalFailure = 'OpenAI provider returned an invalid signature analysis' }) => {
     setLocale(locale);
-    const internalFailure = 'OpenAI provider returned an invalid signature analysis';
     const html = renderToStaticMarkup(<ReportDetail report={{
-      id: `v2-invalid-analysis-${locale}`,
+      id: `v2-invalid-analysis-${locale}-${internalFailure.length}`,
       source: 'v2',
-      summary: { id: `v2-invalid-analysis-${locale}`, window: { from: '2026-08-01T09:59:59.999Z', to: '2026-08-01T10:00:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-08-01T10:00:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'failed', warningCodes: ['AI_ANALYSIS_UNAVAILABLE'] },
+      summary: { id: `v2-invalid-analysis-${locale}-${internalFailure.length}`, window: { from: '2026-08-01T09:59:59.999Z', to: '2026-08-01T10:00:00.000Z' }, severityCounts: { critical: 0, warning: 0, info: 0 }, createdAt: '2026-08-01T10:00:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'failed', warningCodes: ['AI_ANALYSIS_UNAVAILABLE'] },
       rendered: { format: 'markdown', body: '' },
       presentation: { version: 2, mode: 'batch', status: 'failed', warnings: ['AI_ANALYSIS_UNAVAILABLE'], signatures: [], failure: internalFailure }
     }} />);
