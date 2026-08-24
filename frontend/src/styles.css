@@ -80,6 +80,15 @@ body {
 
 button, input, select, textarea { font: inherit; }
 
+select {
+  color-scheme: dark;
+}
+
+option {
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+
 /* ── Skip Link ─────────────────────────────────────────── */
 .skip-link {
   background: var(--ha-orange);
