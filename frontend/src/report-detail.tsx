@@ -256,10 +256,10 @@ function failureLabel(message?: string): string {
   if (message.includes('429') || message.includes('quota') || message.includes('Quota') || message.includes('billing')) {
     return t('report.batch.failureQuota').replace('{message}', message);
   }
-  if (message === 'invalid signature analysis'
-    || message === 'OpenAI provider returned an invalid signature analysis'
-    || message === 'Gemini provider returned an invalid signature analysis'
-    || message === 'Ollama provider returned an invalid signature analysis') {
+  if (message.startsWith('invalid signature analysis')
+    || message.startsWith('OpenAI provider returned an invalid signature analysis')
+    || message.startsWith('Gemini provider returned an invalid signature analysis')
+    || message.startsWith('Ollama provider returned an invalid signature analysis')) {
     return t('report.batch.failureInvalidAnalysis');
   }
   return message;
