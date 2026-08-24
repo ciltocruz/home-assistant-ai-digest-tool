@@ -383,8 +383,7 @@ function seedDefaultNoiseIgnoreRules(db: DatabaseSync): void {
   const insert = db.prepare('insert or ignore into ignore_rules(id, match, type, reason, expires_at, created_at) values (?, ?, ?, ?, ?, ?)');
   const now = new Date().toISOString();
   const defaults = [
-    { id: 'default-noise-zigpy-zdo', match: 'zigpy.zdo', type: 'integration', reason: '[WARNING] zigpy.zdo — Zigbee network retries and transient frame delivery warnings' },
-    { id: 'default-noise-presence-sim', match: 'presence_simulation', type: 'integration', reason: '[WARNING] presence_simulation — Non-critical historical state simulation warnings' }
+    { id: 'default-noise-zigpy-zdo', match: 'zigpy.zdo', type: 'integration', reason: '[WARNING] zigpy.zdo — Zigbee network retries and transient frame delivery warnings' }
   ];
   for (const rule of defaults) {
     insert.run(rule.id, rule.match, rule.type, rule.reason, null, now);
