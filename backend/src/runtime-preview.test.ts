@@ -52,6 +52,38 @@ describe('runtime preview app', () => {
     expect(ready.json()).toMatchObject({ status: 'not_ready', reason: 'ha_logs_mount_unconfigured' });
   });
 
+  it('reports the dev fallback version from liveness without a baked image tag', async () => {
+    const previous = process.env.APP_VERSION;
+    delete process.env.APP_VERSION;
+    try {
+      const frontendDistDir = await createFrontendDist();
+      app = createRuntimePreviewApp({ frontendDistDir });
+
+      const health = await app.inject({ method: 'GET', url: '/health' });
+
+      expect(health.json()).toMatchObject({ status: 'ok', version: 'dev' });
+    } finally {
+      if (previous === undefined) delete process.env.APP_VERSION;
+      else process.env.APP_VERSION = previous;
+    }
+  });
+
+  it('prefers the baked image version over the dev fallback', async () => {
+    const previous = process.env.APP_VERSION;
+    process.env.APP_VERSION = 'v9.9.9-test';
+    try {
+      const frontendDistDir = await createFrontendDist();
+      app = createRuntimePreviewApp({ frontendDistDir });
+
+      const health = await app.inject({ method: 'GET', url: '/health' });
+
+      expect(health.json()).toMatchObject({ version: 'v9.9.9-test' });
+    } finally {
+      if (previous === undefined) delete process.env.APP_VERSION;
+      else process.env.APP_VERSION = previous;
+    }
+  });
+
   it('reports not ready when the frontend index is missing', async () => {
     const frontendDistDir = await mkdtemp(join(tmpdir(), 'ha-digest-preview-empty-'));
     app = createRuntimePreviewApp({ frontendDistDir });

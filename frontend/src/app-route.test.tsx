@@ -51,6 +51,48 @@ describe('App report route', () => {
     expect(container.querySelector('.app-sidebar-name span')?.textContent).toBe('Panel de control');
   });
 
+  test('shows a subtle deployed version pill in the sidebar', async () => {
+    history.pushState({}, '', '/');
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push(root);
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', async () => ({ ok: true, json: async () => ({ status: 'ok', version: 'v9.9.9-test' }) }));
+    try {
+      await act(async () => {
+        root.render(<App api={{ getOnboarding: async () => ({ currentStep: 'first_report' as const, completedSteps: [], draft: {}, secretMetadata: {}, completed: true }) }} />);
+        await Promise.resolve();
+      });
+      await act(async () => { await Promise.resolve(); });
+
+      expect(container.querySelector('.app-version-pill')?.textContent).toBe('v9.9.9-test');
+    } finally {
+      vi.unstubAllGlobals();
+      if (originalFetch) globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('hides the version pill when liveness is unreachable', async () => {
+    history.pushState({}, '', '/');
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    mountedRoots.push(root);
+    vi.stubGlobal('fetch', async () => { throw new Error('network down'); });
+    try {
+      await act(async () => {
+        root.render(<App api={{ getOnboarding: async () => ({ currentStep: 'first_report' as const, completedSteps: [], draft: {}, secretMetadata: {}, completed: true }) }} />);
+        await Promise.resolve();
+      });
+      await act(async () => { await Promise.resolve(); });
+
+      expect(container.querySelector('.app-version-pill')).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   test('localizes the operational brand subtitle in English', async () => {
     setLocale('en');
     history.pushState({}, '', '/');

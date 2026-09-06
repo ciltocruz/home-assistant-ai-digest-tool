@@ -17,10 +17,12 @@ RUN pnpm run build
 
 FROM node:22-slim AS runtime-preview
 
+ARG APP_VERSION=dev
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3000 \
-    FRONTEND_DIST_DIR=/app/frontend-dist
+    FRONTEND_DIST_DIR=/app/frontend-dist \
+    APP_VERSION=${APP_VERSION}
 
 RUN groupadd --gid 1001 app && useradd --uid 1001 --gid app --home-dir /app --create-home app
 WORKDIR /app
