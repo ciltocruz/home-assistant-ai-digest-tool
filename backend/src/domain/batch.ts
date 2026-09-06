@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { redactProviderError } from './safe-error.js';
 import { sanitizeTraceExcerpt, type SafeTraceExcerpt } from './safe-trace.js';
 export type LogLevel = 'ERROR' | 'CRITICAL' | 'WARNING';
 export type SignatureClass = 'new' | 'recurring' | 'reactivated' | 'latent';
@@ -56,6 +57,7 @@ export type BatchSignature = {
   classification: SignatureClass;
   trend: SignatureTrend;
   occurrences: ParsedLogEntry[];
+  sourceLines?: string[];
 };
 
 export type SignaturePlan = {
@@ -69,7 +71,7 @@ export type BatchClassificationOptions = {
   reactivationDays?: number;
 };
 
-const HA_LOG_LINE = /^(?<at>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+(?<level>ERROR|CRITICAL|WARNING)\s+(?:\([^)]*\)\s+)?\[(?<component>[^\]]+)]\s*(?<message>[\s\S]+)$/i;
+const HA_LOG_LINE = /^(?<at>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+(?<level>ERROR|CRITICAL|WARNING)\s+(?:\((?:[^()]|\([^()]*\))*\)\s+)?\[(?<component>[^\]]+)]\s*(?<message>[\s\S]+)$/i;
 const TIMESTAMPED_LOG_LINE = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\s+/;
 const DEFAULT_LOOKBACK_DAYS = 10;
 const DEFAULT_REACTIVATION_DAYS = 7;
@@ -147,7 +149,8 @@ export function classifySignatures(entries: ParsedLogEntry[], known: KnownSignat
       ...(first.problemKind ? { problemKind: first.problemKind } : {}),
       classification,
       trend: trendFor(prior?.previousPeriodCount),
-      occurrences: inWindow
+      occurrences: inWindow,
+      sourceLines: sourceLinesFor(inWindow)
     }];
   });
   return { signatures, baselineEntries };
@@ -189,6 +192,13 @@ export function buildParsedEntry(input: ExtractedLogError, fallbackAt: string): 
   const at = toIso(input.timestamp.trim()) ?? toIso(fallbackAt) ?? fallbackAt;
   const normalizedMessage = normalizeLogMessage(message);
   return { at, level, component, message, normalizedMessage, signature: signatureFor(component, level, normalizedMessage) };
+}
+
+const MAX_SOURCE_LINES = 5;
+const MAX_SOURCE_LINE_CHARS = 1024;
+
+export function sourceLinesFor(occurrences: ParsedLogEntry[]): string[] {
+  return occurrences.slice(0, MAX_SOURCE_LINES).map((entry) => redactProviderError(entry.message).slice(0, MAX_SOURCE_LINE_CHARS));
 }
 
 function signatureFor(component: string, level: LogLevel, normalizedMessage: string): string {

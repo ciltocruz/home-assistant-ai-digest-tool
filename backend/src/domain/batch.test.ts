@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { buildParsedEntry, chunkLogLinesForExtraction, classifySignatures, parseHomeAssistantLog } from './batch.js';
 
 const fixture = new URL('../../../tests/fixtures/ha/batch-formats.log', import.meta.url);
+const realWorldFixture = new URL('../../../tests/fixtures/ha/real-world-2026-09-06.log', import.meta.url);
 
 describe('batch log domain', () => {
   it('parses real Home Assistant ERROR and CRITICAL formats into stable signatures', async () => {
@@ -12,6 +13,33 @@ describe('batch log domain', () => {
     expect(entries.map((entry) => entry.level)).toEqual(['ERROR', 'CRITICAL', 'ERROR']);
     expect(entries[0]).toMatchObject({ component: 'homeassistant.components.recorder', normalizedMessage: 'database write failed for id=<number>' });
     expect(entries[0]?.signature).toBe(entries[2]?.signature);
+  });
+
+  it('parses every timestamped line of a real production log including nested thread names', async () => {
+    const lines = (await readFile(realWorldFixture, 'utf8')).trim().split('\n');
+    const errors = parseHomeAssistantLog(lines);
+    const everything = parseHomeAssistantLog(lines, { includeWarnings: true });
+
+    expect(errors).toHaveLength(93);
+    expect(everything).toHaveLength(168);
+    const loaders = everything.filter((entry) => entry.component === 'homeassistant.loader');
+    expect(loaders).toHaveLength(22);
+    expect(loaders.some((entry) => entry.message.includes('zha_toolkit'))).toBe(true);
+    expect(loaders.some((entry) => entry.message.includes('spook'))).toBe(true);
+    expect(parseHomeAssistantLog(['2026-09-06 01:11:37.916 WARNING (Thread-1 (_monitor)) [homeassistant.util.logging] Module custom_components.monitor_docker.sensor is logging too frequently. 200 messages since last count'], { includeWarnings: true })[0]).toMatchObject({ component: 'homeassistant.util.logging', level: 'WARNING' });
+  });
+
+  it('attaches redacted source lines naming the concrete subject to every signature', () => {
+    const entries = parseHomeAssistantLog([
+      '2026-09-06 01:11:37 ERROR (MainThread) [homeassistant.loader] We found a custom integration spook which has not been tested token=secret-value',
+      '2026-09-06 01:12:37 ERROR (MainThread) [homeassistant.loader] We found a custom integration spook which has not been tested token=secret-value'
+    ]);
+    const plan = classifySignatures(entries, [], { now: '2026-09-06T02:00:00.000Z' });
+
+    expect(plan.signatures).toHaveLength(1);
+    expect(plan.signatures[0]?.sourceLines).toHaveLength(2);
+    expect(JSON.stringify(plan.signatures[0]?.sourceLines)).toContain('spook');
+    expect(JSON.stringify(plan.signatures[0]?.sourceLines)).not.toContain('secret-value');
   });
 
   it('keeps warnings opt-in and normalizes volatile values without retaining raw identifiers', () => {

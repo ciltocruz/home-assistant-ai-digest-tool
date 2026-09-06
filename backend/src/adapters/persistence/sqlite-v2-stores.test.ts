@@ -129,11 +129,11 @@ describe('SQLiteV2Stores', () => {
     expect(JSON.stringify(detail)).toContain('API key rotation documented');
   });
 
-  it('persists only occurrence counts and safe excerpts for AI-unexplained signatures', async () => {
+  it('persists redacted source lines alongside occurrence counts and safe excerpts', async () => {
     const db = await openTestDatabase();
     runMigrations(db);
     const stores = new SQLiteV2Stores(db, 10, () => '2026-08-14T12:30:00.000Z');
-    const privateValues = ['owner@example.test', '192.0.2.10', 'private-token', 'sensor.private_room'];
+    const privateValues = ['owner@example.test', '192.0.2.10', 'private-token'];
     const entries = parseHomeAssistantLog([
       '2026-08-14 12:00:00 ERROR [custom_components.private_domain] Update failed for sensor.private_room',
       'Traceback (most recent call last):',
@@ -159,7 +159,7 @@ describe('SQLiteV2Stores', () => {
     expect(row.payload_json).not.toContain('occurrences":[{');
     expect(row.payload_json).toContain('occurrenceCount');
     expect(db.prepare('select status from v2_report_delivery_attempts where report_id = ?').get(reportId)).toEqual({ status: 'skipped' });
-    expect(detail.presentation).toMatchObject({ signatures: [{ occurrences: 1, safeExcerpt: { lines: ['Traceback (redacted)', 'File "custom_components/[hidden]/coordinator.py", line 42, in async_refresh', 'ConnectionError'], redacted: true } }] });
+    expect(detail.presentation).toMatchObject({ signatures: [{ occurrences: 1, safeExcerpt: { lines: ['Traceback (redacted)', 'File "custom_components/[hidden]/coordinator.py", line 42, in async_refresh', 'ConnectionError'], redacted: true }, sourceLines: ['Update failed for sensor.private_room'] }] });
     for (const value of privateValues) {
       expect(row.payload_json).not.toContain(value);
       expect(JSON.stringify(detail)).not.toContain(value);
@@ -604,6 +604,29 @@ describe('SQLiteV2Stores', () => {
     expect(notifications).toEqual(['sent']);
     await worker.runOnce();
     expect(notifications).toEqual(['sent']);
+  });
+
+  it('persists redacted source lines with the reported signature', async () => {
+    const db = await openTestDatabase();
+    runMigrations(db);
+    const stores = new SQLiteV2Stores(db, 10, () => '2026-08-05T20:00:00.000Z');
+    const entries = parseHomeAssistantLog(['2026-08-05 19:00:00 ERROR [homeassistant.components.demo] Failure token=secret-42']);
+    const plan = await stores.classifyAndStage(entries, '2026-08-05T20:00:00.000Z');
+    await stores.commit({
+      request: { runId: 'source-lines-run', slotId: 'source-lines-slot' },
+      cursor: { dev: 1, ino: 2, size: 100, offset: 100 },
+      signatures: plan,
+      logRead: null,
+      reportedSignatures: plan.signatures,
+      report: { status: 'reported', deliveryStatus: 'skipped', findings: [], warnings: [] }
+    });
+
+    const detail = await stores.getReport('v2-report:source-lines-run');
+    expect(detail?.presentation?.mode).toBe('batch');
+    if (detail?.presentation?.mode !== 'batch') throw new Error('Expected batch presentation.');
+    expect(detail.presentation.signatures[0]?.sourceLines).toEqual(['Failure token=[REDACTED]']);
+    expect(JSON.stringify(detail)).not.toContain('secret-42');
+    DigestDetailSchema.parse(detail);
   });
 
   it('does not resend when job completion fails after a sent report and the job is retried', async () => {
