@@ -91,7 +91,7 @@ Every launch — scheduled, manual, or the first report after onboarding — is 
 
 ## 🧰 Configuration
 
-Settings are editable after setup: Home Assistant connection, AI provider, Telegram target (with test-send), schedule, privacy level, report retention, password, ignored signatures, and operator notes. Masked secrets are preserved unless you explicitly replace them.
+Settings are editable after setup: Home Assistant connection, AI provider, log analysis mode (Basic or AI-assisted), Telegram target (with test-send), schedule, privacy level, report retention, password, ignored signatures, and operator notes. Masked secrets are preserved unless you explicitly replace them.
 
 See [Configuration and integration status](docs/configuration.md) and [Docker Runtime Operations](docs/operations/docker-runtime.md) for providers, privacy, cost controls, backup, restore, and rollback.
 
@@ -129,7 +129,7 @@ The Docker verifier creates disposable local and reverse-proxy Compose projects,
 - Keep the complete `/data` volume private: it holds SQLite data, the encryption key, encrypted credential records, and runtime logs.
 - Back up `app.db` and `app.key` **together** — neither can restore encrypted settings alone.
 - Use a dedicated Home Assistant long-lived token with only the required scope.
-- AI costs scale with the number of error signatures analyzed and schedule frequency — review provider pricing and pick a privacy level before enabling a production API key.
+- AI costs scale with the number of error signatures analyzed and schedule frequency — review provider pricing and pick a privacy level before enabling a production API key. The optional AI log analysis mode adds one extraction request per log batch on top of per-signature analysis.
 
 ## 💻 Development
 
