@@ -122,7 +122,8 @@ function createPreviewServices(now = () => new Date().toISOString()): BackendApi
           notifications: { channel: 'none' as const },
           schedules: [],
           privacyLevel: 'balanced' as const,
-          retentionDays: 30
+          retentionDays: 30,
+          logAnalysisMode: 'basic' as const
         };
       },
       async update() {

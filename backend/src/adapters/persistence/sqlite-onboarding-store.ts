@@ -49,7 +49,8 @@ export class SQLiteOnboardingStore {
       schedules: [{ kind: 'daily', enabled: true, time: draft.dailyTime, timezone: draft.timezone }],
       privacyLevel: draft.privacyLevel,
       retentionDays: draft.retentionDays,
-      includeWarnings: false
+      includeWarnings: false,
+      logAnalysisMode: 'basic'
     };
     this.db.exec('begin immediate');
     try {

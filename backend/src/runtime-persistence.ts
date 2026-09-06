@@ -356,7 +356,8 @@ class SQLiteRuntimeSettingsStore {
       schedules: [],
       privacyLevel: 'balanced',
       retentionDays: 30,
-      includeWarnings: false
+      includeWarnings: false,
+      logAnalysisMode: 'basic'
     });
 
     return { haUrl: input.haUrl, ai: { provider: input.aiProvider, keyMask: ai.mask, ref: ai.ref }, notifiers };
@@ -367,7 +368,7 @@ class SQLiteRuntimeSettingsStore {
     if (!row) return defaultSettings();
     const saved = JSON.parse(row.value_json) as Partial<RedactedSettingsDto>;
     const defaults = defaultSettings();
-    return { ...defaults, ...saved, secretRefs: { ...defaults.secretRefs, ...saved.secretRefs }, includeWarnings: saved.includeWarnings ?? false };
+    return { ...defaults, ...saved, secretRefs: { ...defaults.secretRefs, ...saved.secretRefs }, includeWarnings: saved.includeWarnings ?? false, logAnalysisMode: saved.logAnalysisMode ?? 'basic' };
   }
 
   async update(input: RedactedSettingsDto): Promise<RedactedSettingsDto> {
@@ -524,6 +525,7 @@ function defaultSettings(): RedactedSettingsDto {
     schedules: [],
     privacyLevel: 'balanced',
     retentionDays: 30,
-    includeWarnings: false
+    includeWarnings: false,
+    logAnalysisMode: 'basic'
   };
 }
