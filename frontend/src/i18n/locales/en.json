@@ -350,7 +350,7 @@
       "connectionExplanation": "Connection explanation",
       "nextStep": "Next step",
       "analysisUnavailable": "AI could not explain this problem.",
-      "trace": { "action": "View redacted error trace", "actionSource": "View source log lines", "warning": "Secrets and private values are hidden, and this excerpt is shortened.", "unavailable": "A privacy-safe trace excerpt is unavailable for this problem." },
+      "trace": { "action": "View redacted error trace", "actionSource": "View source log lines", "sourceLines": "View original log lines", "warning": "Secrets and private values are hidden, and this excerpt is shortened.", "unavailable": "A privacy-safe trace excerpt is unavailable for this problem." },
       "component": "Component",
       "technicalId": "Technical ID",
       "operatorNotes": "Operator notes",

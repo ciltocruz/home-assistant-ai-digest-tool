@@ -410,6 +410,7 @@ export const V2SignaturePresentationSchema = z.object({
   problemKind: z.literal('endpoint_resolution').optional(),
   occurrences: z.number().int().min(1), analysis: z.object({ summary: z.string().min(1), recommendation: z.string().min(1) }).strict().optional(),
   safeExcerpt: z.object({ lines: z.array(z.string().max(512)).max(12), truncated: z.boolean(), redacted: z.literal(true) }).strict().optional(),
+  sourceLines: z.array(z.string().max(1024)).max(5).optional(),
   ignoredForFuture: z.boolean().optional(),
   notes: z.array(z.object({
     id: z.string().min(1),

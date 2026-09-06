@@ -579,6 +579,24 @@ describe('BatchReportRun', () => {
     await expect(included.run.run({ runId: 'run-ai-warn-on', slotId: 'slot-ai-warn-on', includeWarnings: true })).resolves.toMatchObject({ status: 'reported' });
   });
 
+  it('excludes a loader warning ignored by integration instead of re-reporting it', async () => {
+    const loaderLines = ['2026-09-06 01:11:37 WARNING (SyncWorker_0) [homeassistant.loader] We found a custom integration spook which has not been tested by Home Assistant'];
+    const loaderEntries = parseHomeAssistantLog(loaderLines, { includeWarnings: true });
+    const loaderPlan: SignaturePlan = { baselineEntries: [], signatures: loaderEntries.map((entry) => ({ ...entry, classification: 'latent' as const, trend: 'unknown' as const, occurrences: [entry] })) };
+    const analyze = vi.fn(async () => ({ summary: 'unused', recommendation: 'unused' }));
+    const run = new BatchReportRun({
+      log: { read: async () => ({ lines: loaderLines, cursor: delta.cursor }) },
+      signatures: { classifyAndStage: async () => loaderPlan },
+      provider: { analyze },
+      persistence: { commit: async () => 'loader-ignored', claimDeliveryAttempt: async () => ({ status: 'pending' as const, shouldSend: false }), updateDeliveryStatus: async () => undefined, fail: async () => undefined },
+      ignores: { listActive: async () => [{ id: 'ignore-spook', match: 'spook', type: 'integration', createdAt: '2026-09-06T00:00:00.000Z' }] },
+      now: () => '2026-09-06T02:00:00.000Z'
+    });
+
+    await expect(run.run({ runId: 'run-loader-ignored', slotId: 'slot-loader-ignored', includeWarnings: true })).resolves.toMatchObject({ status: 'quiet' });
+    expect(analyze).not.toHaveBeenCalled();
+  });
+
   it('marks the report partial when some AI extraction batches fail', async () => {
     const manyLines = Array.from({ length: 151 }, (_, index) => `raw line ${index + 1}`);
     const commits: Parameters<BatchPersistence['commit']>[0][] = [];

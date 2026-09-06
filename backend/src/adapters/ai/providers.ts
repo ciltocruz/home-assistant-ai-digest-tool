@@ -594,7 +594,7 @@ function signatureInstructions(language: 'en' | 'es'): string {
   const outputLanguage = language === 'es'
     ? 'Write both string values in neutral professional Spanish.'
     : 'Write both string values in English.';
-  return `Analyze one redacted Home Assistant log signature. Return JSON only with stable English keys summary and recommendation. ${outputLanguage} Do not reveal or request secrets, tokens, credentials, or full logs.`;
+  return `Analyze one redacted Home Assistant log signature. Return JSON only with stable English keys summary and recommendation. ${outputLanguage} Name the concrete subject of the problem (integration, entity, device, or service names exactly as they appear in the occurrences); a summary that could apply to any component is not acceptable. Do not reveal or request secrets, tokens, credentials, or full logs.`;
 }
 
 function signaturePrompt(context: BoundedSignatureContext): string {

@@ -350,7 +350,7 @@
       "connectionExplanation": "Explicación de la conexión",
       "nextStep": "Siguiente paso",
       "analysisUnavailable": "La IA no pudo explicar este problema.",
-      "trace": { "action": "Ver traza de error redactada", "actionSource": "Ver líneas de log originales", "warning": "Los secretos y valores privados están ocultos, y este extracto está recortado.", "unavailable": "Evento de línea única en el log (sin traza de código multilínea)." },
+      "trace": { "action": "Ver traza de error redactada", "actionSource": "Ver líneas de log originales", "sourceLines": "Ver líneas originales del registro", "warning": "Los secretos y valores privados están ocultos, y este extracto está recortado.", "unavailable": "Evento de línea única en el log (sin traza de código multilínea)." },
       "component": "Componente",
       "technicalId": "ID técnico",
       "operatorNotes": "Notas del operador",
