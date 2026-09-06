@@ -14,7 +14,7 @@ import type { ExecutionContext } from './domain/execution.js';
 import { HomeAssistantLogDeltaReader } from './adapters/ha/log-reader.js';
 import { HomeAssistantRestClient } from './adapters/ha/rest-client.js';
 import { HomeAssistantWebSocketClient, type HomeAssistantSocket } from './adapters/ha/websocket-client.js';
-import { createSignatureProvider, type ProviderHttpClient } from './adapters/ai/providers.js';
+import { createLogExtractionProvider, createSignatureProvider, type ProviderHttpClient } from './adapters/ai/providers.js';
 import { TelegramNotifier, type NotifierHttpClient } from './adapters/notifiers/notifiers.js';
 import { SQLiteV2Stores, SQLiteScheduleStateStore } from './adapters/persistence/sqlite-v2-stores.js';
 import { SQLiteManualTelegramSendStore } from './adapters/persistence/sqlite-manual-telegram-send-store.js';
@@ -236,6 +236,15 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
           return createSignatureProvider(current.aiProvider, { apiKey, httpClient: options.providerHttpClient, timeoutMs: options.haAnalysisTimeoutMs }).analyze(context, signal, language);
         }
       },
+      extractor: {
+        extract: async (extraction, signal) => {
+          const current = await settingsStore.get();
+          if (current.secretRefs.aiKeyRef.startsWith('unconfigured:')) throw new Error('AI_PROVIDER_UNAVAILABLE');
+          const apiKey = await secretStore.resolve(current.secretRefs.aiKeyRef);
+          return createLogExtractionProvider(current.aiProvider, { apiKey, httpClient: options.providerHttpClient, timeoutMs: options.haAnalysisTimeoutMs }).extract(extraction, signal);
+        }
+      },
+      logMode: async () => (await settingsStore.get()).logAnalysisMode ?? 'basic',
       haStatus: {
         snapshot: async () => {
           const current = await settingsStore.get();

@@ -173,4 +173,17 @@ describe('runtime failure logger', () => {
 
     expect((await readdir(logsDir)).sort()).toEqual(['runtime.log', 'runtime.log.1']);
   });
+
+  it('projects AI extraction lifecycle events with counts and error level on failure', () => {
+    const stdout: string[] = [];
+    const logger = createRuntimeLogger({ stdout: (line) => stdout.push(line), now: () => '2026-08-13T10:00:00.000Z' });
+
+    logger.reportOperational({ event: 'report_extraction_completed', mode: 'ai', batchCount: 2, extractedCount: 3, rejectedCount: 1 });
+    logger.reportOperational({ event: 'report_extraction_failed' });
+
+    expect(stdout).toEqual([
+      '{"level":"info","createdAt":"2026-08-13T10:00:00.000Z","event":"report_extraction_completed","mode":"ai","batchCount":2,"extractedCount":3,"rejectedCount":1}',
+      '{"level":"error","createdAt":"2026-08-13T10:00:00.000Z","event":"report_extraction_failed"}'
+    ]);
+  });
 });

@@ -676,6 +676,45 @@ describe('persistent runtime services', () => {
     expect(report?.presentation).toMatchObject({ mode: 'batch', signatures: [expect.objectContaining({ level: 'WARNING' })] });
   });
 
+  it('reports unparseable log formats through AI extraction while basic mode stays quiet', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-v2-ai-extraction-'));
+    const logPath = join(dataDir, 'home-assistant.log');
+    await writeFile(logPath, 'mqtt connection lost, retrying with backoff\ncustom sensor reports malformed payload\n');
+    const events = { configEntries: 0, ai: 0 };
+    const services = await createPersistentRuntimeServices({
+      dataDir, now: () => NOW, haLogPath: logPath, haWebSocketFactory: () => fakeHaSocket(events),
+      providerHttpClient: async (request) => {
+        events.ai += 1;
+        if (JSON.stringify(request.body).includes('Extract errors')) {
+          return { status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ errors: [{ line: 1, timestamp: '', level: 'ERROR', component: 'mqtt', message: 'connection lost, retrying with backoff' }] }) }] } }] }) };
+        }
+        return { status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ summary: 'Zigbee frame leftover', recommendation: 'Monitor the Zigbee network' }) }] } }] }) };
+      }
+    });
+    await services.setup.complete({ haUrl: 'http://ha.local:8123', haToken: HA_SECRET, aiProvider: 'gemini', aiKey: AI_SECRET });
+    const current = await services.settings.get();
+    await services.settings.update({ ...settingsUpdate(current, current.retentionDays), logAnalysisMode: 'ai' });
+
+    const aiRun = await services.digestJobs.enqueue({ kind: 'manual', triggerWindowId: 'v2:ai-extraction' });
+    await (services.digestWorker as unknown as { runOnce(): Promise<void> }).runOnce();
+
+    const aiJob = await services.digestJobs.get(aiRun.jobId);
+    expect(aiJob).toMatchObject({ status: 'completed', reportId: expect.stringMatching(/^v2-report:/) });
+    const aiReport = await services.reports.get(aiJob?.reportId ?? 'missing');
+    expect(aiReport?.presentation).toMatchObject({ mode: 'batch', status: 'reported', signatures: [expect.objectContaining({ component: 'mqtt' })] });
+    expect(events.ai).toBeGreaterThan(0);
+
+    await services.settings.update({ ...settingsUpdate(await services.settings.get(), current.retentionDays), logAnalysisMode: 'basic' });
+    await writeFile(logPath, 'mqtt broker unreachable\n', { flag: 'a' });
+    const basicRun = await services.digestJobs.enqueue({ kind: 'manual', triggerWindowId: 'v2:basic-quiet' });
+    await (services.digestWorker as unknown as { runOnce(): Promise<void> }).runOnce();
+
+    const basicJob = await services.digestJobs.get(basicRun.jobId);
+    const basicReport = await services.reports.get(basicJob?.reportId ?? 'missing');
+    expect(basicReport?.presentation).toMatchObject({ mode: 'batch', status: 'quiet', signatures: [] });
+    await services.close?.();
+  });
+
   it('persists ignored signatures and tagged notes across a restart for the next v2 report', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'ha-digest-v2-context-rules-'));
     const logPath = join(dataDir, 'home-assistant.log');

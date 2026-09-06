@@ -17,6 +17,29 @@ export type ParsedLogEntry = {
 export type LogCursor = { dev: number; ino: number; size: number; offset: number };
 export type LogDelta = { lines: string[]; cursor: LogCursor; recovery?: 'truncated' | 'replaced' };
 export type LogReadRange = { from: string; to: string };
+export type ExtractedLogError = {
+  timestamp: string;
+  level: string;
+  component: string;
+  message: string;
+};
+export type LogExtractionBatch = {
+  lines: string[];
+  /** 1-based global line number of lines[0] within the delta. */
+  startLine: number;
+};
+export type LogExtractionChunks = {
+  batches: LogExtractionBatch[];
+  truncated: boolean;
+};
+export type LogExtractionChunkLimits = {
+  maxLinesPerBatch?: number;
+  maxBytesPerBatch?: number;
+  maxBatches?: number;
+};
+export const DEFAULT_EXTRACTION_MAX_LINES_PER_BATCH = 150;
+export const DEFAULT_EXTRACTION_MAX_BYTES_PER_BATCH = 24 * 1024;
+export const DEFAULT_EXTRACTION_MAX_BATCHES = 8;
 export type KnownSignature = {
   signature: string;
   firstSeenAt: string;
@@ -128,6 +151,44 @@ export function classifySignatures(entries: ParsedLogEntry[], known: KnownSignat
     }];
   });
   return { signatures, baselineEntries };
+}
+
+export function chunkLogLinesForExtraction(lines: string[], limits: LogExtractionChunkLimits = {}): LogExtractionChunks {
+  const maxLines = limits.maxLinesPerBatch ?? DEFAULT_EXTRACTION_MAX_LINES_PER_BATCH;
+  const maxBytes = limits.maxBytesPerBatch ?? DEFAULT_EXTRACTION_MAX_BYTES_PER_BATCH;
+  const maxBatches = limits.maxBatches ?? DEFAULT_EXTRACTION_MAX_BATCHES;
+  const batches: LogExtractionBatch[] = [];
+  let current: string[] = [];
+  let currentBytes = 0;
+  let startLine = 1;
+  const flush = () => {
+    if (current.length === 0) return;
+    batches.push({ lines: current, startLine });
+    startLine += current.length;
+    current = [];
+    currentBytes = 0;
+  };
+  for (const line of lines) {
+    const size = Buffer.byteLength(line, 'utf8') + 1;
+    if (current.length >= maxLines || (current.length > 0 && currentBytes + size > maxBytes)) flush();
+    current.push(line);
+    currentBytes += size;
+  }
+  flush();
+  const truncated = batches.length > maxBatches;
+  return { batches: truncated ? batches.slice(0, maxBatches) : batches, truncated };
+}
+
+export function buildParsedEntry(input: ExtractedLogError, fallbackAt: string): ParsedLogEntry | null {
+  const level = input.level.trim().toUpperCase();
+  if (level !== 'ERROR' && level !== 'CRITICAL' && level !== 'WARNING') return null;
+  const component = input.component.trim().toLowerCase();
+  if (!component) return null;
+  const message = input.message.trim();
+  if (!message) return null;
+  const at = toIso(input.timestamp.trim()) ?? toIso(fallbackAt) ?? fallbackAt;
+  const normalizedMessage = normalizeLogMessage(message);
+  return { at, level, component, message, normalizedMessage, signature: signatureFor(component, level, normalizedMessage) };
 }
 
 function signatureFor(component: string, level: LogLevel, normalizedMessage: string): string {

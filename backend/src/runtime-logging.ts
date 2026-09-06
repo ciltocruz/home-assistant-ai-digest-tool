@@ -113,8 +113,11 @@ function projectOperationalEvent(event: RuntimeOperationalEvent): RuntimeOperati
     case 'runtime_shutdown':
     case 'report_collection_failed':
     case 'report_commit_failed':
+    case 'report_extraction_failed':
     case 'telegram_delivery_started':
       return { event: event.event };
+    case 'report_extraction_completed':
+      return { event: event.event, mode: event.mode, batchCount: event.batchCount, extractedCount: event.extractedCount, rejectedCount: event.rejectedCount };
     case 'runtime_fatal':
       return { event: event.event, reason: event.reason };
     case 'report_collection_completed':
@@ -144,7 +147,7 @@ function projectOperationalEvent(event: RuntimeOperationalEvent): RuntimeOperati
 }
 
 function operationalLevel(event: RuntimeOperationalEvent): 'info' | 'warn' | 'error' {
-  if (event.event === 'runtime_fatal' || event.event === 'job_failed' || event.event === 'report_collection_failed' || event.event === 'report_commit_failed') return 'error';
+  if (event.event === 'runtime_fatal' || event.event === 'job_failed' || event.event === 'report_collection_failed' || event.event === 'report_commit_failed' || event.event === 'report_extraction_failed') return 'error';
   if (event.event === 'ha_snapshot_failed' || event.event === 'telegram_delivery_completed' && event.outcome === 'failed') return 'warn';
   return 'info';
 }

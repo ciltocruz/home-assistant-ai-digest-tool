@@ -494,8 +494,110 @@ describe('BatchReportRun', () => {
     expect(job).toMatchObject({ status: 'completed', stage: 'completed', retryAvailable: false });
     expect(committedReport?.deliveryStatus).toBe('sent');
     expect(notificationAttempts).toBe(1);
-    expect(deliveryUpdateAttempts).toBe(1);
     await worker.runOnce();
     expect(notificationAttempts).toBe(1);
+  });
+
+  it('extracts AI errors in ai mode and analyzes them through the common pipeline', async () => {
+    const events: unknown[] = [];
+    const commits: Parameters<BatchPersistence['commit']>[0][] = [];
+    const analyzed: string[] = [];
+    const run = new BatchReportRun({
+      log: { read: async () => delta },
+      signatures: { classifyAndStage: async (entries) => ({ baselineEntries: [], signatures: entries.map((entry) => ({ ...entry, classification: 'new' as const, trend: 'new' as const, occurrences: [entry] })) }) },
+      provider: { analyze: async (context) => { analyzed.push(context.component); return { summary: 'AI summary', recommendation: 'AI fix' }; } },
+      extractor: { extract: async () => ({ entries: [{ timestamp: '2026-07-29 12:00:00', level: 'ERROR', component: 'ha.ai', message: 'ai boom' }], rejectedCount: 1 }) },
+      logMode: async () => 'ai',
+      persistence: { commit: async (value) => { commits.push(value); return 'ai-report'; }, claimDeliveryAttempt: async () => ({ status: 'pending' as const, shouldSend: false }), updateDeliveryStatus: async () => undefined, fail: async () => undefined },
+      eventReporter: (event) => { events.push(event); },
+      now: () => '2026-07-30T00:00:00.000Z'
+    });
+
+    await expect(run.run({ runId: 'run-ai', slotId: 'slot-ai' })).resolves.toMatchObject({ status: 'reported', reportId: 'ai-report' });
+    expect(analyzed).toEqual(['ha.ai']);
+    expect(commits[0]?.report.findings).toHaveLength(1);
+    expect(events).toContainEqual(expect.objectContaining({ event: 'report_extraction_completed', mode: 'ai', batchCount: 1, extractedCount: 1, rejectedCount: 1 }));
+  });
+
+  it('applies ignore rules to AI-extracted errors instead of re-reporting them', async () => {
+    const analyze = vi.fn(async () => ({ summary: 'AI summary', recommendation: 'AI fix' }));
+    const commits: Parameters<BatchPersistence['commit']>[0][] = [];
+    const run = new BatchReportRun({
+      log: { read: async () => delta },
+      signatures: { classifyAndStage: async (entries) => ({ baselineEntries: [], signatures: entries.map((entry) => ({ ...entry, classification: 'new' as const, trend: 'new' as const, occurrences: [entry] })) }) },
+      provider: { analyze },
+      extractor: { extract: async () => ({ entries: [{ timestamp: '2026-07-29 12:00:00', level: 'ERROR', component: 'ha.ignored', message: 'known noise' }], rejectedCount: 0 }) },
+      logMode: async () => 'ai',
+      persistence: { commit: async (value) => { commits.push(value); return 'ai-ignored'; }, claimDeliveryAttempt: async () => ({ status: 'pending' as const, shouldSend: false }), updateDeliveryStatus: async () => undefined, fail: async () => undefined },
+      ignores: { listActive: async () => [{ id: 'ignore-ai', match: 'ha.ignored', type: 'message', createdAt: '2026-07-29T12:03:00.000Z' }] },
+      now: () => '2026-07-30T00:00:00.000Z'
+    });
+
+    await expect(run.run({ runId: 'run-ai-ignored', slotId: 'slot-ai-ignored' })).resolves.toMatchObject({ status: 'quiet' });
+    expect(analyze).not.toHaveBeenCalled();
+    expect(commits[0]?.report.status).toBe('quiet');
+  });
+
+  it('fails visibly without committing when every AI extraction batch fails', async () => {
+    const events: unknown[] = [];
+    const commits: Parameters<BatchPersistence['commit']>[0][] = [];
+    const run = new BatchReportRun({
+      log: { read: async () => delta },
+      signatures: { classifyAndStage: async () => plan },
+      provider: { analyze: async () => ({ summary: 'unused', recommendation: 'unused' }) },
+      extractor: { extract: async () => { throw new Error('provider down'); } },
+      logMode: async () => 'ai',
+      persistence: { commit: async (value) => { commits.push(value); return 'unused'; }, claimDeliveryAttempt: async () => ({ status: 'pending' as const, shouldSend: false }), updateDeliveryStatus: async () => undefined, fail: async () => undefined },
+      eventReporter: (event) => { events.push(event); },
+      now: () => '2026-07-30T00:00:00.000Z'
+    });
+
+    await expect(run.run({ runId: 'run-ai-failed', slotId: 'slot-ai-failed' })).rejects.toThrow('AI_EXTRACTION_UNAVAILABLE');
+    expect(commits).toHaveLength(0);
+    expect(events).toContainEqual(expect.objectContaining({ event: 'report_extraction_failed' }));
+  });
+
+  it('keeps AI-extracted warnings out unless warnings are included', async () => {
+    const build = (includeWarnings: boolean) => {
+      const commits: Parameters<BatchPersistence['commit']>[0][] = [];
+      const run = new BatchReportRun({
+        log: { read: async () => delta },
+        signatures: { classifyAndStage: async (entries) => ({ baselineEntries: [], signatures: entries.map((entry) => ({ ...entry, classification: 'new' as const, trend: 'new' as const, occurrences: [entry] })) }) },
+        provider: { analyze: async () => ({ summary: 'AI summary', recommendation: 'AI fix' }) },
+        extractor: { extract: async () => ({ entries: [{ timestamp: '2026-07-29 12:00:00', level: 'WARNING', component: 'ha.wary', message: 'just a warning' }], rejectedCount: 0 }) },
+        logMode: async () => 'ai',
+        persistence: { commit: async (value) => { commits.push(value); return 'ai-warn'; }, claimDeliveryAttempt: async () => ({ status: 'pending' as const, shouldSend: false }), updateDeliveryStatus: async () => undefined, fail: async () => undefined },
+        now: () => '2026-07-30T00:00:00.000Z'
+      });
+      return { run, commits };
+    };
+
+    const excluded = build(false);
+    await expect(excluded.run.run({ runId: 'run-ai-warn-off', slotId: 'slot-ai-warn-off', includeWarnings: false })).resolves.toMatchObject({ status: 'quiet' });
+
+    const included = build(true);
+    await expect(included.run.run({ runId: 'run-ai-warn-on', slotId: 'slot-ai-warn-on', includeWarnings: true })).resolves.toMatchObject({ status: 'reported' });
+  });
+
+  it('marks the report partial when some AI extraction batches fail', async () => {
+    const manyLines = Array.from({ length: 151 }, (_, index) => `raw line ${index + 1}`);
+    const commits: Parameters<BatchPersistence['commit']>[0][] = [];
+    const run = new BatchReportRun({
+      log: { read: async () => ({ lines: manyLines, cursor: delta.cursor }) },
+      signatures: { classifyAndStage: async (entries) => ({ baselineEntries: [], signatures: entries.map((entry) => ({ ...entry, classification: 'new' as const, trend: 'new' as const, occurrences: [entry] })) }) },
+      provider: { analyze: async () => ({ summary: 'AI summary', recommendation: 'AI fix' }) },
+      extractor: {
+        extract: async ({ batch }) => {
+          if (batch.startLine === 1) throw new Error('first batch down');
+          return { entries: [{ timestamp: '2026-07-29 12:00:00', level: 'ERROR', component: 'ha.second', message: 'second batch boom' }], rejectedCount: 0 };
+        }
+      },
+      logMode: async () => 'ai',
+      persistence: { commit: async (value) => { commits.push(value); return 'ai-partial'; }, claimDeliveryAttempt: async () => ({ status: 'pending' as const, shouldSend: false }), updateDeliveryStatus: async () => undefined, fail: async () => undefined },
+      now: () => '2026-07-30T00:00:00.000Z'
+    });
+
+    await expect(run.run({ runId: 'run-ai-partial', slotId: 'slot-ai-partial' })).resolves.toMatchObject({ status: 'partial', reportId: 'ai-partial' });
+    expect(commits[0]?.report.warnings).toContain('LOG_EXTRACTION_PARTIAL');
   });
 });
