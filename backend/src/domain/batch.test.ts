@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
-import { classifySignatures, parseHomeAssistantLog } from './batch.js';
+import { buildParsedEntry, chunkLogLinesForExtraction, classifySignatures, parseHomeAssistantLog } from './batch.js';
 
 const fixture = new URL('../../../tests/fixtures/ha/batch-formats.log', import.meta.url);
 
@@ -163,5 +163,33 @@ describe('batch log domain', () => {
     ]);
     const authPlan = classifySignatures(authErrorEntries, [], { now: '2026-08-24T12:00:00.000Z' });
     expect(authPlan.signatures[0]?.level).toBe('ERROR');
+  });
+
+  it('chunks log lines for AI extraction by lines, bytes, and batch cap with stable numbering', () => {
+    const lines = ['a', 'b', 'c', 'd', 'e'];
+    const chunked = chunkLogLinesForExtraction(lines, { maxLinesPerBatch: 2, maxBatches: 10 });
+    expect(chunked.truncated).toBe(false);
+    expect(chunked.batches.map((batch) => batch.lines)).toEqual([['a', 'b'], ['c', 'd'], ['e']]);
+    expect(chunked.batches.map((batch) => batch.startLine)).toEqual([1, 3, 5]);
+
+    const capped = chunkLogLinesForExtraction(lines, { maxLinesPerBatch: 2, maxBatches: 2 });
+    expect(capped.truncated).toBe(true);
+    expect(capped.batches).toHaveLength(2);
+
+    const byteCapped = chunkLogLinesForExtraction(['x'.repeat(100), 'y'.repeat(100)], { maxBytesPerBatch: 120, maxBatches: 10 });
+    expect(byteCapped.batches.map((batch) => batch.lines)).toEqual([['x'.repeat(100)], ['y'.repeat(100)]]);
+  });
+
+  it('builds deterministic parsed entries from validated AI output with timestamp fallback', () => {
+    const entry = buildParsedEntry({ timestamp: '2026-08-24 05:26:00', level: 'error', component: 'Custom.Component', message: 'Boom id=42' }, '2026-08-24T06:00:00.000Z');
+    expect(entry).toMatchObject({ level: 'ERROR', component: 'custom.component', normalizedMessage: 'boom id=<number>' });
+    expect(entry?.signature).toBe(parseHomeAssistantLog(['2026-08-24 05:26:00 ERROR (MainThread) [custom.component] Boom id=99'])[0]?.signature);
+
+    const fallback = buildParsedEntry({ timestamp: '', level: 'CRITICAL', component: 'ha.core', message: 'No timestamp here' }, '2026-08-24T06:00:00.000Z');
+    expect(fallback).toMatchObject({ at: '2026-08-24T06:00:00.000Z', level: 'CRITICAL' });
+
+    expect(buildParsedEntry({ timestamp: '2026-08-24 05:26:00', level: 'INFO', component: 'ha.core', message: 'noise' }, '2026-08-24T06:00:00.000Z')).toBeNull();
+    expect(buildParsedEntry({ timestamp: '2026-08-24 05:26:00', level: 'ERROR', component: ' ', message: 'noise' }, '2026-08-24T06:00:00.000Z')).toBeNull();
+    expect(buildParsedEntry({ timestamp: '2026-08-24 05:26:00', level: 'ERROR', component: 'ha.core', message: '  ' }, '2026-08-24T06:00:00.000Z')).toBeNull();
   });
 });

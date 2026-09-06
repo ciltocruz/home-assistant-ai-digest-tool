@@ -64,7 +64,8 @@ export class SettingsService {
       schedules: command.schedules,
       privacyLevel: command.privacyLevel,
       retentionDays: command.retentionDays,
-      includeWarnings: command.includeWarnings ?? current.includeWarnings ?? false
+      includeWarnings: command.includeWarnings ?? current.includeWarnings ?? false,
+      logAnalysisMode: command.logAnalysisMode ?? current.logAnalysisMode ?? 'basic'
     }, replacements);
     return this.toEditable(saved);
   }
@@ -93,7 +94,8 @@ export class SettingsService {
       schedules: settings.schedules,
       privacyLevel: settings.privacyLevel,
       retentionDays: settings.retentionDays,
-      includeWarnings: settings.includeWarnings ?? false
+      includeWarnings: settings.includeWarnings ?? false,
+      logAnalysisMode: settings.logAnalysisMode ?? 'basic'
     };
   }
 

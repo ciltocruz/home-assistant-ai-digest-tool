@@ -14,7 +14,7 @@ import type { ExecutionContext } from './domain/execution.js';
 import { HomeAssistantLogDeltaReader } from './adapters/ha/log-reader.js';
 import { HomeAssistantRestClient } from './adapters/ha/rest-client.js';
 import { HomeAssistantWebSocketClient, type HomeAssistantSocket } from './adapters/ha/websocket-client.js';
-import { createSignatureProvider, type ProviderHttpClient } from './adapters/ai/providers.js';
+import { createLogExtractionProvider, createSignatureProvider, type ProviderHttpClient } from './adapters/ai/providers.js';
 import { TelegramNotifier, type NotifierHttpClient } from './adapters/notifiers/notifiers.js';
 import { SQLiteV2Stores, SQLiteScheduleStateStore } from './adapters/persistence/sqlite-v2-stores.js';
 import { SQLiteManualTelegramSendStore } from './adapters/persistence/sqlite-manual-telegram-send-store.js';
@@ -236,6 +236,15 @@ export async function createPersistentRuntimeServices(options: PersistentRuntime
           return createSignatureProvider(current.aiProvider, { apiKey, httpClient: options.providerHttpClient, timeoutMs: options.haAnalysisTimeoutMs }).analyze(context, signal, language);
         }
       },
+      extractor: {
+        extract: async (extraction, signal) => {
+          const current = await settingsStore.get();
+          if (current.secretRefs.aiKeyRef.startsWith('unconfigured:')) throw new Error('AI_PROVIDER_UNAVAILABLE');
+          const apiKey = await secretStore.resolve(current.secretRefs.aiKeyRef);
+          return createLogExtractionProvider(current.aiProvider, { apiKey, httpClient: options.providerHttpClient, timeoutMs: options.haAnalysisTimeoutMs }).extract(extraction, signal);
+        }
+      },
+      logMode: async () => (await settingsStore.get()).logAnalysisMode ?? 'basic',
       haStatus: {
         snapshot: async () => {
           const current = await settingsStore.get();
@@ -356,7 +365,8 @@ class SQLiteRuntimeSettingsStore {
       schedules: [],
       privacyLevel: 'balanced',
       retentionDays: 30,
-      includeWarnings: false
+      includeWarnings: false,
+      logAnalysisMode: 'basic'
     });
 
     return { haUrl: input.haUrl, ai: { provider: input.aiProvider, keyMask: ai.mask, ref: ai.ref }, notifiers };
@@ -367,7 +377,7 @@ class SQLiteRuntimeSettingsStore {
     if (!row) return defaultSettings();
     const saved = JSON.parse(row.value_json) as Partial<RedactedSettingsDto>;
     const defaults = defaultSettings();
-    return { ...defaults, ...saved, secretRefs: { ...defaults.secretRefs, ...saved.secretRefs }, includeWarnings: saved.includeWarnings ?? false };
+    return { ...defaults, ...saved, secretRefs: { ...defaults.secretRefs, ...saved.secretRefs }, includeWarnings: saved.includeWarnings ?? false, logAnalysisMode: saved.logAnalysisMode ?? 'basic' };
   }
 
   async update(input: RedactedSettingsDto): Promise<RedactedSettingsDto> {
@@ -524,6 +534,7 @@ function defaultSettings(): RedactedSettingsDto {
     schedules: [],
     privacyLevel: 'balanced',
     retentionDays: 30,
-    includeWarnings: false
+    includeWarnings: false,
+    logAnalysisMode: 'basic'
   };
 }

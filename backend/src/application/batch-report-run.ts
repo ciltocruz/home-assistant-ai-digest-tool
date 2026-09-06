@@ -1,5 +1,5 @@
-import type { BatchSignature, LogDelta, LogReadRange, ParsedLogEntry, SignaturePlan } from '../domain/batch.js';
-import { parseHomeAssistantLog } from '../domain/batch.js';
+import type { BatchSignature, ExtractedLogError, LogDelta, LogExtractionBatch, LogReadRange, ParsedLogEntry, SignaturePlan } from '../domain/batch.js';
+import { buildParsedEntry, chunkLogLinesForExtraction, parseHomeAssistantLog } from '../domain/batch.js';
 import type { DeliveryDiagnostic, DeliveryDiagnosticErrorCode, DeliveryResult, DeliveryStatus, IgnoreRuleDto, NoteDto } from '@ha-digest/shared';
 import type { IntegrationStatusFailureReason, IntegrationStatusSnapshot } from './integration-status.js';
 import { redactProviderError } from '../domain/safe-error.js';
@@ -25,10 +25,17 @@ export interface BatchPersistence {
 }
 export interface HAStatusPort { snapshot(): Promise<IntegrationStatusSnapshot>; }
 export interface BatchNotifier { notify(summary: { findings: Array<{ signature: string; analysis: SignatureAnalysis }>; reportUrl?: string; language: 'en' | 'es' }): Promise<DeliveryStatus | DeliveryResult>; }
+export type LogExtractionRequest = { batch: LogExtractionBatch; includeWarnings: boolean; language: 'en' | 'es' };
+export type LogExtractionResult = { entries: ExtractedLogError[]; rejectedCount: number };
+export interface LogErrorExtractor {
+  extract(request: LogExtractionRequest, signal: AbortSignal): Promise<LogExtractionResult>;
+}
 
 export type BatchOperationalEvent =
   | { event: 'report_collection_completed'; lineCount: number; signatureCount: number; durationMs: number }
   | { event: 'report_collection_failed' }
+  | { event: 'report_extraction_completed'; mode: 'ai'; batchCount: number; extractedCount: number; rejectedCount: number }
+  | { event: 'report_extraction_failed' }
   | { event: 'report_analysis_completed'; analyzedCount: number; failedCount: number; durationMs: number; error?: string }
   | { event: 'report_commit_completed'; reportId: string; status: 'quiet' | 'reported' | 'partial'; signatureCount: number }
   | { event: 'report_commit_failed' }
@@ -63,6 +70,8 @@ export type BatchReportRunDependencies = {
   log: LogDeltaPort;
   signatures: SignatureMemory;
   provider: SignatureProvider;
+  extractor?: LogErrorExtractor;
+  logMode?: () => Promise<'basic' | 'ai'>;
   persistence: BatchPersistence;
   now?: () => string;
   maxContextOccurrences?: number;
@@ -91,7 +100,16 @@ export class BatchReportRun {
       throw error;
     }
     const now = this.dependencies.now?.() ?? new Date().toISOString();
-    const entries = parseHomeAssistantLog(delta.lines, { includeWarnings: request.includeWarnings });
+    const logMode = await this.dependencies.logMode?.() ?? 'basic';
+    let entries: ParsedLogEntry[];
+    let extractionWarnings: string[] = [];
+    if (logMode === 'ai' && this.dependencies.extractor) {
+      const extracted = await this.extractWithAi(request, delta.lines, now);
+      entries = extracted.entries;
+      extractionWarnings = extracted.warnings;
+    } else {
+      entries = parseHomeAssistantLog(delta.lines, { includeWarnings: request.includeWarnings });
+    }
     const plan = await this.dependencies.signatures.classifyAndStage(entries, now);
     const logRead: LogReadRange | null = entries.length > 0 ? { from: entries[0].at, to: entries[entries.length - 1].at } : null;
     const [rules, notes] = await Promise.all([
@@ -105,9 +123,9 @@ export class BatchReportRun {
     const notesBySignature = notesForSignatures(reportedSignatures, notes);
     const integrationStatus = await this.readIntegrationStatus();
     if (reportedSignatures.length === 0) {
-      const reportId = await this.commit({ request, cursor: delta.cursor, signatures: plan, logRead, reportedSignatures, notesBySignature, report: { status: 'quiet', deliveryStatus: 'skipped', findings: [], warnings: [], integrationStatus } });
+      const reportId = await this.commit({ request, cursor: delta.cursor, signatures: plan, logRead, reportedSignatures, notesBySignature, report: { status: 'quiet', deliveryStatus: 'skipped', findings: [], warnings: extractionWarnings, integrationStatus } });
       this.report({ event: 'report_commit_completed', reportId, status: 'quiet', signatureCount: 0 });
-      return { status: 'quiet', warnings: [], reportId };
+      return { status: 'quiet', warnings: extractionWarnings, reportId };
     }
 
     const language = await this.dependencies.language?.() ?? 'en';
@@ -135,7 +153,7 @@ export class BatchReportRun {
       ...(firstError ? { error: firstError } : {})
     });
     if (findings.length === 0) {
-      const warnings = firstError ? ['AI_ANALYSIS_UNAVAILABLE', firstError] : ['AI_ANALYSIS_UNAVAILABLE'];
+      const warnings = [...extractionWarnings, ...(firstError ? ['AI_ANALYSIS_UNAVAILABLE', firstError] : ['AI_ANALYSIS_UNAVAILABLE'])];
       const reportId = await this.commit({
         request,
         cursor: delta.cursor,
@@ -155,9 +173,9 @@ export class BatchReportRun {
       this.report({ event: 'report_commit_completed', reportId, status: 'partial', signatureCount: reportedSignatures.length });
       return { status: 'partial', warnings, reportId };
     }
-    const warnings = findings.length === analyses.length
+    const warnings = [...extractionWarnings, ...(findings.length === analyses.length
       ? []
-      : (firstError ? ['AI_ANALYSIS_PARTIAL', firstError] : ['AI_ANALYSIS_PARTIAL']);
+      : (firstError ? ['AI_ANALYSIS_PARTIAL', firstError] : ['AI_ANALYSIS_PARTIAL']))];
     const status = warnings.length ? 'partial' : 'reported';
     const report: CommitPlan['report'] = {
       status,
@@ -200,6 +218,40 @@ export class BatchReportRun {
       return { status, warnings: [...warnings, 'DELIVERY_STATUS_PERSISTENCE_FAILED'], reportId, deliveryStatus };
     }
     return { status, warnings, reportId };
+  }
+
+  private async extractWithAi(request: RunRequest, lines: string[], now: string): Promise<{ entries: ParsedLogEntry[]; warnings: string[] }> {
+    const extractor = this.dependencies.extractor;
+    if (!extractor) return { entries: parseHomeAssistantLog(lines, { includeWarnings: request.includeWarnings }), warnings: [] };
+    const language = await this.dependencies.language?.() ?? 'en';
+    const { batches, truncated } = chunkLogLinesForExtraction(lines);
+    const warnings: string[] = truncated ? ['LOG_EXTRACTION_TRUNCATED'] : [];
+    const entries: ParsedLogEntry[] = [];
+    let rejectedCount = 0;
+    let succeededBatches = 0;
+    let failedBatches = 0;
+    for (const batch of batches) {
+      try {
+        const result = await extractor.extract({ batch, includeWarnings: request.includeWarnings ?? false, language }, new AbortController().signal);
+        succeededBatches += 1;
+        rejectedCount += result.rejectedCount;
+        for (const item of result.entries) {
+          if (item.level.toUpperCase() === 'WARNING' && !request.includeWarnings) continue;
+          const entry = buildParsedEntry(item, now);
+          if (entry) entries.push(entry);
+          else rejectedCount += 1;
+        }
+      } catch {
+        failedBatches += 1;
+      }
+    }
+    this.report({ event: 'report_extraction_completed', mode: 'ai', batchCount: batches.length, extractedCount: entries.length, rejectedCount });
+    if (entries.length === 0 && lines.length > 0 && succeededBatches === 0) {
+      this.report({ event: 'report_extraction_failed' });
+      throw new Error(`AI_EXTRACTION_UNAVAILABLE: ${failedBatches} batch(es) failed`);
+    }
+    if (failedBatches > 0) warnings.push('LOG_EXTRACTION_PARTIAL');
+    return { entries, warnings };
   }
 
   private async readIntegrationStatus(): Promise<IntegrationStatusSnapshot> {

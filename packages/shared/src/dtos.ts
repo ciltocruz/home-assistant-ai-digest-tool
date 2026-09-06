@@ -12,6 +12,9 @@ export type DigestKind = z.infer<typeof DigestKindSchema>;
 export const PrivacyLevelSchema = z.enum(['minimal', 'balanced', 'detailed']);
 export type PrivacyLevel = z.infer<typeof PrivacyLevelSchema>;
 
+export const LogAnalysisModeSchema = z.enum(['basic', 'ai']);
+export type LogAnalysisMode = z.infer<typeof LogAnalysisModeSchema>;
+
 export const OnboardingStepSchema = z.enum(['home_assistant', 'ai_provider', 'notifications', 'schedule', 'privacy', 'first_report']);
 export type OnboardingStep = z.infer<typeof OnboardingStepSchema>;
 
@@ -221,7 +224,8 @@ export const RedactedSettingsDtoSchema = z
     schedules: z.array(ScheduleSchema),
   privacyLevel: PrivacyLevelSchema,
   retentionDays: z.number().int().min(1).max(MAX_RETENTION_DAYS),
-  includeWarnings: z.boolean().optional()
+  includeWarnings: z.boolean().optional(),
+  logAnalysisMode: LogAnalysisModeSchema.optional()
   })
   .strict();
 export type RedactedSettingsDto = z.infer<typeof RedactedSettingsDtoSchema>;
@@ -253,7 +257,8 @@ export const EditableSettingsDtoSchema = z.object({
   schedules: z.array(ScheduleSchema),
   privacyLevel: PrivacyLevelSchema,
   retentionDays: z.number().int().min(1).max(MAX_RETENTION_DAYS),
-  includeWarnings: z.boolean().optional()
+  includeWarnings: z.boolean().optional(),
+  logAnalysisMode: LogAnalysisModeSchema.optional()
 }).strict();
 export type EditableSettingsDto = z.infer<typeof EditableSettingsDtoSchema>;
 
@@ -273,7 +278,8 @@ export const SettingsUpdateCommandSchema = z.object({
   schedules: z.array(ScheduleSchema).min(1),
   privacyLevel: PrivacyLevelSchema,
     retentionDays: z.number().int().min(1).max(MAX_RETENTION_DAYS),
-    includeWarnings: z.boolean().optional()
+    includeWarnings: z.boolean().optional(),
+    logAnalysisMode: LogAnalysisModeSchema.optional()
 }).strict();
 export type SettingsUpdateCommand = z.infer<typeof SettingsUpdateCommandSchema>;
 

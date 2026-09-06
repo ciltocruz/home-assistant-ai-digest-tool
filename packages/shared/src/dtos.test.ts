@@ -117,6 +117,30 @@ describe('shared DTOs', () => {
     expect(JSON.stringify(settings)).not.toContain('sentinel-raw-ai-credential');
   });
 
+  it('accepts an optional log analysis mode defaulting to absent for backwards compatibility', () => {
+    const base = {
+      haUrl: 'https://home-assistant.local:8123',
+      aiProvider: 'gemini' as const,
+      secretRefs: { haTokenRef: 'secret_ha_token', aiKeyRef: 'secret_ai_key' },
+      schedules: [{ kind: 'daily' as const, enabled: true, time: '08:00', timezone: 'Europe/Madrid' }],
+      privacyLevel: 'balanced' as const,
+      retentionDays: 30
+    };
+
+    expect(RedactedSettingsDtoSchema.parse(base)).not.toHaveProperty('logAnalysisMode');
+    expect(RedactedSettingsDtoSchema.parse({ ...base, logAnalysisMode: 'ai' }).logAnalysisMode).toBe('ai');
+    expect(() => RedactedSettingsDtoSchema.parse({ ...base, logAnalysisMode: 'invalid' })).toThrow();
+    expect(SettingsUpdateCommandSchema.parse({
+      homeAssistant: { url: base.haUrl, token: { operation: 'keep_current' } },
+      ai: { provider: 'gemini', key: { operation: 'keep_current' } },
+      notifications: { channel: 'none' },
+      schedules: base.schedules,
+      privacyLevel: base.privacyLevel,
+      retentionDays: base.retentionDays,
+      logAnalysisMode: 'ai'
+    }).logAnalysisMode).toBe('ai');
+  });
+
   it('accepts explicit secret operations while refusing raw values and references in editable settings', () => {
     const command = SettingsUpdateCommandSchema.parse({
       homeAssistant: { url: 'https://home-assistant.local:8123', token: { operation: 'keep_current' } },

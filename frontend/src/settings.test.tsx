@@ -61,6 +61,24 @@ describe('SettingsPanel', () => {
     expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({ includeWarnings: true }));
   });
 
+  it('selects the log analysis mode with an explicit AI consumption warning', async () => {
+    const updateSettings = vi.fn(async (command) => ({ ...settings(), ...command }));
+    const { container } = await mount({ getSettings: async () => settings(), updateSettings }, 'ai');
+    const mode = container.querySelector<HTMLSelectElement>('select[name="logAnalysisMode"]');
+    const form = container.querySelector('form');
+    if (!mode || !form) throw new Error('Expected log analysis mode control.');
+
+    expect(mode.value).toBe('basic');
+    expect(container.textContent).not.toContain('increases your API usage');
+
+    await act(async () => setSelectValue(mode, 'ai'));
+
+    expect(container.textContent).toContain('increases your API usage');
+    await act(async () => form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true })));
+
+    expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({ logAnalysisMode: 'ai' }));
+  });
+
   it('shows a neutral English actionable error and never reflects a rejected replacement key', async () => {
     const replacement = 'sentinel-rejected-ai-key';
     const { container } = await mount({
@@ -235,6 +253,13 @@ function settings() {
     privacyLevel: 'balanced' as const,
     retentionDays: 90
   };
+}
+
+function setSelectValue(select: HTMLSelectElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+  if (!setter) throw new Error('Expected the native select value setter.');
+  setter.call(select, value);
+  select.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
 function setInputValue(input: HTMLInputElement, value: string) {

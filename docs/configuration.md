@@ -33,6 +33,10 @@ OpenAI, Gemini, and Ollama are interchangeable AI providers. Provider requests r
 
 Provider failures do not expose a secret. If some signature analyses succeed, the report is saved with a visible partial-analysis warning. If all provider analyses fail, the failed run is visible in the web UI and the log cursor does not advance.
 
+Log analysis runs in one of two modes, selectable in Settings → AI provider. **Basic** (default) parses the log locally with no additional AI cost. **AI analysis** asks the configured provider to extract errors from the current log delta, which catches formats the local parser cannot read but increases AI API consumption: it adds one extraction request per log batch on top of the usual per-signature analysis. Existing installs keep Basic unless the operator explicitly opts in.
+
+Both modes share signature memory, ignore rules, and failure semantics: ignored or already known errors are never re-reported as new, and a failed extraction blocks cursor advance instead of producing a silent zero-error report.
+
 ChatGPT-account login is not an authentication method for this release. Use a provider API key or the configured Ollama endpoint.
 
 ## Telegram notifications

@@ -30,6 +30,27 @@ describe('SettingsService', () => {
     expect(JSON.stringify(saved)).not.toContain('sentinel');
   });
 
+  it('persists the log analysis mode and defaults legacy settings to basic', async () => {
+    const store = createStore();
+    const service = new SettingsService(store, createSecrets());
+
+    const saved = await service.update({
+      homeAssistant: { url: initial.haUrl, token: { operation: 'keep_current' } },
+      ai: { provider: 'gemini', key: { operation: 'keep_current' } },
+      notifications: { channel: 'none' },
+      schedules: initial.schedules,
+      privacyLevel: 'balanced',
+      retentionDays: 90,
+      logAnalysisMode: 'ai'
+    });
+
+    expect(store.commit).toHaveBeenCalledWith(expect.objectContaining({ logAnalysisMode: 'ai' }), []);
+    expect(saved).toMatchObject({ logAnalysisMode: 'ai' });
+
+    const legacy = await new SettingsService(createStore(), createSecrets()).get();
+    expect(legacy).toMatchObject({ logAnalysisMode: 'basic' });
+  });
+
   it('does not commit any related setting when a required configured secret cannot be kept', async () => {
     const store = createStore({ ...initial, secretRefs: { ...initial.secretRefs, aiKeyRef: 'unconfigured:ai' } });
     const service = new SettingsService(store, createSecrets());
