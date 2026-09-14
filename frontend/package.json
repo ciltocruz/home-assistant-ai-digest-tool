@@ -11,12 +11,12 @@
   "dependencies": {
     "@fontsource/atkinson-hyperlegible": "5.3.0",
     "@ha-digest/shared": "workspace:*",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.4"
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0"
   }
 }

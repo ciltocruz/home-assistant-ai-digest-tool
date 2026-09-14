@@ -18,13 +18,13 @@
     "debug:cursor": "node backend/dist/scripts/log-cursor.js"
   },
   "devDependencies": {
-    "@playwright/test": "^1.62.1",
-    "@types/node": "^22.20.1",
-    "@vitest/coverage-v8": "4.1.11",
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^22.20.2",
+    "@vitest/coverage-v8": "5.0.0",
     "jsdom": "29.1.1",
     "semantic-release": "25.0.9",
     "typescript": "^5.7.2",
-    "vite": "8.2.2",
-    "vitest": "^4.1.11"
+    "vite": "8.3.0",
+    "vitest": "^5.0.0"
   }
 }
