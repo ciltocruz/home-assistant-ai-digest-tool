@@ -42,6 +42,11 @@ export function createReportUrl(publicAppUrl: string | undefined): ((reportId: s
   return publicAppUrl ? (reportId) => `${publicAppUrl}/reports/${encodeURIComponent(reportId)}` : undefined;
 }
 
+export function resolveAppVersion(): string {
+  const configured = process.env.APP_VERSION?.trim();
+  return configured ? configured : 'dev';
+}
+
 type RuntimePreviewAppOptions = RuntimePreviewOptions & {
   services?: BackendApiServices;
 };
@@ -63,7 +68,7 @@ export function createRuntimePreviewApp(options: RuntimePreviewAppOptions): Fast
     reply.header('content-security-policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
   });
 
-  app.get('/health', async () => ({ status: 'ok' }));
+  app.get('/health', async () => ({ status: 'ok', version: resolveAppVersion() }));
   app.get('/ready', async (_request, reply) => {
     const index = await readExistingFile(join(frontendRoot, 'index.html'));
     if (!index) return reply.code(503).send({ status: 'not_ready', reason: 'frontend_index_unavailable' });

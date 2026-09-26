@@ -136,6 +136,8 @@ export function ExperienceShell({
               {t('shell.settings')}
             </a>
           </nav>
+
+          <AppVersionPill />
         </aside>
 
         <main className="app-content" data-app-state="operational" id="main-content">
@@ -143,6 +145,30 @@ export function ExperienceShell({
         </main>
       </div>
     </>
+  );
+}
+
+function AppVersionPill() {
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    fetch('/health')
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: unknown) => {
+        if (active && payload && typeof payload === 'object' && typeof (payload as { version?: unknown }).version === 'string' && (payload as { version: string }).version) {
+          setVersion((payload as { version: string }).version);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+  if (!version) return null;
+  return (
+    <div className="app-sidebar-footer">
+      <span className="app-version-pill">{version}</span>
+    </div>
   );
 }
 

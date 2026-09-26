@@ -337,6 +337,7 @@ type StoredSignature = {
   trend: SignaturePlan['signatures'][number]['trend'];
   occurrenceCount: number;
   safeExcerpt?: SafeTraceExcerpt;
+  sourceLines?: string[];
 };
 function safeSignatureAnalysis(value: unknown, apiKey?: string): SignatureAnalysis | null {
   const analysis = asRecord(value);
@@ -362,8 +363,14 @@ function safeSignatures(value: unknown, analyzed = new Set<string>()): StoredSig
     if (occurrenceCount < 1) return [];
     const firstOccurrence = asRecord(rawOccurrences[0]);
     const safeExcerpt = sanitizeTraceExcerpt(signature.safeExcerpt ?? firstOccurrence.safeExcerpt);
-    return [{ signature: signature.signature, component: signature.component, level: signature.level, ...(signature.problemKind === 'endpoint_resolution' ? { problemKind: signature.problemKind } : {}), classification: signature.classification, trend: signature.trend, occurrenceCount, ...(safeExcerpt ? { safeExcerpt } : {}) }];
+    const sourceLines = safeSourceLines(signature.sourceLines);
+    return [{ signature: signature.signature, component: signature.component, level: signature.level, ...(signature.problemKind === 'endpoint_resolution' ? { problemKind: signature.problemKind } : {}), classification: signature.classification, trend: signature.trend, occurrenceCount, ...(safeExcerpt ? { safeExcerpt } : {}), ...(sourceLines ? { sourceLines } : {}) }];
   });
+}
+function safeSourceLines(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const lines = value.filter((line): line is string => typeof line === 'string' && line.length > 0 && line.length <= 1024).slice(0, 5).map((line) => redactProviderError(line));
+  return lines.length > 0 ? lines : undefined;
 }
 function safeFindings(value: unknown, apiKey?: string): Array<{ signature: string; analysis: SignatureAnalysis }> {
   if (!Array.isArray(value)) return [];
@@ -416,7 +423,7 @@ function detailFor(row: V2ReportRow, apiKey?: string, ignoredSignatures = new Se
   return {
     id: row.id, summary: summaryFor(row, apiKey), rendered: { format: 'markdown', body: '' },
      presentation: { version: 2, mode: 'batch', status: row.status as 'quiet' | 'reported' | 'partial' | 'failed', warnings: safeWarnings(value.report?.warnings, apiKey), ...(integrationStatus ? { integrationStatus } : {}),
-        signatures: signatures.map((item) => ({ signature: item.signature, component: item.component, level: item.level, classification: item.classification, trend: item.trend, ...(item.problemKind ? { problemKind: item.problemKind } : {}), occurrences: item.occurrenceCount, ...(analyses.has(item.signature) ? { analysis: analyses.get(item.signature) } : {}), ...(item.safeExcerpt ? { safeExcerpt: item.safeExcerpt } : {}), ...(ignoredSignatures.has(item.signature) ? { ignoredForFuture: true } : {}), ...(safeNotes(value.notesBySignature)?.[item.signature] ? { notes: safeNotes(value.notesBySignature)![item.signature] } : {}) })) }
+        signatures: signatures.map((item) => ({ signature: item.signature, component: item.component, level: item.level, classification: item.classification, trend: item.trend, ...(item.problemKind ? { problemKind: item.problemKind } : {}), occurrences: item.occurrenceCount, ...(analyses.has(item.signature) ? { analysis: analyses.get(item.signature) } : {}), ...(item.safeExcerpt ? { safeExcerpt: item.safeExcerpt } : {}), ...(item.sourceLines?.length ? { sourceLines: item.sourceLines } : {}), ...(ignoredSignatures.has(item.signature) ? { ignoredForFuture: true } : {}), ...(safeNotes(value.notesBySignature)?.[item.signature] ? { notes: safeNotes(value.notesBySignature)![item.signature] } : {}) })) }
   };
 }
 function invalidSummary(row: V2ReportRow, warning = 'REPORT_PAYLOAD_INVALID'): DigestSummary {

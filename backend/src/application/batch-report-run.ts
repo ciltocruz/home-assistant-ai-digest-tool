@@ -270,10 +270,10 @@ export class BatchReportRun {
   private contextFor(signature: BatchSignature): BoundedSignatureContext {
     const occurrences: string[] = [];
     let bytes = 0;
-    for (const occurrence of signature.occurrences.slice(0, this.dependencies.maxContextOccurrences ?? 3)) {
+    for (const occurrence of signature.occurrences.slice(0, this.dependencies.maxContextOccurrences ?? 5)) {
       const value = redact(occurrence.message);
       const size = Buffer.byteLength(value);
-      if (bytes + size > (this.dependencies.maxContextBytes ?? 2_048)) break;
+      if (bytes + size > (this.dependencies.maxContextBytes ?? 4_096)) break;
       occurrences.push(value);
       bytes += size;
     }

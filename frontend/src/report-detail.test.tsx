@@ -504,6 +504,22 @@ describe('ReportDetail', () => {
     expect(html).not.toContain('<pre>');
   });
 
+  test('renders the original log lines for a problem without AI analysis', () => {
+    setLocale('en');
+    const html = renderToStaticMarkup(<ReportDetail report={{
+      id: 'source-lines-report', source: 'v2',
+      summary: { id: 'source-lines-report', window: { from: '2026-09-06T10:00:00.000Z', to: '2026-09-06T11:00:00.000Z' }, severityCounts: { critical: 0, warning: 1, info: 0 }, createdAt: '2026-09-06T11:00:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'partial' },
+      rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'partial', warnings: ['AI_ANALYSIS_UNAVAILABLE'], signatures: [{
+        signature: 'loader-signature', component: 'homeassistant.loader', level: 'WARNING', classification: 'latent', trend: 'unknown', occurrences: 1,
+        sourceLines: ['We found a custom integration spook which has not been tested by Home Assistant']
+      }] }
+    }} />);
+
+    expect(html).toContain('View original log lines');
+    expect(html).toContain('We found a custom integration spook which has not been tested by Home Assistant');
+  });
+
   test('shows the persisted log read range for a v2 report that has one', () => {
     const html = renderToStaticMarkup(<ReportDetail timeZone="Europe/Madrid" report={{
       id: 'v2-log-read-report', source: 'v2',
