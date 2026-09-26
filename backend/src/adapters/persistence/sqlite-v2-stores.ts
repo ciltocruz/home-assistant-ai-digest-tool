@@ -336,6 +336,7 @@ type StoredSignature = {
   classification: SignaturePlan['signatures'][number]['classification'];
   trend: SignaturePlan['signatures'][number]['trend'];
   occurrenceCount: number;
+  lastSeenAt?: string;
   safeExcerpt?: SafeTraceExcerpt;
   sourceLines?: string[];
 };
@@ -364,7 +365,8 @@ function safeSignatures(value: unknown, analyzed = new Set<string>()): StoredSig
     const firstOccurrence = asRecord(rawOccurrences[0]);
     const safeExcerpt = sanitizeTraceExcerpt(signature.safeExcerpt ?? firstOccurrence.safeExcerpt);
     const sourceLines = safeSourceLines(signature.sourceLines);
-    return [{ signature: signature.signature, component: signature.component, level: signature.level, ...(signature.problemKind === 'endpoint_resolution' ? { problemKind: signature.problemKind } : {}), classification: signature.classification, trend: signature.trend, occurrenceCount, ...(safeExcerpt ? { safeExcerpt } : {}), ...(sourceLines ? { sourceLines } : {}) }];
+    const lastSeenAt = latestOccurrenceAt(rawOccurrences) ?? safeIsoDate(signature.lastSeenAt);
+    return [{ signature: signature.signature, component: signature.component, level: signature.level, ...(signature.problemKind === 'endpoint_resolution' ? { problemKind: signature.problemKind } : {}), classification: signature.classification, trend: signature.trend, occurrenceCount, ...(lastSeenAt ? { lastSeenAt } : {}), ...(safeExcerpt ? { safeExcerpt } : {}), ...(sourceLines ? { sourceLines } : {}) }];
   });
 }
 function safeSourceLines(value: unknown): string[] | undefined {
@@ -423,7 +425,7 @@ function detailFor(row: V2ReportRow, apiKey?: string, ignoredSignatures = new Se
   return {
     id: row.id, summary: summaryFor(row, apiKey), rendered: { format: 'markdown', body: '' },
      presentation: { version: 2, mode: 'batch', status: row.status as 'quiet' | 'reported' | 'partial' | 'failed', warnings: safeWarnings(value.report?.warnings, apiKey), ...(integrationStatus ? { integrationStatus } : {}),
-        signatures: signatures.map((item) => ({ signature: item.signature, component: item.component, level: item.level, classification: item.classification, trend: item.trend, ...(item.problemKind ? { problemKind: item.problemKind } : {}), occurrences: item.occurrenceCount, ...(analyses.has(item.signature) ? { analysis: analyses.get(item.signature) } : {}), ...(item.safeExcerpt ? { safeExcerpt: item.safeExcerpt } : {}), ...(item.sourceLines?.length ? { sourceLines: item.sourceLines } : {}), ...(ignoredSignatures.has(item.signature) ? { ignoredForFuture: true } : {}), ...(safeNotes(value.notesBySignature)?.[item.signature] ? { notes: safeNotes(value.notesBySignature)![item.signature] } : {}) })) }
+        signatures: signatures.map((item) => ({ signature: item.signature, component: item.component, level: item.level, classification: item.classification, trend: item.trend, ...(item.problemKind ? { problemKind: item.problemKind } : {}), occurrences: item.occurrenceCount, ...(item.lastSeenAt ? { lastSeenAt: item.lastSeenAt } : {}), ...(analyses.has(item.signature) ? { analysis: analyses.get(item.signature) } : {}), ...(item.safeExcerpt ? { safeExcerpt: item.safeExcerpt } : {}), ...(item.sourceLines?.length ? { sourceLines: item.sourceLines } : {}), ...(ignoredSignatures.has(item.signature) ? { ignoredForFuture: true } : {}), ...(safeNotes(value.notesBySignature)?.[item.signature] ? { notes: safeNotes(value.notesBySignature)![item.signature] } : {}) })) }
   };
 }
 function invalidSummary(row: V2ReportRow, warning = 'REPORT_PAYLOAD_INVALID'): DigestSummary {
@@ -467,6 +469,14 @@ function isLevel(value: unknown): value is SignaturePlan['signatures'][number]['
 function isClassification(value: unknown): value is SignaturePlan['signatures'][number]['classification'] { return value === 'new' || value === 'recurring' || value === 'reactivated' || value === 'latent'; }
 function isTrend(value: unknown): value is SignaturePlan['signatures'][number]['trend'] { return value === 'new' || value === 'increasing' || value === 'flat' || value === 'decreasing' || value === 'unknown'; }
 function safePositiveCount(value: unknown): number | undefined { return typeof value === 'number' && Number.isInteger(value) && value >= 1 ? value : undefined; }
+function latestOccurrenceAt(occurrences: unknown[]): string | null {
+  let latest: string | null = null;
+  for (const occurrence of occurrences) {
+    const at = safeIsoDate(asRecord(occurrence).at);
+    if (at && (!latest || at > latest)) latest = at;
+  }
+  return latest;
+}
 
 function deliveryDiagnosticValue(value: unknown): DeliveryDiagnostic | undefined {
   const parsed = DeliveryDiagnosticSchema.safeParse(value);

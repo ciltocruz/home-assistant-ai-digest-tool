@@ -319,6 +319,32 @@ describe('shared DTOs', () => {
     })).toThrow();
   });
 
+  it('accepts an optional last-seen timestamp on v2 signature presentations', () => {
+    const base = {
+      version: 2,
+      mode: 'batch',
+      status: 'reported',
+      warnings: [],
+      signatures: [{
+        signature: 'sig-last-seen',
+        component: 'mqtt',
+        level: 'ERROR',
+        classification: 'new',
+        trend: 'new',
+        occurrences: 2
+      }]
+    };
+    expect(ReportPresentationV1Schema.parse(base)).toMatchObject({ mode: 'batch' });
+    expect(ReportPresentationV1Schema.parse({
+      ...base,
+      signatures: [{ ...base.signatures[0], lastSeenAt: '2026-08-14T12:30:00.000Z' }]
+    })).toMatchObject({ signatures: [{ lastSeenAt: '2026-08-14T12:30:00.000Z' }] });
+    expect(() => ReportPresentationV1Schema.parse({
+      ...base,
+      signatures: [{ ...base.signatures[0], lastSeenAt: 'not-a-date' }]
+    })).toThrow();
+  });
+
   it('classifies every current Home Assistant config-entry state without inventing status', () => {
     const status = projectIntegrationStatus({
       available: true,

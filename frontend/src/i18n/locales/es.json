@@ -345,6 +345,7 @@
       "trend": "Tendencia: {trend}",
       "occurrencesSingular": "1 aparición",
       "occurrencesPlural": "{count} apariciones",
+      "lastSeen": "Última aparición: {time}",
       "aiExplanation": "Explicación de la IA",
       "aiRecommendation": "Recomendación de la IA",
       "connectionExplanation": "Explicación de la conexión",

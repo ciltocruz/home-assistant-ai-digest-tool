@@ -629,6 +629,31 @@ describe('SQLiteV2Stores', () => {
     DigestDetailSchema.parse(detail);
   });
 
+  it('persists the latest occurrence timestamp alongside counts without raw log entries', async () => {
+    const db = await openTestDatabase();
+    runMigrations(db);
+    const stores = new SQLiteV2Stores(db, 10, () => '2026-08-05T20:00:00.000Z');
+    const entries = parseHomeAssistantLog([
+      '2026-08-05 19:00:00 ERROR [homeassistant.components.demo] Failure 42',
+      '2026-08-05 19:05:00 ERROR [homeassistant.components.demo] Failure 42'
+    ]);
+    const plan = await stores.classifyAndStage(entries, '2026-08-05T20:00:00.000Z');
+    const reportId = await stores.commit({
+      request: { runId: 'last-seen-run', slotId: 'last-seen-slot' },
+      cursor: { dev: 1, ino: 2, size: 100, offset: 100 },
+      signatures: plan,
+      logRead: null,
+      report: { status: 'reported', findings: [], warnings: [] }
+    });
+
+    const row = db.prepare('select payload_json from v2_reports where id = ?').get(reportId) as { payload_json: string };
+    expect(row.payload_json).not.toContain('occurrences":[{');
+    expect(row.payload_json).toContain('lastSeenAt');
+    const detail = DigestDetailSchema.parse(await stores.getReport(reportId));
+    const expectedLastSeen = entries.map((entry) => new Date(entry.at).toISOString()).sort().at(-1);
+    expect(detail.presentation).toMatchObject({ signatures: [{ occurrences: 2, lastSeenAt: expectedLastSeen }] });
+  });
+
   it('does not resend when job completion fails after a sent report and the job is retried', async () => {
     const db = await openTestDatabase();
     runMigrations(db);

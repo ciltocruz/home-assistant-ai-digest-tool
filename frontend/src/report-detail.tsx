@@ -52,7 +52,7 @@ export function ReportDetail({ report, embedded = false, onDelete, onIgnoreProbl
         <span className="severity-chip severity-chip--info">{t('report.severity.info')} {report.summary.severityCounts.info}</span>
       </div>
     </section>
-    {presentation?.mode === 'batch' ? <BatchPresentation heading={SectionHeading} presentation={presentation} onIgnoreProblem={onIgnoreProblem} /> : presentation?.mode === 'structured' ? <>
+    {presentation?.mode === 'batch' ? <BatchPresentation heading={SectionHeading} presentation={presentation} onIgnoreProblem={onIgnoreProblem} timeZone={timeZone} /> : presentation?.mode === 'structured' ? <>
       <section className="report-section" aria-labelledby="report-overview-title">
         <SectionHeading id="report-overview-title">{t('report.presentation.overview.title')}</SectionHeading>
         <p className="report-item-title">{presentation.overview.title}</p>
@@ -153,17 +153,17 @@ function PresentationSection({ heading: Heading, id, title, items }: { heading: 
   </section>;
 }
 
-function BatchPresentation({ heading: Heading, presentation, onIgnoreProblem }: { heading: 'h2' | 'h3'; presentation: Extract<NonNullable<DigestDetail['presentation']>, { mode: 'batch' }>; onIgnoreProblem?: (signature: string) => Promise<void> }) {
+function BatchPresentation({ heading: Heading, presentation, onIgnoreProblem, timeZone }: { heading: 'h2' | 'h3'; presentation: Extract<NonNullable<DigestDetail['presentation']>, { mode: 'batch' }>; onIgnoreProblem?: (signature: string) => Promise<void>; timeZone?: string }) {
   if (presentation.status === 'failed') return <section className="report-section" role="alert"><Heading>{t('report.batch.failure')}</Heading><p>{failureLabel(presentation.failure)}</p></section>;
   const integrationStatus = projectIntegrationStatus(presentation.integrationStatus);
   return <>
     {presentation.warnings.length > 0 ? <section className="report-section report-analysis-note"><Heading>{t('report.batch.warnings')}</Heading><ul>{presentation.warnings.map((warning) => <li key={warning}>{warningLabel(warning)}{warning === 'AI_ANALYSIS_PARTIAL' ? null : <code translate="no" dir="ltr">{warning}</code>}</li>)}</ul></section> : null}
     <IntegrationSummary heading={Heading} status={integrationStatus} />
-    <section className="report-section report-problems"><Heading>{t('report.batch.problems')}</Heading><p className="report-section-intro">{t('report.batch.groupingExplanation')}</p><ul className="report-presentation-list">{presentation.signatures.map((item) => <ProblemCard key={item.signature} item={item} onIgnoreProblem={onIgnoreProblem} />)}</ul></section>
+    <section className="report-section report-problems"><Heading>{t('report.batch.problems')}</Heading><p className="report-section-intro">{t('report.batch.groupingExplanation')}</p><ul className="report-presentation-list">{presentation.signatures.map((item) => <ProblemCard key={item.signature} item={item} onIgnoreProblem={onIgnoreProblem} timeZone={timeZone} />)}</ul></section>
   </>;
 }
 
-function ProblemCard({ item, onIgnoreProblem }: { item: Extract<NonNullable<DigestDetail['presentation']>, { mode: 'batch' }>['signatures'][number]; onIgnoreProblem?: (signature: string) => Promise<void> }) {
+function ProblemCard({ item, onIgnoreProblem, timeZone }: { item: Extract<NonNullable<DigestDetail['presentation']>, { mode: 'batch' }>['signatures'][number]; onIgnoreProblem?: (signature: string) => Promise<void>; timeZone?: string }) {
   const [ignoreState, setIgnoreState] = useState<'idle' | 'confirming' | 'pending' | 'ignored' | 'error'>(item.ignoredForFuture ? 'ignored' : 'idle');
   async function ignore() {
     if (!onIgnoreProblem || ignoreState === 'pending') return;
@@ -173,7 +173,7 @@ function ProblemCard({ item, onIgnoreProblem }: { item: Extract<NonNullable<Dige
   }
   return <li className="report-presentation-item">
       <div className="report-problem-heading"><p className="report-item-title"><span>{item.problemKind ? t(`report.batch.problemKinds.${item.problemKind}.title`) : t(`report.batch.classification.${item.classification}`)}</span> <code className="report-component-badge" translate="no" dir="ltr">{item.component}</code></p><span className={`severity-badge severity-badge--${severityForLevel(item.level)}`}>{severityLabel(severityForLevel(item.level))}</span></div>
-      <p className="report-problem-stats"><span>{item.occurrences === 1 ? t('report.batch.occurrencesSingular') : t('report.batch.occurrencesPlural').replace('{count}', String(item.occurrences))}</span></p>
+      <p className="report-problem-stats"><span>{item.occurrences === 1 ? t('report.batch.occurrencesSingular') : t('report.batch.occurrencesPlural').replace('{count}', String(item.occurrences))}</span>{item.lastSeenAt ? <span>{t('report.batch.lastSeen').replace('{time}', formatDateTime(item.lastSeenAt, timeZone))}</span> : null}</p>
       {item.problemKind ? <div className="report-ai-content"><div><p className="report-field-label">{t('report.batch.connectionExplanation')}</p><p>{t(`report.batch.problemKinds.${item.problemKind}.copy`)}</p></div><div><p className="report-field-label">{t('report.batch.nextStep')}</p><p>{t(`report.batch.problemKinds.${item.problemKind}.action`)}</p></div></div> : item.analysis ? <div className="report-ai-content"><div><p className="report-field-label">{t('report.batch.aiExplanation')}</p><p>{item.analysis.summary}</p></div><div><p className="report-field-label">{t('report.batch.aiRecommendation')}</p><p>{item.analysis.recommendation}</p></div></div> : <><p className="muted-copy">{t('report.batch.analysisUnavailable')}</p>{item.safeExcerpt ? <details className="report-trace-detail"><summary>{t('report.batch.trace.action')}</summary><p>{t('report.batch.trace.warning')}</p><pre><code dir="ltr" translate="no">{item.safeExcerpt.lines.join('\n')}</code></pre></details> : <p className="muted-copy">{t('report.batch.trace.unavailable')}</p>}</>}
       {item.safeExcerpt && item.analysis ? <details className="report-trace-detail report-trace-detail--secondary"><summary>{t('report.batch.trace.actionSource')}</summary><pre><code dir="ltr" translate="no">{item.safeExcerpt.lines.join('\n')}{item.safeExcerpt.truncated ? '\n… (truncated)' : ''}</code></pre></details> : null}
       {item.sourceLines && item.sourceLines.length > 0 ? <details className="report-trace-detail report-trace-detail--secondary"><summary>{t('report.batch.trace.sourceLines')}</summary><p className="muted-copy">{t('report.batch.trace.warning')}</p><pre><code dir="ltr" translate="no">{item.sourceLines.join('\n')}</code></pre></details> : null}

@@ -197,6 +197,16 @@ describe('ReportDetail', () => {
     expect(html).toContain('Inspect its recent traces before retrying it.');
   });
 
+  test('renders the last-seen timestamp next to the occurrence count when present', () => {
+    setLocale('en');
+    const html = renderToStaticMarkup(<ReportDetail report={{
+      id: 'v2-report-last-seen', summary: { id: 'v2-report-last-seen', window: { from: '2026-08-01T09:00:00.000Z', to: '2026-08-01T10:00:00.000Z' }, severityCounts: { critical: 0, warning: 1, info: 0 }, createdAt: '2026-08-01T10:00:00.000Z', deliveryStatus: 'skipped', runStatus: 'reported', warningCodes: [], signatureCounts: { new: 1, recurring: 0, reactivated: 0, latent: 0 } }, rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'reported', warnings: [], signatures: [{ signature: 'sig-seen', component: 'mqtt', level: 'ERROR', classification: 'new', trend: 'new', occurrences: 2, lastSeenAt: '2026-08-01T09:30:00.000Z' }] }
+    }} />);
+    expect(html).toContain('2 occurrences');
+    expect(html).toContain('Last seen:');
+  });
+
   test('explains the real partial-report shape as three separate outcomes in plain Spanish', () => {
     setLocale('es');
     const signatures = Array.from({ length: 38 }, (_, index) => ({
