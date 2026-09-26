@@ -43,8 +43,9 @@ services:
         max-file: "3"
     volumes:
       - ha-digest-data:/data
-      # Mount exactly one HA log file; never mount the HA config directory or Docker socket.
-      - "${HA_LOG_FILE:-./.preview/ha-logs/home-assistant.log}:/ha-logs/home-assistant.log:ro"
+      # Mount the HA logs DIRECTORY read-only: never a single log file, the HA config directory, or the Docker socket.
+      # Home Assistant recreates home-assistant.log (new inode); a single-file bind would keep serving the deleted file forever.
+      - "${HA_LOGS_DIR:-./.preview/ha-logs}:/ha-logs:ro"
     restart: unless-stopped
 
 volumes:

@@ -52,7 +52,7 @@ Home Assistant AI Digest Tool is a **Docker-first web application** that watches
 
 ```bash
 cp .env.example .env
-# Set HA_LOG_FILE to the host path of home-assistant.log.
+# Set HA_LOGS_DIR to the host directory containing home-assistant.log.
 docker compose up --build --detach
 ```
 

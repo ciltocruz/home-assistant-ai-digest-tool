@@ -1,8 +1,9 @@
 import { statSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import { runMigrations } from '../adapters/persistence/migrations.js';
+import { resolveHaLogFilePath } from '../adapters/ha/log-reader.js';
 
 const MAX_ALIGN_READ_BYTES = 256 * 1024 * 1024;
 
@@ -20,7 +21,10 @@ function databasePath(flag: string | undefined): string {
 }
 
 function logFilePath(): string {
-  return process.env.HA_LOG_FILE ?? '/ha-logs/home-assistant.log';
+  const configured = process.env.HA_LOG_FILE
+    ?? (process.env.HA_LOGS_DIR ? join(process.env.HA_LOGS_DIR, 'home-assistant.log') : undefined)
+    ?? '/ha-logs/home-assistant.log';
+  return resolveHaLogFilePath(configured);
 }
 
 function openDatabase(dbPath: string) {

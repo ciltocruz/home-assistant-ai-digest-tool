@@ -1,4 +1,5 @@
-import { basename } from 'node:path';
+import { statSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { open } from 'node:fs/promises';
 import type { HomeAssistantLogReader } from './home-assistant.js';
 import type { ExecutionContext } from '../../domain/execution.js';
@@ -9,13 +10,29 @@ export type HomeAssistantLogTailReaderOptions = { path: string; maxBytes?: numbe
 const DEFAULT_MAX_BYTES = 64 * 1024;
 const DEFAULT_MAX_LINES = 200;
 
+const LOG_FILE_NAME = 'home-assistant.log';
+
+/**
+ * Accepts either the log file itself (legacy `HA_LOG_FILE`) or the directory
+ * that contains it (`HA_LOGS_DIR`). A directory must be resolved on every read:
+ * Home Assistant recreates the file, so only a fresh lookup sees the new inode.
+ */
+export function resolveHaLogFilePath(configuredPath: string): string {
+  try {
+    if (statSync(configuredPath).isDirectory()) return join(configuredPath, LOG_FILE_NAME);
+  } catch {
+    // Unstatable path: return it unchanged so the read fails as HA_LOG_UNAVAILABLE.
+  }
+  return configuredPath;
+}
+
 export class HomeAssistantLogTailReader implements HomeAssistantLogReader {
   constructor(private readonly options: HomeAssistantLogTailReaderOptions) {}
 
   async readLogLines(context?: ExecutionContext): Promise<string[]> {
     context?.checkpoint();
     try {
-      const handle = await open(this.options.path, 'r');
+      const handle = await open(resolveHaLogFilePath(this.options.path), 'r');
       try {
         const info = await handle.stat();
         context?.checkpoint();
@@ -40,10 +57,11 @@ export class HomeAssistantLogDeltaReader {
   constructor(private readonly options: HomeAssistantLogDeltaReaderOptions) {}
 
   async read(cursor: LogCursor | null, context?: ExecutionContext): Promise<LogDelta> {
-    if (basename(this.options.path) !== 'home-assistant.log') throw new Error('HA_LOG_ROTATION_UNSUPPORTED');
+    const path = resolveHaLogFilePath(this.options.path);
+    if (basename(path) !== LOG_FILE_NAME) throw new Error('HA_LOG_ROTATION_UNSUPPORTED');
     context?.checkpoint();
     try {
-      const handle = await open(this.options.path, 'r');
+      const handle = await open(path, 'r');
       try {
         const info = await handle.stat();
         const identity = { dev: Number(info.dev), ino: Number(info.ino), size: info.size };

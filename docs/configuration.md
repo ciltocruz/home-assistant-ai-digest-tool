@@ -23,7 +23,7 @@ After onboarding, Settings lets the administrator update the Home Assistant conn
 
 Create a dedicated Long-Lived Access Token from the Home Assistant user profile's **Security** section. Store it through onboarding or Settings, never in `.env`. The application uses it for the supported read-only Home Assistant API and integration-status snapshot.
 
-Set `HA_LOG_FILE` in `.env` to the host path of exactly one `home-assistant.log` file. Compose mounts it at `/ha-logs/home-assistant.log:ro`. The application reads complete log lines from this current file only, tracks a byte cursor, and safely restarts from zero after truncation or replacement. It does not read rotated logs, `/config`, a Home Assistant database, or arbitrary host paths.
+Set `HA_LOGS_DIR` in `.env` to the host directory that contains `home-assistant.log`. Compose mounts that directory at `/ha-logs:ro`, and the application opens `home-assistant.log` inside it on every run. Mount the directory, never a single file: Home Assistant recreates the log file (new inode) on restart, and a single-file bind would keep serving the deleted stale file forever while new entries go unread. The application reads complete log lines from this current file only, tracks a byte cursor, and safely restarts from zero after truncation or replacement. It does not read rotated logs, `/config`, a Home Assistant database, or arbitrary host paths. A legacy `HA_LOG_FILE` pointing at one existing `home-assistant.log` file is still accepted.
 
 The silent baseline uses entries older than the configured lookback, defaulting to 10 days. It can use only the history in the mounted current file and does not imply that older history was available. Recent entries are grouped into stable signatures and classified as New, Recurring, Reactivated, or Latent.
 
@@ -69,7 +69,7 @@ cp .env.example .env
 
 | Setting | Purpose |
 |---|---|
-| `HA_LOG_FILE` | Host path of the single Home Assistant log file mounted read-only. |
+| `HA_LOGS_DIR` | Host directory containing `home-assistant.log`, mounted read-only at `/ha-logs`. (`HA_LOG_FILE` with one existing file path is still accepted as a legacy fallback.) |
 | `APP_PORT` / `APP_BIND_ADDRESS` | Local application binding; keep the default loopback address. |
 | `RUNTIME_MODE`, `TRUST_PROXY`, `SECURE_COOKIES` | Local or documented controlled reverse-proxy cookie mode. |
 | `PUBLIC_APP_URL` | Optional public HTTP(S) origin for Telegram report links. Paths, credentials, query strings, fragments, and non-HTTP(S) schemes are rejected. A root trailing slash is normalized. |
@@ -87,7 +87,7 @@ The privacy setting controls the detail sent to AI. Redaction and bounded contex
 
 | Symptom | Safe next step |
 |---|---|
-| `/ready` returns 503 | Check that `HA_LOG_FILE` exists, is readable on the Docker host, and contains usable log data. |
+| `/ready` returns 503 | Check that `HA_LOGS_DIR` contains a readable `home-assistant.log` on the Docker host with usable log data. |
 | A report is failed | Read the safe UI error, verify Home Assistant/provider configuration, then retry once if offered. |
 | A report has a partial warning | Review the successful findings and correct the affected provider configuration before the next run. |
 | No Telegram message arrives | Confirm there were noteworthy findings and use the Settings test-send. Quiet and tool-failure runs intentionally do not notify. |
