@@ -22,8 +22,8 @@ describe('Docker Compose runtime modes', () => {
     expect(compose).toContain('pids_limit: 100');
     expect(compose).toContain('/tmp:rw,noexec,nosuid,size=64m');
     expect(compose).toContain('/data');
-    expect(compose).toContain('HA_LOG_FILE');
-    expect(compose).toContain(':/ha-logs/home-assistant.log:ro');
+    expect(compose).toContain('HA_LOGS_DIR');
+    expect(compose).toContain(':/ha-logs:ro');
     expect(compose).toContain('host.docker.internal:host-gateway');
     expect(compose).toContain('HA_MAX_STATES');
     expect(compose).toContain('PUBLIC_APP_URL: "${PUBLIC_APP_URL:-}"');
@@ -39,7 +39,7 @@ describe('Docker Compose runtime modes', () => {
     expect(environment).toContain('RUNTIME_MODE=local');
     expect(environment).toContain('TRUST_PROXY=false');
     expect(environment).toContain('SECURE_COOKIES=false');
-    expect(environment).toContain('HA_LOG_FILE=');
+    expect(environment).toContain('HA_LOGS_DIR=');
     expect(environment).toContain('HA_MAX_LOG_LINES=200');
     expect(environment).toContain('PUBLIC_APP_URL=');
     expect(environment).toContain('Do not include a path');

@@ -21,7 +21,7 @@ Roll back by redeploying the previous release (previous source archive and previ
 Local mode is the default. It publishes only on loopback and deliberately uses non-Secure cookies for direct localhost HTTP.
 
 1. Copy `.env.example` to `.env`. Do not commit this file; it contains runtime binding and log-mount configuration only.
-2. Set `HA_LOG_FILE` to one existing `home-assistant.log` file. The container mounts that file read-only; do not mount the full Home Assistant configuration directory. Optional `HA_MAX_STATES`, `HA_MAX_LOG_LINES`, and `HA_MAX_RESPONSE_BYTES` constrain collection and analysis.
+2. Set `HA_LOGS_DIR` to the host directory containing `home-assistant.log`. The container mounts that directory read-only; do not mount a single log file (a file bind goes stale when Home Assistant recreates the log) and do not mount the full Home Assistant configuration directory. Optional `HA_MAX_STATES`, `HA_MAX_LOG_LINES`, and `HA_MAX_RESPONSE_BYTES` constrain collection and analysis.
 3. Start the service:
 
    ```bash
