@@ -1,4 +1,4 @@
-import { mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rename, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -58,8 +58,11 @@ describe('HomeAssistantLogDeltaReader', () => {
     expect(first.recovery).toBeUndefined();
 
     // Home Assistant recreates the file (new inode): the same reader must recover.
-    await rm(file);
-    await writeFile(file, 'recreated\n');
+    // Write the replacement aside and rename over the target so both inodes
+    // exist at once: rm+write can reuse the freed inode number and flakes.
+    const replacement = join(directory, 'ha-replacement.log');
+    await writeFile(replacement, 'recreated\n');
+    await rename(replacement, file);
     const second = await reader.read(first.cursor);
     expect(second).toMatchObject({ lines: ['recreated'], recovery: 'replaced' });
   });
