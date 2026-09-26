@@ -171,6 +171,7 @@ function safeBatchSignatures(value: unknown): Array<{
   trend: 'new' | 'increasing' | 'flat' | 'decreasing' | 'unknown';
   problemKind?: 'endpoint_resolution';
   occurrences: number;
+  lastSeenAt?: string;
   analysis?: { summary: string; recommendation: string };
   safeExcerpt?: { lines: string[]; truncated: boolean; redacted: true };
   ignoredForFuture?: boolean;
@@ -187,7 +188,8 @@ function safeBatchSignatures(value: unknown): Array<{
       : undefined;
      const notes = safeNotes(signature.notes);
      const safeExcerpt = safeTraceExcerpt(signature.safeExcerpt);
-    return [{ signature: signature.signature, component: signature.component, level: signature.level, classification: signature.classification, trend: signature.trend, occurrences: signature.occurrences, ...(signature.problemKind === 'endpoint_resolution' ? { problemKind: signature.problemKind } : {}), ...(safeAnalysis ? { analysis: safeAnalysis } : {}), ...(safeExcerpt ? { safeExcerpt } : {}), ...(signature.ignoredForFuture === true ? { ignoredForFuture: true } : {}), ...(notes ? { notes } : {}) }];
+     const lastSeenAt = safeIsoDate(signature.lastSeenAt);
+    return [{ signature: signature.signature, component: signature.component, level: signature.level, classification: signature.classification, trend: signature.trend, occurrences: signature.occurrences, ...(signature.problemKind === 'endpoint_resolution' ? { problemKind: signature.problemKind } : {}), ...(lastSeenAt ? { lastSeenAt } : {}), ...(safeAnalysis ? { analysis: safeAnalysis } : {}), ...(safeExcerpt ? { safeExcerpt } : {}), ...(signature.ignoredForFuture === true ? { ignoredForFuture: true } : {}), ...(notes ? { notes } : {}) }];
   });
 }
 

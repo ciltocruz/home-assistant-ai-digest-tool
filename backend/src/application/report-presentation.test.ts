@@ -261,8 +261,32 @@ One condition needs review.
     expect(JSON.stringify(report)).not.toContain('private response body');
   });
 
-  it('normalizes malformed summary counts before returning a schema-valid detail', () => {
+  it('preserves a valid last-seen timestamp on batch signatures and drops invalid ones', () => {
     const report = redactReportDetail({
+      id: 'v2-last-seen',
+      source: 'v2',
+      summary,
+      rendered: { format: 'markdown', body: '' },
+      presentation: {
+        version: 2,
+        mode: 'batch',
+        status: 'reported',
+        warnings: [],
+        signatures: [
+          { signature: 'sig-seen', component: 'mqtt', level: 'ERROR', classification: 'new', trend: 'new', occurrences: 2, lastSeenAt: '2026-08-05T19:05:00.000Z' },
+          { signature: 'sig-unseen', component: 'mqtt', level: 'ERROR', classification: 'new', trend: 'new', occurrences: 1, lastSeenAt: 'not-a-date' }
+        ]
+      }
+    });
+
+    expect(DigestDetailSchema.parse(report).presentation).toMatchObject({
+      signatures: [{ signature: 'sig-seen', lastSeenAt: '2026-08-05T19:05:00.000Z' }, { signature: 'sig-unseen' }]
+    });
+    if (report.presentation?.mode !== 'batch') throw new Error('Expected a batch presentation');
+    expect(report.presentation.signatures[1]).not.toHaveProperty('lastSeenAt');
+  });
+
+  it('normalizes malformed summary counts before returning a schema-valid detail', () => {    const report = redactReportDetail({
       id: 'malformed-counts',
       summary: { ...summary, severityCounts: { critical: -1, warning: 1.5, info: 'unknown' as never }, signatureCounts: { new: -1, recurring: 1.5, reactivated: 'unknown' as never, latent: 2 } },
       rendered: { format: 'markdown', body: '' },
