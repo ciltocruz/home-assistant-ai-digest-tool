@@ -31,6 +31,7 @@ readonly account_password="docker-runtime-verification-password"
 readonly ha_token="docker-runtime-verification-ha-token"
 
 temp_dir=''
+ha_logs_dir=''
 ha_log_file=''
 cleanup_complete=false
 compose_started=false
@@ -151,7 +152,8 @@ create_run_workspace() {
   chmod 0700 "$run_root"
   temp_dir="$(mktemp -d "$run_root/run.XXXXXX")"
   project_name="ha-digest-verify-$(basename "$temp_dir" | tr '[:upper:].' '[:lower:]_')"
-  ha_log_file="$temp_dir/home-assistant.log"
+  ha_logs_dir="$temp_dir/ha-logs"
+  ha_log_file="$ha_logs_dir/home-assistant.log"
 }
 
 remaining_deadline_seconds() {
@@ -244,7 +246,7 @@ compose_environment() {
   env \
     APP_BIND_ADDRESS=127.0.0.1 \
     APP_PORT="$app_port" \
-    HA_LOG_FILE="$ha_log_file" \
+    HA_LOGS_DIR="$ha_logs_dir" \
     docker compose --project-name "$project_name" -f "$repository_root/compose.yaml" -f "$repository_root/compose.verify.yaml" "$@"
 }
 
@@ -254,7 +256,7 @@ compose_environment_with_deadline() {
   env \
     APP_BIND_ADDRESS=127.0.0.1 \
     APP_PORT="$app_port" \
-    HA_LOG_FILE="$ha_log_file" \
+    HA_LOGS_DIR="$ha_logs_dir" \
     timeout --foreground "${remaining}s" docker compose --project-name "$project_name" -f "$repository_root/compose.yaml" -f "$repository_root/compose.verify.yaml" "$@"
 }
 
@@ -262,7 +264,7 @@ compose_proxy() {
   env \
     APP_BIND_ADDRESS=127.0.0.1 \
     APP_PORT="$app_port" \
-    HA_LOG_FILE="$ha_log_file" \
+    HA_LOGS_DIR="$ha_logs_dir" \
     docker compose --project-name "$project_name" -f "$repository_root/compose.yaml" -f "$repository_root/compose.reverse-proxy.yaml" "$@"
 }
 
@@ -272,7 +274,7 @@ compose_proxy_with_deadline() {
   env \
     APP_BIND_ADDRESS=127.0.0.1 \
     APP_PORT="$app_port" \
-    HA_LOG_FILE="$ha_log_file" \
+    HA_LOGS_DIR="$ha_logs_dir" \
     timeout --foreground "${remaining}s" docker compose --project-name "$project_name" -f "$repository_root/compose.yaml" -f "$repository_root/compose.reverse-proxy.yaml" "$@"
 }
 
@@ -282,7 +284,7 @@ remove_project_resources() {
   env \
     APP_BIND_ADDRESS=127.0.0.1 \
     APP_PORT="$project_port" \
-    HA_LOG_FILE="$ha_log_file" \
+    HA_LOGS_DIR="$ha_logs_dir" \
     docker compose --project-name "$project" -f "$repository_root/compose.yaml" -f "$repository_root/compose.verify.yaml" down --volumes --remove-orphans
 }
 
@@ -679,6 +681,7 @@ main() {
 
   deadline_started_at="$SECONDS"
   require_dependencies
+  mkdir -p -- "$ha_logs_dir"
   # The fixture line must fall inside the analysis lookback window, so its
   # timestamp is refreshed to the current time on every verification run.
   sed -E "s/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}/$(date -u '+%Y-%m-%d %H:%M:%S')/" \
