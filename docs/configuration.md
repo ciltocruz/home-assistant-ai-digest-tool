@@ -37,13 +37,21 @@ The silent baseline uses entries older than the configured lookback, defaulting 
 
 ## OpenAI, Gemini, and Ollama
 
-OpenAI, Gemini, and Ollama are interchangeable AI providers. Provider requests receive redacted, bounded context per signature. Every detected signature can be analyzed, so AI costs scale with incident volume and report frequency; select an appropriate provider plan, privacy level, and schedule before enabling production credentials.
+OpenAI, Gemini, and Ollama are interchangeable AI providers. Every eligible nonignored detected signature is saved in the report, with duplicates grouped and no fixed report-count cap. Explanatory analysis attempts are limited to the ten most frequent signatures per run. Context remains bounded to five occurrences and 4,096 bytes per signature by default. Successful, failed and not-attempted explanations are shown separately; not-attempted problems are not queued for automatic analysis later. Existing reports without explicit analysis status remain readable.
 
-Provider failures do not expose a secret. If some signature analyses succeed, the report is saved with a visible partial-analysis warning. If all provider analyses fail, the failed run is visible in the web UI and the log cursor does not advance.
+Provider failures do not expose a secret. If some or all explanatory analyses fail, all detected candidates remain in a saved partial report with safe evidence and visible warnings. The cursor advances atomically with the saved report. When none of the attempted explanations succeed, Telegram is skipped. Reaching the ten-explanation budget also marks the report partial without hiding the remaining problems or calling them failures.
 
 Log analysis runs in one of two modes, selectable in Settings → AI provider. **Basic** (default) parses the log locally with no additional AI cost. **AI analysis** asks the configured provider to extract errors from the current log delta, which catches formats the local parser cannot read but increases AI API consumption: it adds one extraction request per log batch on top of the usual per-signature analysis. Existing installs keep Basic unless the operator explicitly opts in.
 
+AI extraction processes **every chunk sequentially**, not just the first eight. Chunks target at most 150 lines and 24 KiB; a single oversized line is preserved in its own chunk and may exceed that byte target. Line numbering remains relative to the complete delta. Every successful chunk is classified through the same signature/ignore pipeline. Per-call timeouts and the existing invalid-output retry remain, but there is no total extraction-call or run-duration cap. Choose the provider and schedule with that cost in mind; long jobs delay later jobs.
+
+If **any extraction chunk fails**, the entire report job fails before classification or report/cursor commit. Correct the provider problem and retry the job: the unchanged cursor causes the complete delta to be read again, so previously successful extraction chunks incur calls again. No resumable chunk queue or partial-extraction report is created. This replaces the older partial-extraction behavior that advanced past failed chunks.
+
+Both modes currently hold the input delta, grouped occurrences and report payload in memory, and the UI renders the whole supplied problem list. Server/storage/browser usage grows with report size. Removing arbitrary count caps is not a tested guarantee of million-item memory use or UI responsiveness. Chunk boundaries may still split multiline evidence; extraction output validation, warning opt-in, ignore rules, baseline and per-signature evidence limits are unchanged.
+
 Both modes share signature memory, ignore rules, and failure semantics: ignored or already known errors are never re-reported as new, and a failed extraction blocks cursor advance instead of producing a silent zero-error report.
+
+Los informes futuros excluyen automáticamente el aviso estándar completo de `homeassistant.loader` con nivel original `WARNING` sobre integraciones personalizadas no probadas, independientemente del nombre de la integración. La exclusión se aplica antes del análisis de IA y también antes de la extracción asistida, conservando la memoria de firmas y el avance del cursor. Las demás advertencias y los errores se mantienen; los informes existentes no se modifican.
 
 ChatGPT-account login is not an authentication method for this release. Use a provider API key or the configured Ollama endpoint.
 

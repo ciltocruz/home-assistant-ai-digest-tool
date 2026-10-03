@@ -108,6 +108,7 @@ function ReportOutcomes({ report, source, heading: Heading }: { report: DigestDe
   const status = batch?.status ?? report.summary.runStatus;
   const total = batch?.signatures.length ?? 0;
   const analyzed = batch?.signatures.filter((item) => item.analysis).length ?? 0;
+  const notAttempted = batch?.signatures.filter((item) => !item.analysis && item.analysisStatus === 'not_attempted').length ?? 0;
   const result = source === 'legacy'
     ? t('report.outcomes.legacy')
     : status === 'failed'
@@ -121,7 +122,9 @@ function ReportOutcomes({ report, source, heading: Heading }: { report: DigestDe
       ? t('report.outcomes.analysisFailed')
       : status === 'quiet'
         ? t('report.outcomes.analysisQuiet')
-        : status === 'partial'
+        : notAttempted > 0
+          ? t('report.outcomes.analysisBounded').replace('{analyzed}', String(analyzed)).replace('{total}', String(total)).replace('{failed}', String(Math.max(0, total - analyzed - notAttempted))).replace('{notAttempted}', String(notAttempted))
+          : status === 'partial'
           ? t('report.outcomes.analysisPartial').replace('{analyzed}', String(analyzed)).replace('{total}', String(total)).replace('{missing}', String(Math.max(0, total - analyzed)))
           : t('report.outcomes.analysisComplete').replace('{analyzed}', String(analyzed)).replace('{total}', String(total));
   const delivery = t(`report.outcomes.notification${capitalize(report.summary.deliveryStatus)}`);
@@ -174,7 +177,8 @@ function ProblemCard({ item, onIgnoreProblem, timeZone }: { item: Extract<NonNul
   return <li className="report-presentation-item">
       <div className="report-problem-heading"><p className="report-item-title"><span>{item.problemKind ? t(`report.batch.problemKinds.${item.problemKind}.title`) : t(`report.batch.classification.${item.classification}`)}</span> <code className="report-component-badge" translate="no" dir="ltr">{item.component}</code></p><span className={`severity-badge severity-badge--${severityForLevel(item.level)}`}>{severityLabel(severityForLevel(item.level))}</span></div>
       <p className="report-problem-stats"><span>{item.occurrences === 1 ? t('report.batch.occurrencesSingular') : t('report.batch.occurrencesPlural').replace('{count}', String(item.occurrences))}</span>{item.lastSeenAt ? <span>{t('report.batch.lastSeen').replace('{time}', formatDateTime(item.lastSeenAt, timeZone))}</span> : null}</p>
-      {item.problemKind ? <div className="report-ai-content"><div><p className="report-field-label">{t('report.batch.connectionExplanation')}</p><p>{t(`report.batch.problemKinds.${item.problemKind}.copy`)}</p></div><div><p className="report-field-label">{t('report.batch.nextStep')}</p><p>{t(`report.batch.problemKinds.${item.problemKind}.action`)}</p></div></div> : item.analysis ? <div className="report-ai-content"><div><p className="report-field-label">{t('report.batch.aiExplanation')}</p><p>{item.analysis.summary}</p></div><div><p className="report-field-label">{t('report.batch.aiRecommendation')}</p><p>{item.analysis.recommendation}</p></div></div> : <><p className="muted-copy">{t('report.batch.analysisUnavailable')}</p>{item.safeExcerpt ? <details className="report-trace-detail"><summary>{t('report.batch.trace.action')}</summary><p>{t('report.batch.trace.warning')}</p><pre><code dir="ltr" translate="no">{item.safeExcerpt.lines.join('\n')}</code></pre></details> : <p className="muted-copy">{t('report.batch.trace.unavailable')}</p>}</>}
+      {item.problemKind && !item.analysis ? <p className="muted-copy">{t(item.analysisStatus === 'not_attempted' ? 'report.batch.analysisNotAttempted' : 'report.batch.analysisUnavailable')}</p> : null}
+      {item.problemKind ? <div className="report-ai-content"><div><p className="report-field-label">{t('report.batch.connectionExplanation')}</p><p>{t(`report.batch.problemKinds.${item.problemKind}.copy`)}</p></div><div><p className="report-field-label">{t('report.batch.nextStep')}</p><p>{t(`report.batch.problemKinds.${item.problemKind}.action`)}</p></div></div> : item.analysis ? <div className="report-ai-content"><div><p className="report-field-label">{t('report.batch.aiExplanation')}</p><p>{item.analysis.summary}</p></div><div><p className="report-field-label">{t('report.batch.aiRecommendation')}</p><p>{item.analysis.recommendation}</p></div></div> : <><p className="muted-copy">{t(item.analysisStatus === 'not_attempted' ? 'report.batch.analysisNotAttempted' : 'report.batch.analysisUnavailable')}</p>{item.safeExcerpt ? <details className="report-trace-detail"><summary>{t('report.batch.trace.action')}</summary><p>{t('report.batch.trace.warning')}</p><pre><code dir="ltr" translate="no">{item.safeExcerpt.lines.join('\n')}</code></pre></details> : <p className="muted-copy">{t('report.batch.trace.unavailable')}</p>}</>}
       {item.safeExcerpt && item.analysis ? <details className="report-trace-detail report-trace-detail--secondary"><summary>{t('report.batch.trace.actionSource')}</summary><pre><code dir="ltr" translate="no">{item.safeExcerpt.lines.join('\n')}{item.safeExcerpt.truncated ? '\n… (truncated)' : ''}</code></pre></details> : null}
       {item.sourceLines && item.sourceLines.length > 0 ? <details className="report-trace-detail report-trace-detail--secondary"><summary>{t('report.batch.trace.sourceLines')}</summary><p className="muted-copy">{t('report.batch.trace.warning')}</p><pre><code dir="ltr" translate="no">{item.sourceLines.join('\n')}</code></pre></details> : null}
       <details className="report-technical-detail"><summary>{t('report.batch.component')}: <span translate="no">{item.component}</span></summary><dl><div><dt>{t('report.batch.technicalId')}</dt><dd><code translate="no" dir="ltr">{item.signature}</code></dd></div></dl></details>
@@ -247,6 +251,7 @@ function warningLabel(code: string): string {
     return t('report.batch.warningProvider').replace('{code}', code);
   }
   if (code === 'AI_ANALYSIS_PARTIAL') return t('report.batch.warningPartial');
+  if (code === 'AI_ANALYSIS_LIMIT') return t('report.batch.warningLimit');
   if (code === 'AI_ANALYSIS_UNAVAILABLE') return t('report.batch.warningUnavailable');
   if (code === 'REPORT_CORRUPT' || code === 'REPORT_PAYLOAD_INVALID' || code === 'REPORT_MISSING') return t('report.batch.warningCorrupt');
   return code;

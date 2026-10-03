@@ -1,6 +1,6 @@
 import type { BatchSignature, ExtractedLogError, LogDelta, LogExtractionBatch, LogReadRange, ParsedLogEntry, SignaturePlan } from '../domain/batch.js';
-import { buildParsedEntry, chunkLogLinesForExtraction, parseHomeAssistantLog } from '../domain/batch.js';
-import type { DeliveryDiagnostic, DeliveryDiagnosticErrorCode, DeliveryResult, DeliveryStatus, IgnoreRuleDto, NoteDto } from '@ha-digest/shared';
+import { buildParsedEntry, chunkLogLinesForExtraction, isStockCustomIntegrationWarning, parseHomeAssistantLog } from '../domain/batch.js';
+import type { DeliveryDiagnostic, DeliveryDiagnosticErrorCode, DeliveryResult, DeliveryStatus, IgnoreRuleDto, NoteDto, SignatureAnalysisStatus } from '@ha-digest/shared';
 import type { IntegrationStatusFailureReason, IntegrationStatusSnapshot } from './integration-status.js';
 import { redactProviderError } from '../domain/safe-error.js';
 
@@ -24,7 +24,7 @@ export interface BatchPersistence {
   fail(run: FailedRun): Promise<void>;
 }
 export interface HAStatusPort { snapshot(): Promise<IntegrationStatusSnapshot>; }
-export interface BatchNotifier { notify(summary: { findings: Array<{ signature: string; analysis: SignatureAnalysis }>; reportUrl?: string; language: 'en' | 'es' }): Promise<DeliveryStatus | DeliveryResult>; }
+export interface BatchNotifier { notify(summary: { findings: Array<{ signature: string; analysis: SignatureAnalysis }>; detectedProblems?: number; reportUrl?: string; language: 'en' | 'es' }): Promise<DeliveryStatus | DeliveryResult>; }
 export type LogExtractionRequest = { batch: LogExtractionBatch; includeWarnings: boolean; language: 'en' | 'es' };
 export type LogExtractionResult = { entries: ExtractedLogError[]; rejectedCount: number };
 export interface LogErrorExtractor {
@@ -50,7 +50,7 @@ export type CommitPlan = {
   cursor: LogDelta['cursor'];
   signatures: SignaturePlan;
   logRead: LogReadRange | null;
-  reportedSignatures?: SignaturePlan['signatures'];
+  reportedSignatures?: Array<BatchSignature & { analysisStatus?: SignatureAnalysisStatus }>;
   notesBySignature?: Record<string, NoteDto[]>;
   report: {
     status: 'quiet' | 'reported' | 'partial';
@@ -102,10 +102,12 @@ export class BatchReportRun {
     const now = this.dependencies.now?.() ?? new Date().toISOString();
     const logMode = await this.dependencies.logMode?.() ?? 'basic';
     let entries: ParsedLogEntry[];
+    let isSourceStockWarning: (entry: ParsedLogEntry) => boolean = isStockCustomIntegrationWarning;
     let extractionWarnings: string[] = [];
     if (logMode === 'ai' && this.dependencies.extractor) {
       const extracted = await this.extractWithAi(request, delta.lines, now);
       entries = extracted.entries;
+      isSourceStockWarning = (entry) => extracted.sourceStockWarnings.has(entry);
       extractionWarnings = extracted.warnings;
     } else {
       entries = parseHomeAssistantLog(delta.lines, { includeWarnings: request.includeWarnings });
@@ -116,9 +118,13 @@ export class BatchReportRun {
       this.dependencies.ignores?.listActive(now) ?? [],
       this.dependencies.notes?.listWindow({ from: '1970-01-01T00:00:00.000Z', to: now }) ?? []
     ]);
-    const filteredSignatures = plan.signatures.filter((signature) => !isIgnored(signature, rules));
+    const filteredSignatures = plan.signatures.filter((signature) =>
+      !(signature.occurrences.length > 0 && signature.occurrences.every(isSourceStockWarning))
+      && !isIgnored(signature, rules));
     const sortedSignatures = [...filteredSignatures].sort((a, b) => b.occurrences.length - a.occurrences.length);
-    const reportedSignatures = sortedSignatures.slice(0, 10);
+    const reportedSignatures: NonNullable<CommitPlan['reportedSignatures']> = sortedSignatures.map((signature) => ({ ...signature, analysisStatus: 'not_attempted' }));
+    const analysisSignatures = reportedSignatures.slice(0, 10);
+    const analysisWarnings = reportedSignatures.length > analysisSignatures.length ? ['AI_ANALYSIS_LIMIT'] : [];
     this.report({ event: 'report_collection_completed', lineCount: delta.lines.length, signatureCount: reportedSignatures.length, durationMs: this.duration(collectionStarted) });
     const notesBySignature = notesForSignatures(reportedSignatures, notes);
     const integrationStatus = await this.readIntegrationStatus();
@@ -132,11 +138,13 @@ export class BatchReportRun {
     const analysisStarted = this.time();
     const analyses: Array<{ signature: BatchSignature; analysis: SignatureAnalysis | null; error?: unknown }> = [];
     let firstError: string | undefined;
-    for (const signature of reportedSignatures) {
+    for (const signature of analysisSignatures) {
       try {
         const analysis = await this.dependencies.provider.analyze(this.contextFor(signature), new AbortController().signal, language);
+        signature.analysisStatus = 'completed';
         analyses.push({ signature, analysis, error: undefined });
       } catch (error) {
+        signature.analysisStatus = 'failed';
         if (!firstError) {
           const rawMessage = error instanceof Error ? error.message : String(error);
           firstError = redactProviderError(rawMessage);
@@ -153,7 +161,7 @@ export class BatchReportRun {
       ...(firstError ? { error: firstError } : {})
     });
     if (findings.length === 0) {
-      const warnings = [...extractionWarnings, ...(firstError ? ['AI_ANALYSIS_UNAVAILABLE', firstError] : ['AI_ANALYSIS_UNAVAILABLE'])];
+      const warnings = [...extractionWarnings, ...analysisWarnings, ...(firstError ? ['AI_ANALYSIS_UNAVAILABLE', firstError] : ['AI_ANALYSIS_UNAVAILABLE'])];
       const reportId = await this.commit({
         request,
         cursor: delta.cursor,
@@ -173,7 +181,7 @@ export class BatchReportRun {
       this.report({ event: 'report_commit_completed', reportId, status: 'partial', signatureCount: reportedSignatures.length });
       return { status: 'partial', warnings, reportId };
     }
-    const warnings = [...extractionWarnings, ...(findings.length === analyses.length
+    const warnings = [...extractionWarnings, ...analysisWarnings, ...(findings.length === analyses.length
       ? []
       : (firstError ? ['AI_ANALYSIS_PARTIAL', firstError] : ['AI_ANALYSIS_PARTIAL']))];
     const status = warnings.length ? 'partial' : 'reported';
@@ -200,7 +208,7 @@ export class BatchReportRun {
         deliveryStarted = this.time();
         this.report({ event: 'telegram_delivery_started' });
         const reportUrl = this.dependencies.reportUrl?.(reportId);
-        const result = await this.dependencies.notifier.notify({ findings, ...(reportUrl ? { reportUrl } : {}), language });
+        const result = await this.dependencies.notifier.notify({ findings, detectedProblems: reportedSignatures.length, ...(reportUrl ? { reportUrl } : {}), language });
         deliveryStatus = typeof result === 'string' ? result : result.status;
         deliveryDiagnostic = typeof result === 'string' ? undefined : deliveryDiagnosticFor(result, this.dependencies.now?.() ?? new Date().toISOString());
         this.report({ event: 'telegram_delivery_completed', outcome: deliveryStatus, ...(deliveryDiagnostic ? { errorCode: deliveryDiagnostic.errorCode } : {}), durationMs: this.duration(deliveryStarted) });
@@ -220,20 +228,32 @@ export class BatchReportRun {
     return { status, warnings, reportId };
   }
 
-  private async extractWithAi(request: RunRequest, lines: string[], now: string): Promise<{ entries: ParsedLogEntry[]; warnings: string[] }> {
+  private async extractWithAi(request: RunRequest, lines: string[], now: string): Promise<{ entries: ParsedLogEntry[]; warnings: string[]; sourceStockWarnings: Set<ParsedLogEntry> }> {
     const extractor = this.dependencies.extractor;
-    if (!extractor) return { entries: parseHomeAssistantLog(lines, { includeWarnings: request.includeWarnings }), warnings: [] };
+    if (!extractor) {
+      const entries = parseHomeAssistantLog(lines, { includeWarnings: request.includeWarnings });
+      return { entries, warnings: [], sourceStockWarnings: new Set(entries.filter(isStockCustomIntegrationWarning)) };
+    }
     const language = await this.dependencies.language?.() ?? 'en';
-    const { batches, truncated } = chunkLogLinesForExtraction(lines);
-    const warnings: string[] = truncated ? ['LOG_EXTRACTION_TRUNCATED'] : [];
     const entries: ParsedLogEntry[] = [];
+    // Classification retains occurrence identities; AI-created entries never enter this set.
+    const sourceStockWarnings = new Set<ParsedLogEntry>();
+    const extractionLines = lines.map((line) => {
+      const [entry] = parseHomeAssistantLog([line], { includeWarnings: true });
+      if (!entry || !isStockCustomIntegrationWarning(entry)) return line;
+      if (request.includeWarnings) {
+        entries.push(entry);
+        sourceStockWarnings.add(entry);
+      }
+      // Preserve source line numbers without letting AI reinterpret the stock notice.
+      return '';
+    });
+    const { batches } = chunkLogLinesForExtraction(extractionLines);
     let rejectedCount = 0;
-    let succeededBatches = 0;
-    let failedBatches = 0;
     for (const batch of batches) {
+      if (batch.lines.every((line) => line.trim() === '')) continue;
       try {
         const result = await extractor.extract({ batch, includeWarnings: request.includeWarnings ?? false, language }, new AbortController().signal);
-        succeededBatches += 1;
         rejectedCount += result.rejectedCount;
         for (const item of result.entries) {
           if (item.level.toUpperCase() === 'WARNING' && !request.includeWarnings) continue;
@@ -242,16 +262,15 @@ export class BatchReportRun {
           else rejectedCount += 1;
         }
       } catch {
-        failedBatches += 1;
+        // Retain the cursor so retry rereads every line, including this failed chunk.
+        this.report({ event: 'report_extraction_failed' });
+        throw new Error(`AI_EXTRACTION_UNAVAILABLE: batch starting at line ${batch.startLine} failed; cursor unchanged`);
       }
     }
+    // Restore chronology after merging locally retained notices with AI entries.
+    if (sourceStockWarnings.size > 0) entries.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
     this.report({ event: 'report_extraction_completed', mode: 'ai', batchCount: batches.length, extractedCount: entries.length, rejectedCount });
-    if (entries.length === 0 && lines.length > 0 && succeededBatches === 0) {
-      this.report({ event: 'report_extraction_failed' });
-      throw new Error(`AI_EXTRACTION_UNAVAILABLE: ${failedBatches} batch(es) failed`);
-    }
-    if (failedBatches > 0) warnings.push('LOG_EXTRACTION_PARTIAL');
-    return { entries, warnings };
+    return { entries, warnings: [], sourceStockWarnings };
   }
 
   private async readIntegrationStatus(): Promise<IntegrationStatusSnapshot> {
