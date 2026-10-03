@@ -24,7 +24,7 @@ Home Assistant AI Digest Tool is a **Docker-first web application** that watches
 - 📖 **Reads one narrow, read-only log mount** — never log rotations, never a full HA configuration directory.
 - 🧠 **Remembers error signatures forever** — identifies new, recurring, reactivated, and latent errors instead of spamming you with duplicates.
 - 🤫 **Learns a silent baseline** on first run, bounded by the history in the current log file.
-- 🤖 **Analyzes with OpenAI, Gemini, or Ollama** through interchangeable adapters; context is redacted and bounded per signature.
+- 🤖 **Analyzes with OpenAI, Gemini, or Ollama** through interchangeable adapters; every detected nonignored problem is saved, with AI explanations attempted for the ten most frequent signatures per report. Context is redacted and bounded per signature.
 - 📅 **Runs on your schedule** (daily, weekly, or custom) with timezone-aware, DST-safe slots — no default interval.
 - 🔔 **Sends a compact Telegram summary** only when findings are noteworthy. Quiet runs stay quiet.
 - 📊 **Tracks integration status** via the Home Assistant WebSocket API; an unavailable API shows as unavailable without discarding the report.
@@ -37,7 +37,7 @@ Home Assistant AI Digest Tool is a **Docker-first web application** that watches
 - ❌ **Not for Home Assistant OS, Supervised, or add-ons** — the supported deployment is a standalone container beside **Home Assistant Core running in Docker**.
 - ❌ **Never mounts `/config`, the HA database, the Docker socket, or broad host paths.**
 - ❌ **No full-log analysis** — only the current log file from a persisted byte cursor; rotation files are never read.
-- ❌ **No silent failures** — a complete AI failure records in the web UI without advancing the log cursor, and tool failures never send a misleading Telegram message.
+- ❌ **No silent extraction loss** — any failed AI extraction chunk fails the report job without advancing the log cursor. Failed explanations still leave detected problems in a saved partial report; a run with no successful explanations does not send Telegram.
 - ❌ **No bootstrap credentials** — the web UI is protected by an admin account created during onboarding; there are no tokens in Compose or `.env`.
 
 ## 🚀 Quick start
@@ -79,6 +79,8 @@ Secrets are encrypted in `/data`, returned only as masks, and must never be comm
 
 Reports rank findings into **attention items** (before observations and positive status), backed by recommendations and evidence.
 
+Batch reports include every eligible distinct detected error or opted-in warning, grouping duplicate occurrences without a fixed problem-count cap. Problems beyond the ten-explanation budget are explicitly **not attempted**, not failed and not queued for later analysis. In AI-assisted log mode, every chunk is extracted sequentially; total AI usage and run duration grow with log volume. Large reports still require proportional server/browser memory; no million-item performance guarantee is implied.
+
 ![Report detail](docs/readme-screenshots/02-report-detail.png)
 
 The dashboard shows the current state, the latest report, and history at a glance:
@@ -87,7 +89,7 @@ The dashboard shows the current state, the latest report, and history at a glanc
 
 ## Report job lifecycle
 
-Every launch — scheduled, manual, or the first report after onboarding — is a **durable report job** that survives restarts: it is queued, runs (collecting log data and analyzing signatures), and finishes as completed or failed. A failed job keeps its error and offers a retry; a complete AI failure records in the web UI without advancing the log cursor. Reports are retained locally (newest 10 by default) while error signatures stay permanent.
+Every launch — scheduled, manual, or the first report after onboarding — is a **durable report job** that survives restarts: it is queued, runs (collecting log data and analyzing signatures), and finishes as completed or failed. A failed job keeps its error and offers a retry. An extraction failure leaves the cursor unchanged; retry rereads the delta and repeats extraction calls, including previously successful chunks. Explanation failures instead produce a completed partial report with all detected candidates and advance the cursor atomically with that report. Reports are retained locally (newest 10 by default) while error signatures stay permanent.
 
 ## 🧰 Configuration
 

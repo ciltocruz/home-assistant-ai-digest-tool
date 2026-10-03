@@ -23,7 +23,7 @@ type TelegramNotifierOptions = {
   timeoutMs?: number;
 };
 
-export type TelegramSummary = { findings: Array<{ signature: string; analysis: { summary: string; recommendation: string } }>; reportUrl?: string; language?: 'en' | 'es' };
+export type TelegramSummary = { findings: Array<{ signature: string; analysis: { summary: string; recommendation: string } }>; detectedProblems?: number; reportUrl?: string; language?: 'en' | 'es' };
 export type TelegramManualSummary = { critical: number; warnings: number; detectedProblems: number; reportUrl?: string; language: 'en' | 'es' };
 
 type MarkdownNotifierOptions = {
@@ -59,6 +59,12 @@ export class TelegramNotifier implements Notifier {
     const spanish = summary.language === 'es';
     const link = summary.reportUrl ? `\n[${spanish ? 'Abrir informe' : 'Open report'}](${escapeTelegramUrl(summary.reportUrl)})` : '';
     const count = summary.findings.length;
+    if (summary.detectedProblems !== undefined) {
+      const detected = summary.detectedProblems;
+      return this.postMessage(target, spanish
+        ? `*Resumen de Home Assistant*\n${detected} problema${detected === 1 ? '' : 's'} detectado${detected === 1 ? '' : 's'}; ${count} explicado${count === 1 ? '' : 's'} por la IA\\. ${first}${link}`
+        : `*Home Assistant digest*\n${detected} detected problem${detected === 1 ? '' : 's'}; ${count} explained by AI\\. ${first}${link}`, true);
+    }
     return this.postMessage(target, spanish
       ? `*Resumen de Home Assistant*\n${count} incidencia${count === 1 ? '' : 's'} destacada${count === 1 ? '' : 's'}\\. ${first}${link}`
       : `*Home Assistant digest*\n${count} noteworthy finding${count === 1 ? '' : 's'}\\. ${first}${link}`, true);

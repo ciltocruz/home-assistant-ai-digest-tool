@@ -404,11 +404,15 @@ const LegacyMarkdownReportPresentationV1Schema = z.object({
   legacyMarkdown: z.string()
 }).strict();
 
+export const SignatureAnalysisStatusSchema = z.enum(['completed', 'failed', 'not_attempted']);
+export type SignatureAnalysisStatus = z.infer<typeof SignatureAnalysisStatusSchema>;
+
 export const V2SignaturePresentationSchema = z.object({
   signature: z.string().min(1), component: z.string().min(1), level: z.enum(['ERROR', 'CRITICAL', 'WARNING']),
   classification: z.enum(['new', 'recurring', 'reactivated', 'latent']), trend: z.enum(['new', 'increasing', 'flat', 'decreasing', 'unknown']),
   problemKind: z.literal('endpoint_resolution').optional(),
   occurrences: z.number().int().min(1), lastSeenAt: IsoDateTimeSchema.optional(), analysis: z.object({ summary: z.string().min(1), recommendation: z.string().min(1) }).strict().optional(),
+  analysisStatus: SignatureAnalysisStatusSchema.optional(),
   safeExcerpt: z.object({ lines: z.array(z.string().max(512)).max(12), truncated: z.boolean(), redacted: z.literal(true) }).strict().optional(),
   sourceLines: z.array(z.string().max(1024)).max(5).optional(),
   ignoredForFuture: z.boolean().optional(),
@@ -685,4 +689,3 @@ export const StaleEntitiesResponseSchema = z.object({
   entities: z.array(EntityIssueDtoSchema)
 }).strict();
 export type StaleEntitiesResponse = z.infer<typeof StaleEntitiesResponseSchema>;
-

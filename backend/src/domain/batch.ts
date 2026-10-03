@@ -31,16 +31,13 @@ export type LogExtractionBatch = {
 };
 export type LogExtractionChunks = {
   batches: LogExtractionBatch[];
-  truncated: boolean;
 };
 export type LogExtractionChunkLimits = {
   maxLinesPerBatch?: number;
   maxBytesPerBatch?: number;
-  maxBatches?: number;
 };
 export const DEFAULT_EXTRACTION_MAX_LINES_PER_BATCH = 150;
 export const DEFAULT_EXTRACTION_MAX_BYTES_PER_BATCH = 24 * 1024;
-export const DEFAULT_EXTRACTION_MAX_BATCHES = 8;
 export type KnownSignature = {
   signature: string;
   firstSeenAt: string;
@@ -75,6 +72,13 @@ const HA_LOG_LINE = /^(?<at>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z
 const TIMESTAMPED_LOG_LINE = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\s+/;
 const DEFAULT_LOOKBACK_DAYS = 10;
 const DEFAULT_REACTIVATION_DAYS = 7;
+const STOCK_CUSTOM_INTEGRATION_WARNING = /^We found a custom integration \S+ which has not been tested by Home Assistant\. This component might cause stability problems, be sure to disable it if you experience issues with Home Assistant$/;
+
+export function isStockCustomIntegrationWarning(entry: Pick<ParsedLogEntry, 'component' | 'level' | 'message'>): boolean {
+  return entry.component === 'homeassistant.loader'
+    && entry.level === 'WARNING'
+    && STOCK_CUSTOM_INTEGRATION_WARNING.test(entry.message);
+}
 
 export function parseHomeAssistantLog(lines: string[], options: { includeWarnings?: boolean } = {}): ParsedLogEntry[] {
   const entries: ParsedLogEntry[] = [];
@@ -159,7 +163,6 @@ export function classifySignatures(entries: ParsedLogEntry[], known: KnownSignat
 export function chunkLogLinesForExtraction(lines: string[], limits: LogExtractionChunkLimits = {}): LogExtractionChunks {
   const maxLines = limits.maxLinesPerBatch ?? DEFAULT_EXTRACTION_MAX_LINES_PER_BATCH;
   const maxBytes = limits.maxBytesPerBatch ?? DEFAULT_EXTRACTION_MAX_BYTES_PER_BATCH;
-  const maxBatches = limits.maxBatches ?? DEFAULT_EXTRACTION_MAX_BATCHES;
   const batches: LogExtractionBatch[] = [];
   let current: string[] = [];
   let currentBytes = 0;
@@ -178,8 +181,7 @@ export function chunkLogLinesForExtraction(lines: string[], limits: LogExtractio
     currentBytes += size;
   }
   flush();
-  const truncated = batches.length > maxBatches;
-  return { batches: truncated ? batches.slice(0, maxBatches) : batches, truncated };
+  return { batches };
 }
 
 export function buildParsedEntry(input: ExtractedLogError, fallbackAt: string): ParsedLogEntry | null {

@@ -10,6 +10,16 @@ const digest: RenderedDigest = {
 const TELEGRAM_BOT_TOKEN_SENTINEL = 'telegram-bot-token-sentinel';
 
 describe('notifier adapters', () => {
+  it.each(['en', 'es'] as const)('counts all detected problems separately from successful AI explanations in %s', async (language) => {
+    const requests: HttpRequest[] = [];
+    const notifier = new TelegramNotifier({ httpClient: async (request) => {
+      requests.push(request);
+      return { status: 200, json: async () => ({ ok: true }) };
+    } });
+    await notifier.sendSummary({ detectedProblems: 50, language, findings: [{ signature: 'first', analysis: { summary: 'Short summary', recommendation: 'Fix' } }] }, { channel: 'telegram', label: 'Telegram', config: { botToken: TELEGRAM_BOT_TOKEN_SENTINEL, chatId: 'chat' } });
+    expect((requests[0]?.body as { text: string }).text).toContain(language === 'en' ? '50 detected problems; 1 explained by AI' : '50 problemas detectados; 1 explicado por la IA');
+    expect((requests[0]?.body as { text: string }).text).toContain('Short summary');
+  });
   afterEach(() => {
     vi.useRealTimers();
   });

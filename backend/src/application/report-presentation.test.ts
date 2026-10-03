@@ -11,6 +11,19 @@ const summary = {
 };
 
 describe('projectReportPresentation', () => {
+  it('preserves analysis states for every candidate without assigning states to older reports', () => {
+    const signatures = Array.from({ length: 12 }, (_, index) => ({
+      signature: `problem-${index}`, component: `ha.problem${index}`, level: 'ERROR' as const, classification: 'new' as const, trend: 'new' as const, occurrences: 1,
+      ...(index === 0 ? { analysisStatus: 'failed' as const } : index === 11 ? { analysisStatus: 'not_attempted' as const } : {})
+    }));
+    const detail = DigestDetailSchema.parse(redactReportDetail({
+      id: summary.id, summary, rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'partial', warnings: ['AI_ANALYSIS_LIMIT'], signatures }
+    }));
+    if (detail.presentation?.mode !== 'batch') throw new Error('expected batch');
+    expect(detail.presentation.signatures).toEqual(signatures);
+    expect(detail.presentation.signatures[1]?.analysisStatus).toBeUndefined();
+  });
   it('projects complete canonical report content into truthful, stable sections', () => {
     const presentation = projectReportPresentation({
       id: summary.id,

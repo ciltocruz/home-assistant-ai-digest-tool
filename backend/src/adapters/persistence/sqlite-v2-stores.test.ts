@@ -7,10 +7,75 @@ import { SQLiteV2Stores } from './sqlite-v2-stores.js';
 import { SQLiteDigestJobStore } from './sqlite-digest-job-store.js';
 import { BatchReportRun } from '../../application/batch-report-run.js';
 import { DigestWorker } from '../../application/digest-worker.js';
+import { redactReportDetail } from '../../application/report-presentation.js';
 
 process.emitWarning = (() => undefined) as typeof process.emitWarning;
 
 describe('SQLiteV2Stores', () => {
+  it('round trips all 50 report candidates, analysis states and counts through delivery updates and redaction', async () => {
+    const db = await openTestDatabase();
+    try {
+      runMigrations(db);
+      const now = () => '2026-08-01T12:00:00.000Z';
+      const stores = new SQLiteV2Stores(db, 10, now);
+      const lines = Array.from({ length: 50 }, (_, index) => `2026-08-01 10:00:00 ${index === 49 ? 'WARNING' : 'ERROR'} [ha.problem${index}] distinct failure token=private-fixture`);
+      const cursor = { dev: 1, ino: 2, size: 5000, offset: 5000 };
+      const run = new BatchReportRun({
+        log: { read: async () => ({ lines, cursor }) }, signatures: stores, persistence: stores, now,
+        provider: { analyze: async (context) => {
+          if (context.component === 'ha.problem0') throw new Error('provider down');
+          return { summary: 'explanation', recommendation: 'fix' };
+        } }
+      });
+      const outcome = await run.run({ runId: 'all-50', slotId: 'all-50', includeWarnings: true });
+      expect(outcome.status).toBe('partial');
+      if (outcome.status === 'failed') throw new Error('unexpected failure');
+      await stores.updateDeliveryStatus(outcome.reportId, 'skipped');
+      const detail = DigestDetailSchema.parse(redactReportDetail((await stores.getReport(outcome.reportId))!));
+      expect(detail.summary.severityCounts).toEqual({ critical: 0, warning: 50, info: 0 });
+      expect(detail.summary.signatureCounts?.new).toBe(50);
+      if (detail.presentation?.mode !== 'batch') throw new Error('expected batch');
+      expect(detail.presentation.signatures).toHaveLength(50);
+      expect(detail.presentation.signatures[0]).toMatchObject({ analysisStatus: 'failed' });
+      expect(detail.presentation.signatures[1]).toMatchObject({ analysisStatus: 'completed', analysis: { summary: 'explanation' } });
+      expect(detail.presentation.signatures.at(-1)).toMatchObject({ component: 'ha.problem49', level: 'WARNING', analysisStatus: 'not_attempted' });
+      expect(detail.presentation.signatures.filter((item) => item.analysis)).toHaveLength(9);
+      expect(JSON.stringify(detail)).not.toContain('private-fixture');
+      expect(await stores.readCursor()).toEqual(cursor);
+      expect(db.prepare('select count(*) as count from v2_signatures').get()).toEqual({ count: 50 });
+    } finally { db.close(); }
+  });
+
+  it('keeps the persisted cursor unchanged after failed extraction and retries the entire delta', async () => {
+    const db = await openTestDatabase();
+    try {
+      runMigrations(db);
+      const now = () => '2026-08-01T12:00:00.000Z';
+      const stores = new SQLiteV2Stores(db, 10, now);
+      const entries = parseHomeAssistantLog(['2026-08-01 10:00:00 ERROR [ha.initial] initial']);
+      const initialCursor = { dev: 1, ino: 2, size: 100, offset: 100 };
+      await stores.commit({ request: { runId: 'initial', slotId: 'initial' }, cursor: initialCursor, signatures: await stores.classifyAndStage(entries, now()), logRead: null, report: { status: 'reported', findings: [], warnings: [] } });
+      let fail = true;
+      const starts: number[] = [];
+      const nextCursor = { ...initialCursor, size: 1000, offset: 1000 };
+      const run = new BatchReportRun({
+        log: { read: async () => ({ lines: Array.from({ length: 151 }, () => 'line'), cursor: nextCursor }) }, signatures: stores, persistence: stores, now,
+        provider: { analyze: async () => ({ summary: 'explanation', recommendation: 'fix' }) }, logMode: async () => 'ai',
+        extractor: { extract: async ({ batch }) => {
+          starts.push(batch.startLine);
+          if (fail && batch.startLine === 151) throw new Error('provider down');
+          return { entries: [{ timestamp: '2026-08-01 11:00:00', level: 'ERROR', component: `ha.chunk${batch.startLine}`, message: 'failure' }], rejectedCount: 0 };
+        } }
+      });
+      await expect(run.run({ runId: 'retry', slotId: 'retry' })).rejects.toThrow('AI_EXTRACTION_UNAVAILABLE');
+      expect(await stores.readCursor()).toEqual(initialCursor);
+      expect(db.prepare('select count(*) as count from v2_reports').get()).toEqual({ count: 1 });
+      fail = false;
+      await run.run({ runId: 'retry', slotId: 'retry' });
+      expect(starts).toEqual([1, 151, 1, 151]);
+      expect(await stores.readCursor()).toEqual(nextCursor);
+    } finally { db.close(); }
+  });
   it('keeps existing onboarding configuration and encrypted secret references while starting v2 history empty', async () => {
     const db = await openTestDatabase();
     runMigrations(db);
