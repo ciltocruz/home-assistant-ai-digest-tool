@@ -20,6 +20,12 @@ import {
 } from './dtos.js';
 
 describe('shared DTOs', () => {
+  it('accepts all report candidates with explicit analysis states and status-less older reports', () => {
+    const signature = { signature: 'problem', component: 'ha.demo', level: 'ERROR', classification: 'new', trend: 'new', occurrences: 1 };
+    const report = { version: 2, mode: 'batch', status: 'partial', warnings: ['AI_ANALYSIS_LIMIT'], signatures: Array.from({ length: 50 }, (_, index) => ({ ...signature, signature: `problem-${index}`, ...(index < 3 ? { analysisStatus: ['completed', 'failed', 'not_attempted'][index] } : {}) })) };
+    expect(ReportPresentationV1Schema.parse(report)).toEqual(report);
+    expect(ReportPresentationV1Schema.safeParse({ ...report, signatures: [{ ...signature, analysisStatus: 'queued' }] }).success).toBe(false);
+  });
   it('accepts resumable onboarding progress without serializing secret values or references', () => {
     const command = OnboardingStepCommandSchema.parse({
       step: 'home_assistant',
@@ -591,5 +597,4 @@ describe('StaleEntities DTOs', () => {
     expect(() => StaleEntitiesResponseSchema.parse({ unavailableCount: 0, staleCount: 0, totalAudited: 0, entities: [], extra: 1 })).toThrow();
   });
 });
-
 

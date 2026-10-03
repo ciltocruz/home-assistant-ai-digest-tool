@@ -1,4 +1,4 @@
-import { IsoDateTimeSchema, ManualTelegramSendAttemptSchema, projectIntegrationStatus, type DigestDetail, type ReportPresentationItem, type ReportPresentationV1 } from '@ha-digest/shared';
+import { IsoDateTimeSchema, ManualTelegramSendAttemptSchema, SignatureAnalysisStatusSchema, projectIntegrationStatus, type DigestDetail, type ReportPresentationItem, type ReportPresentationV1, type SignatureAnalysisStatus } from '@ha-digest/shared';
 import { redactProviderError } from '../domain/safe-error.js';
 import { sanitizeTraceExcerpt } from '../domain/safe-trace.js';
 
@@ -173,6 +173,7 @@ function safeBatchSignatures(value: unknown): Array<{
   occurrences: number;
   lastSeenAt?: string;
   analysis?: { summary: string; recommendation: string };
+  analysisStatus?: SignatureAnalysisStatus;
   safeExcerpt?: { lines: string[]; truncated: boolean; redacted: true };
   ignoredForFuture?: boolean;
   notes?: Array<{ id: string; text: string; occurredAt: string; createdAt: string; tags: string[] }>;
@@ -189,7 +190,8 @@ function safeBatchSignatures(value: unknown): Array<{
      const notes = safeNotes(signature.notes);
      const safeExcerpt = safeTraceExcerpt(signature.safeExcerpt);
      const lastSeenAt = safeIsoDate(signature.lastSeenAt);
-    return [{ signature: signature.signature, component: signature.component, level: signature.level, classification: signature.classification, trend: signature.trend, occurrences: signature.occurrences, ...(signature.problemKind === 'endpoint_resolution' ? { problemKind: signature.problemKind } : {}), ...(lastSeenAt ? { lastSeenAt } : {}), ...(safeAnalysis ? { analysis: safeAnalysis } : {}), ...(safeExcerpt ? { safeExcerpt } : {}), ...(signature.ignoredForFuture === true ? { ignoredForFuture: true } : {}), ...(notes ? { notes } : {}) }];
+    const analysisStatus = SignatureAnalysisStatusSchema.safeParse(signature.analysisStatus);
+    return [{ signature: signature.signature, component: signature.component, level: signature.level, classification: signature.classification, trend: signature.trend, occurrences: signature.occurrences, ...(signature.problemKind === 'endpoint_resolution' ? { problemKind: signature.problemKind } : {}), ...(lastSeenAt ? { lastSeenAt } : {}), ...(safeAnalysis ? { analysis: safeAnalysis } : {}), ...(analysisStatus.success ? { analysisStatus: analysisStatus.data } : {}), ...(safeExcerpt ? { safeExcerpt } : {}), ...(signature.ignoredForFuture === true ? { ignoredForFuture: true } : {}), ...(notes ? { notes } : {}) }];
   });
 }
 

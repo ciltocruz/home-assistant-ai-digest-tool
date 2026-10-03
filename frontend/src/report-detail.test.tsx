@@ -6,6 +6,25 @@ import { setLocale } from './i18n/index.js';
 beforeEach(() => setLocale('es'));
 
 describe('ReportDetail', () => {
+  test.each(['en', 'es'] as const)('renders every candidate and separates failed from not-attempted analysis in %s', (locale) => {
+    setLocale(locale);
+    const signatures = Array.from({ length: 12 }, (_, index) => ({
+      signature: `problem-${index}`, component: `ha.problem${index}`, level: 'ERROR' as const, classification: 'new' as const, trend: 'new' as const, occurrences: 1,
+      analysisStatus: index < 9 ? 'completed' as const : index === 9 ? 'failed' as const : 'not_attempted' as const,
+      ...(index < 9 ? { analysis: { summary: `Explanation ${index}`, recommendation: 'Fix' } } : {})
+    }));
+    const html = renderToStaticMarkup(<ReportDetail report={{
+      id: 'all-candidates', source: 'v2',
+      summary: { id: 'all-candidates', window: { from: '2026-08-01T09:00:00.000Z', to: '2026-08-01T10:00:00.000Z' }, severityCounts: { critical: 0, warning: 12, info: 0 }, createdAt: '2026-08-01T10:00:00.000Z', deliveryStatus: 'skipped', runStatus: 'partial' },
+      rendered: { format: 'markdown', body: '' }, presentation: { version: 2, mode: 'batch', status: 'partial', warnings: ['AI_ANALYSIS_LIMIT', 'AI_ANALYSIS_PARTIAL'], signatures }
+    }} />);
+    expect(html).toContain('ha.problem11');
+    expect(html.match(/class="report-problem-heading"/g)).toHaveLength(12);
+    expect(html).toContain(locale === 'en' ? '9 of 12 detected problems explained by AI. 1 failed; 2 not attempted.' : '9 de 12 problemas detectados explicados por la IA. Análisis fallidos: 1; no intentados: 2.');
+    expect(html.match(new RegExp(locale === 'en' ? 'AI explanation was not attempted for this problem' : 'No se intentó una explicación de IA para este problema', 'g'))).toHaveLength(2);
+    expect(html.match(new RegExp(locale === 'en' ? 'AI could not explain this problem' : 'La IA no pudo explicar este problema', 'g'))).toHaveLength(1);
+    expect(html).not.toContain(locale === 'en' ? '3 problems could not be explained' : '3 problemas no pudieron explicarse');
+  });
   test('renders a completed report from its durable report identifier', () => {
     const html = renderToStaticMarkup(<ReportDetail report={{
       id: 'report-9',

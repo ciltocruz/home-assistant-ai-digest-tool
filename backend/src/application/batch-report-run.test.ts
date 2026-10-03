@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BatchReportRun, type BatchPersistence, type SignatureMemory, type SignatureProvider } from './batch-report-run.js';
-import { parseHomeAssistantLog, type LogDelta, type SignaturePlan } from '../domain/batch.js';
+import { BatchReportRun, type BatchPersistence, type LogExtractionRequest, type SignatureMemory, type SignatureProvider } from './batch-report-run.js';
+import { classifySignatures, parseHomeAssistantLog, type LogDelta, type SignaturePlan } from '../domain/batch.js';
 import { DigestWorker } from './digest-worker.js';
 
 const lines = [
@@ -22,6 +22,109 @@ function harness(analyze: SignatureProvider['analyze']) {
 }
 
 describe('BatchReportRun', () => {
+  const stockMessage = (name: string) => `We found a custom integration ${name} which has not been tested by Home Assistant. This component might cause stability problems, be sure to disable it if you experience issues with Home Assistant`;
+
+  it.each(['basic', 'ai'] as const)('excludes only stock warnings before analysis in %s mode while committing memory and cursor', async (mode) => {
+    const stockLines = ['spook', 'zha_toolkit', 'never_seen_before'].map((name) => `2026-07-29 12:07:00 WARNING [homeassistant.loader] ${stockMessage(name)}`);
+    const genuineLines = [
+      '2026-07-29 12:01:00 WARNING [custom_components.spook] Update failed',
+      '2026-07-29 12:02:00 WARNING [homeassistant.loader] Custom integration failed to load',
+      `2026-07-29 12:03:00 ERROR [homeassistant.loader] ${stockMessage('spook')}`,
+      `2026-07-29 12:04:00 CRITICAL [homeassistant.loader] ${stockMessage('spook')}`,
+      `2026-07-29 12:05:00 WARNING [homeassistant.loader] ${stockMessage('spook')} Diagnostic details`,
+      '2026-07-29 12:06:00 WARNING [homeassistant.loader] We found a custom integration spook which has not been tested by Home Assistant.'
+    ];
+    for (const mixed of [false, true]) {
+      const inputLines = [...(mixed ? genuineLines : []), ...stockLines];
+      const analyze = vi.fn(async () => ({ summary: 'Genuine finding', recommendation: 'Investigate' }));
+      const notify = vi.fn(async () => 'sent' as const);
+      const commit = vi.fn(async (_value: Parameters<BatchPersistence['commit']>[0]) => 'report-id');
+      const classifyAndStage = vi.fn(async (entries, now) => classifySignatures(entries, [], { now }));
+      const extract = vi.fn(async ({ batch }) => ({
+        // A provider may paraphrase or change severity; stock source must never reach it.
+        entries: parseHomeAssistantLog(batch.lines, { includeWarnings: true }).map((entry) => entry.message === stockMessage('spook') && entry.level === 'WARNING'
+          ? { timestamp: entry.at, level: 'ERROR', component: 'loader', message: 'Untested integration could be unstable' }
+          : { timestamp: entry.at, ...entry }),
+        rejectedCount: 0
+      }));
+      const run = new BatchReportRun({
+        log: { read: async () => ({ ...delta, lines: inputLines }) },
+        signatures: { classifyAndStage }, provider: { analyze }, notifier: { notify },
+        logMode: async () => mode, extractor: { extract }, now: () => '2026-07-30T00:00:00.000Z',
+        persistence: { commit, claimDeliveryAttempt: async () => ({ status: 'pending', shouldSend: true }), updateDeliveryStatus: async () => {}, fail: async () => {} }
+      });
+
+      expect((await run.run({ runId: 'stock-warning', slotId: 'slot', includeWarnings: true })).status).toBe(mixed ? 'reported' : 'quiet');
+      expect(analyze).toHaveBeenCalledTimes(mixed ? genuineLines.length : 0);
+      expect(notify).toHaveBeenCalledTimes(mixed ? 1 : 0);
+      const committed = commit.mock.calls[0]![0];
+      expect(committed.cursor).toEqual(delta.cursor);
+      expect(committed.logRead).toEqual({ from: mixed ? '2026-07-29T12:01:00.000Z' : '2026-07-29T12:07:00.000Z', to: '2026-07-29T12:07:00.000Z' });
+      expect(committed.signatures.signatures).toHaveLength(inputLines.length);
+      expect(committed.reportedSignatures?.map((signature) => signature.occurrences[0]?.message)).toEqual(mixed ? parseHomeAssistantLog(genuineLines, { includeWarnings: true }).map((entry) => entry.message) : []);
+      expect(committed.report.findings).toHaveLength(mixed ? genuineLines.length : 0);
+      if (mode === 'ai') {
+        expect(extract.mock.calls.flatMap(([request]) => request.batch.lines)).not.toContain(stockLines[0]);
+        if (mixed) expect(extract.mock.calls[0]?.[0].batch.lines.slice(0, genuineLines.length)).toEqual(genuineLines);
+      }
+    }
+  });
+
+  it.each([
+    ['ERROR', 'homeassistant.loader', 'WARNING'],
+    ['ERROR', 'homeassistant.loader', 'ERROR'],
+    ['WARNING', 'custom_components.spook', 'WARNING']
+  ] as const)('does not suppress original %s from %s reconstructed by AI as stock %s', async (sourceLevel, sourceComponent, extractedLevel) => {
+    for (const mixed of [false, true]) {
+      const originalLine = `2026-07-29 12:01:00 ${sourceLevel} [${sourceComponent}] ${stockMessage('spook')}`;
+      const stockLine = `2026-07-29 12:00:00 WARNING [homeassistant.loader] ${stockMessage('spook')}`;
+      const inputLines = mixed ? [stockLine, originalLine] : [originalLine];
+      const analyze = vi.fn(async () => ({ summary: 'Genuine finding', recommendation: 'Investigate' }));
+      const notify = vi.fn(async () => 'sent' as const);
+      const commit = vi.fn(async (_value: Parameters<BatchPersistence['commit']>[0]) => 'report-id');
+      const classifyAndStage = vi.fn(async (entries, now) => classifySignatures(entries, [], { now }));
+      const extract = vi.fn(async (_request: LogExtractionRequest) => ({
+        entries: [{ timestamp: '2026-07-29T12:01:00.000Z', level: extractedLevel, component: 'homeassistant.loader', message: stockMessage('spook'), sourceLines: [stockLine] }],
+        rejectedCount: 0
+      }));
+      const run = new BatchReportRun({
+        log: { read: async () => ({ ...delta, lines: inputLines }) },
+        signatures: { classifyAndStage }, provider: { analyze }, notifier: { notify },
+        logMode: async () => 'ai', extractor: { extract }, now: () => '2026-07-30T00:00:00.000Z',
+        persistence: { commit, claimDeliveryAttempt: async () => ({ status: 'pending', shouldSend: true }), updateDeliveryStatus: async () => {}, fail: async () => {} }
+      });
+
+      expect((await run.run({ runId: 'source-origin', slotId: 'slot', includeWarnings: true })).status).toBe('reported');
+      expect(extract).toHaveBeenCalledOnce();
+      expect(extract.mock.calls[0]![0].batch.lines).toEqual(mixed ? ['', originalLine] : [originalLine]);
+      expect(analyze).toHaveBeenCalledOnce();
+      expect(notify).toHaveBeenCalledOnce();
+      const committed = commit.mock.calls[0]![0];
+      expect(committed.cursor).toEqual(delta.cursor);
+      expect(committed.reportedSignatures).toHaveLength(1);
+      expect(committed.reportedSignatures![0]!.occurrences).toHaveLength(mixed && extractedLevel === 'WARNING' ? 2 : 1);
+      expect(committed.report.findings).toHaveLength(1);
+      expect(committed.logRead).toEqual({ from: mixed ? '2026-07-29T12:00:00.000Z' : '2026-07-29T12:01:00.000Z', to: '2026-07-29T12:01:00.000Z' });
+      const stagedEntries = classifyAndStage.mock.calls[0]![0];
+      expect(committed.signatures.signatures.flatMap((signature) => signature.occurrences)).toHaveLength(inputLines.length);
+      expect(committed.signatures.signatures.every((signature) => signature.occurrences.every((entry) => stagedEntries.includes(entry)))).toBe(true);
+    }
+  });
+
+  it('preserves an original ERROR even when its effective signature severity is WARNING', async () => {
+    const original = parseHomeAssistantLog([`2026-07-29 12:00:00 ERROR [homeassistant.loader] ${stockMessage('spook')}`])[0]!;
+    const analyze = vi.fn(async () => ({ summary: 'Error', recommendation: 'Investigate' }));
+    const { run } = harness(analyze);
+    const originalPlan = plan.signatures;
+    plan.signatures = [{ ...original, level: 'WARNING', classification: 'new', trend: 'new', occurrences: [original] }];
+    try {
+      expect((await run.run({ runId: 'original-error', slotId: 'slot', includeWarnings: true })).status).toBe('reported');
+      expect(analyze).toHaveBeenCalledOnce();
+    } finally {
+      plan.signatures = originalPlan;
+    }
+  });
+
   it('analyzes every signature without a signature limit and atomically stages cursor and report', async () => {
     const analyze = vi.fn(async (context) => ({ summary: context.signature, recommendation: 'fix it' }));
     const { run, commits, deliveryUpdates } = harness(analyze);
@@ -137,7 +240,8 @@ describe('BatchReportRun', () => {
     expect(JSON.stringify(commits)).not.toContain(providerSecret);
   });
 
-  it('limits reported signatures sent to AI provider to top 10 sorted by occurrences descending', async () => {
+  it('reports every signature while explaining only the top 10 sorted by occurrences descending', async () => {
+    const commits: Parameters<BatchPersistence['commit']>[0][] = [];
     const manyLines: string[] = [];
     for (let i = 1; i <= 15; i++) {
       for (let j = 0; j < i; j++) {
@@ -172,7 +276,7 @@ describe('BatchReportRun', () => {
       signatures: { classifyAndStage: async () => manyPlan },
       provider: { analyze },
       persistence: {
-        commit: async () => 'top-10-report',
+        commit: async (value) => { commits.push(value); return 'top-10-report'; },
         claimDeliveryAttempt: async () => ({ status: 'pending', shouldSend: false }),
         updateDeliveryStatus: async () => undefined,
         fail: async () => undefined
@@ -186,6 +290,40 @@ describe('BatchReportRun', () => {
       'ha.comp15', 'ha.comp14', 'ha.comp13', 'ha.comp12', 'ha.comp11',
       'ha.comp10', 'ha.comp9', 'ha.comp8', 'ha.comp7', 'ha.comp6'
     ]);
+    expect(commits[0]?.reportedSignatures).toHaveLength(15);
+    expect(commits[0]?.reportedSignatures?.at(-1)).toMatchObject({ component: 'ha.comp1', analysisStatus: 'not_attempted' });
+    expect(commits[0]?.report).toMatchObject({ status: 'partial', warnings: ['AI_ANALYSIS_LIMIT'] });
+  });
+
+  it('keeps rare warnings and grouped duplicates beyond the analysis budget without reporting ignored siblings', async () => {
+    const manyLines = Array.from({ length: 12 }, (_, index) => `2026-07-29 12:00:00 ${index === 11 ? 'WARNING' : 'ERROR'} [ha.comp${index}] distinct problem`);
+    manyLines.unshift(manyLines[0]!, manyLines[0]!);
+    manyLines.push('2026-07-29 12:00:00 ERROR [ha.comp0] ignored sibling');
+    const commits: Parameters<BatchPersistence['commit']>[0][] = [];
+    const analyze = vi.fn(async (context: { component: string }) => {
+      if (context.component === 'ha.comp1') throw new Error('analysis down');
+      return { summary: 'summary', recommendation: 'fix' };
+    });
+    const notify = vi.fn(async () => 'sent' as const);
+    const run = new BatchReportRun({
+      log: { read: async () => ({ lines: manyLines, cursor: delta.cursor }) },
+      signatures: { classifyAndStage: async (entries, now) => classifySignatures(entries, [], { now }) },
+      provider: { analyze },
+      persistence: { commit: async (value) => { commits.push(value); return 'all-report'; }, claimDeliveryAttempt: async () => ({ status: 'pending', shouldSend: true }), updateDeliveryStatus: async () => undefined, fail: async () => undefined },
+      ignores: { listActive: async () => [{ id: 'ignored', type: 'message', match: 'ignored sibling', createdAt: '2026-07-29T00:00:00.000Z' }] },
+      notifier: { notify },
+      now: () => '2026-07-30T00:00:00.000Z'
+    });
+    await expect(run.run({ runId: 'all', slotId: 'all', includeWarnings: true })).resolves.toMatchObject({ status: 'partial' });
+    const reported = commits[0]!.reportedSignatures!;
+    expect(reported).toHaveLength(12);
+    expect(reported[0]?.occurrences).toHaveLength(3);
+    expect(reported.find((item) => item.component === 'ha.comp1')).toMatchObject({ analysisStatus: 'failed' });
+    expect(reported.at(-1)).toMatchObject({ component: 'ha.comp11', level: 'WARNING', analysisStatus: 'not_attempted' });
+    expect(analyze).toHaveBeenCalledTimes(10);
+    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ detectedProblems: 12, findings: expect.any(Array) }));
+    expect(commits[0]?.report.findings).toHaveLength(9);
+    expect(commits[0]?.report.warnings).toEqual(['AI_ANALYSIS_LIMIT', 'AI_ANALYSIS_PARTIAL', 'analysis down']);
   });
 
   it('preserves explicit AI provider error messages when AI fails with 429 or other errors', async () => {
@@ -223,6 +361,26 @@ describe('BatchReportRun', () => {
       failedCount: 3,
       error: 'HTTP 429 Rate limit exceeded: Too Many Requests'
     }));
+  });
+
+  it('saves every candidate as partial rather than quiet when all ten explanation attempts fail', async () => {
+    const manyLines = Array.from({ length: 20 }, (_, index) => `2026-07-29 12:00:00 ERROR [ha.problem${index}] distinct failure`);
+    const commits: Parameters<BatchPersistence['commit']>[0][] = [];
+    const analyze = vi.fn(async () => { throw new Error('provider down'); });
+    const notify = vi.fn(async () => 'sent' as const);
+    const run = new BatchReportRun({
+      log: { read: async () => ({ lines: manyLines, cursor: delta.cursor }) },
+      signatures: { classifyAndStage: async (entries, now) => classifySignatures(entries, [], { now }) },
+      provider: { analyze }, notifier: { notify }, now: () => '2026-07-30T00:00:00.000Z',
+      persistence: { commit: async (value) => { commits.push(value); return 'partial-all'; }, claimDeliveryAttempt: async () => ({ status: 'pending', shouldSend: true }), updateDeliveryStatus: async () => undefined, fail: async () => undefined }
+    });
+    await expect(run.run({ runId: 'partial-all', slotId: 'partial-all' })).resolves.toMatchObject({ status: 'partial' });
+    expect(analyze).toHaveBeenCalledTimes(10);
+    expect(notify).not.toHaveBeenCalled();
+    expect(commits[0]?.reportedSignatures).toHaveLength(20);
+    expect(commits[0]?.reportedSignatures?.filter((item) => item.analysisStatus === 'failed')).toHaveLength(10);
+    expect(commits[0]?.reportedSignatures?.filter((item) => item.analysisStatus === 'not_attempted')).toHaveLength(10);
+    expect(commits[0]?.report.deliveryStatus).toBe('skipped');
   });
 
   it('matches signature ignore rules exactly without hiding a sibling from the same component', async () => {
@@ -597,7 +755,7 @@ describe('BatchReportRun', () => {
     expect(analyze).not.toHaveBeenCalled();
   });
 
-  it('marks the report partial when some AI extraction batches fail', async () => {
+  it('does not commit or advance the cursor when any AI extraction batch fails', async () => {
     const manyLines = Array.from({ length: 151 }, (_, index) => `raw line ${index + 1}`);
     const commits: Parameters<BatchPersistence['commit']>[0][] = [];
     const run = new BatchReportRun({
@@ -606,7 +764,7 @@ describe('BatchReportRun', () => {
       provider: { analyze: async () => ({ summary: 'AI summary', recommendation: 'AI fix' }) },
       extractor: {
         extract: async ({ batch }) => {
-          if (batch.startLine === 1) throw new Error('first batch down');
+          if (batch.startLine !== 1) throw new Error('second batch down');
           return { entries: [{ timestamp: '2026-07-29 12:00:00', level: 'ERROR', component: 'ha.second', message: 'second batch boom' }], rejectedCount: 0 };
         }
       },
@@ -615,7 +773,33 @@ describe('BatchReportRun', () => {
       now: () => '2026-07-30T00:00:00.000Z'
     });
 
-    await expect(run.run({ runId: 'run-ai-partial', slotId: 'slot-ai-partial' })).resolves.toMatchObject({ status: 'partial', reportId: 'ai-partial' });
-    expect(commits[0]?.report.warnings).toContain('LOG_EXTRACTION_PARTIAL');
+    await expect(run.run({ runId: 'run-ai-partial', slotId: 'slot-ai-partial' })).rejects.toThrow('AI_EXTRACTION_UNAVAILABLE');
+    expect(commits).toHaveLength(0);
+  });
+
+  it('extracts every chunk sequentially beyond eight chunks and reports the final candidate', async () => {
+    const manyLines = Array.from({ length: 1501 }, (_, index) => `raw line ${index + 1}`);
+    const starts: number[] = [];
+    const commits: Parameters<BatchPersistence['commit']>[0][] = [];
+    let active = 0;
+    const run = new BatchReportRun({
+      log: { read: async () => ({ lines: manyLines, cursor: delta.cursor }) },
+      signatures: { classifyAndStage: async (entries, now) => classifySignatures(entries, [], { now }) },
+      provider: { analyze: async () => ({ summary: 'summary', recommendation: 'fix' }) },
+      extractor: { extract: async ({ batch }) => {
+        expect(active++).toBe(0);
+        starts.push(batch.startLine);
+        await Promise.resolve();
+        active--;
+        return { entries: [{ timestamp: '2026-07-29 12:00:00', level: 'ERROR', component: `ha.chunk${batch.startLine}`, message: 'problem' }], rejectedCount: 0 };
+      } },
+      logMode: async () => 'ai',
+      persistence: { commit: async (value) => { commits.push(value); return 'all-chunks'; }, claimDeliveryAttempt: async () => ({ status: 'pending', shouldSend: false }), updateDeliveryStatus: async () => undefined, fail: async () => undefined },
+      now: () => '2026-07-30T00:00:00.000Z'
+    });
+    await run.run({ runId: 'chunks', slotId: 'chunks' });
+    expect(starts).toEqual(Array.from({ length: 11 }, (_, index) => 1 + index * 150));
+    expect(commits[0]?.reportedSignatures).toHaveLength(11);
+    expect(commits[0]?.reportedSignatures?.at(-1)).toMatchObject({ component: 'ha.chunk1501', analysisStatus: 'not_attempted' });
   });
 });

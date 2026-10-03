@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
-import { DeliveryDiagnosticSchema, IsoDateTimeSchema, projectIntegrationStatus, type DeliveryDiagnostic, type DeliveryStatus, type DigestDetail, type DigestHistoryResponse, type DigestSummary, type IgnoreRuleCreate, type IgnoreRuleDto, type IntegrationStatusSummary, type NoteCreate, type NoteDto } from '@ha-digest/shared';
+import { DeliveryDiagnosticSchema, IsoDateTimeSchema, SignatureAnalysisStatusSchema, projectIntegrationStatus, type DeliveryDiagnostic, type DeliveryStatus, type DigestDetail, type DigestHistoryResponse, type DigestSummary, type IgnoreRuleCreate, type IgnoreRuleDto, type IntegrationStatusSummary, type NoteCreate, type NoteDto, type SignatureAnalysisStatus } from '@ha-digest/shared';
 import type { BatchPersistence, CommitPlan, FailedRun, SignatureAnalysis, SignatureMemory } from '../../application/batch-report-run.js';
 import { classifySignatures, type LogCursor, type ParsedLogEntry, type SignaturePlan } from '../../domain/batch.js';
 import { redactProviderError } from '../../domain/safe-error.js';
@@ -339,6 +339,7 @@ type StoredSignature = {
   lastSeenAt?: string;
   safeExcerpt?: SafeTraceExcerpt;
   sourceLines?: string[];
+  analysisStatus?: SignatureAnalysisStatus;
 };
 function safeSignatureAnalysis(value: unknown, apiKey?: string): SignatureAnalysis | null {
   const analysis = asRecord(value);
@@ -366,7 +367,9 @@ function safeSignatures(value: unknown, analyzed = new Set<string>()): StoredSig
     const safeExcerpt = sanitizeTraceExcerpt(signature.safeExcerpt ?? firstOccurrence.safeExcerpt);
     const sourceLines = safeSourceLines(signature.sourceLines);
     const lastSeenAt = latestOccurrenceAt(rawOccurrences) ?? safeIsoDate(signature.lastSeenAt);
-    return [{ signature: signature.signature, component: signature.component, level: signature.level, ...(signature.problemKind === 'endpoint_resolution' ? { problemKind: signature.problemKind } : {}), classification: signature.classification, trend: signature.trend, occurrenceCount, ...(lastSeenAt ? { lastSeenAt } : {}), ...(safeExcerpt ? { safeExcerpt } : {}), ...(sourceLines ? { sourceLines } : {}) }];
+    const status = SignatureAnalysisStatusSchema.safeParse(signature.analysisStatus);
+    const analysisStatus = analyzed.has(signature.signature) ? 'completed' as const : status.success ? status.data : undefined;
+    return [{ signature: signature.signature, component: signature.component, level: signature.level, ...(signature.problemKind === 'endpoint_resolution' ? { problemKind: signature.problemKind } : {}), classification: signature.classification, trend: signature.trend, occurrenceCount, ...(lastSeenAt ? { lastSeenAt } : {}), ...(safeExcerpt ? { safeExcerpt } : {}), ...(sourceLines ? { sourceLines } : {}), ...(analysisStatus ? { analysisStatus } : {}) }];
   });
 }
 function safeSourceLines(value: unknown): string[] | undefined {
@@ -425,7 +428,7 @@ function detailFor(row: V2ReportRow, apiKey?: string, ignoredSignatures = new Se
   return {
     id: row.id, summary: summaryFor(row, apiKey), rendered: { format: 'markdown', body: '' },
      presentation: { version: 2, mode: 'batch', status: row.status as 'quiet' | 'reported' | 'partial' | 'failed', warnings: safeWarnings(value.report?.warnings, apiKey), ...(integrationStatus ? { integrationStatus } : {}),
-        signatures: signatures.map((item) => ({ signature: item.signature, component: item.component, level: item.level, classification: item.classification, trend: item.trend, ...(item.problemKind ? { problemKind: item.problemKind } : {}), occurrences: item.occurrenceCount, ...(item.lastSeenAt ? { lastSeenAt: item.lastSeenAt } : {}), ...(analyses.has(item.signature) ? { analysis: analyses.get(item.signature) } : {}), ...(item.safeExcerpt ? { safeExcerpt: item.safeExcerpt } : {}), ...(item.sourceLines?.length ? { sourceLines: item.sourceLines } : {}), ...(ignoredSignatures.has(item.signature) ? { ignoredForFuture: true } : {}), ...(safeNotes(value.notesBySignature)?.[item.signature] ? { notes: safeNotes(value.notesBySignature)![item.signature] } : {}) })) }
+        signatures: signatures.map((item) => ({ signature: item.signature, component: item.component, level: item.level, classification: item.classification, trend: item.trend, ...(item.problemKind ? { problemKind: item.problemKind } : {}), occurrences: item.occurrenceCount, ...(item.lastSeenAt ? { lastSeenAt: item.lastSeenAt } : {}), ...(item.analysisStatus ? { analysisStatus: item.analysisStatus } : {}), ...(analyses.has(item.signature) ? { analysis: analyses.get(item.signature) } : {}), ...(item.safeExcerpt ? { safeExcerpt: item.safeExcerpt } : {}), ...(item.sourceLines?.length ? { sourceLines: item.sourceLines } : {}), ...(ignoredSignatures.has(item.signature) ? { ignoredForFuture: true } : {}), ...(safeNotes(value.notesBySignature)?.[item.signature] ? { notes: safeNotes(value.notesBySignature)![item.signature] } : {}) })) }
   };
 }
 function invalidSummary(row: V2ReportRow, warning = 'REPORT_PAYLOAD_INVALID'): DigestSummary {

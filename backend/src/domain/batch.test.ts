@@ -1,11 +1,32 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
-import { buildParsedEntry, chunkLogLinesForExtraction, classifySignatures, parseHomeAssistantLog } from './batch.js';
+import { buildParsedEntry, chunkLogLinesForExtraction, classifySignatures, isStockCustomIntegrationWarning, parseHomeAssistantLog } from './batch.js';
 
 const fixture = new URL('../../../tests/fixtures/ha/batch-formats.log', import.meta.url);
 const realWorldFixture = new URL('../../../tests/fixtures/ha/real-world-2026-09-06.log', import.meta.url);
 
 describe('batch log domain', () => {
+  const stockMessage = (name: string) => `We found a custom integration ${name} which has not been tested by Home Assistant. This component might cause stability problems, be sure to disable it if you experience issues with Home Assistant`;
+
+  it.each(['spook', 'zha_toolkit', 'never_seen_before_2026'])('recognizes the complete stock warning for %s', (name) => {
+    const [entry] = parseHomeAssistantLog([`2026-09-06 01:00:00 WARNING [homeassistant.loader] ${stockMessage(name)}`], { includeWarnings: true });
+    expect(isStockCustomIntegrationWarning(entry!)).toBe(true);
+  });
+
+  it.each([
+    ['custom_components.spook', 'WARNING', stockMessage('spook')],
+    ['homeassistant.loader', 'ERROR', stockMessage('spook')],
+    ['homeassistant.loader', 'CRITICAL', stockMessage('spook')],
+    ['homeassistant.loader', 'WARNING', 'We found a custom integration spook which has not been tested by Home Assistant.'],
+    ['homeassistant.loader', 'WARNING', `${stockMessage('spook')}. Connection failed`],
+    ['homeassistant.loader', 'WARNING', `Diagnostic: ${stockMessage('spook')}`],
+    ['homeassistant.loader', 'WARNING', stockMessage('')],
+    ['homeassistant.loader', 'WARNING', 'Custom integration spook failed to load']
+  ])('keeps non-stock evidence from %s at %s: %s', (component, level, message) => {
+    const [entry] = parseHomeAssistantLog([`2026-09-06 01:00:00 ${level} [${component}] ${message}`], { includeWarnings: true });
+    expect(isStockCustomIntegrationWarning(entry!)).toBe(false);
+  });
+
   it('parses real Home Assistant ERROR and CRITICAL formats into stable signatures', async () => {
     const entries = parseHomeAssistantLog((await readFile(fixture, 'utf8')).trim().split('\n'));
 
@@ -24,6 +45,7 @@ describe('batch log domain', () => {
     expect(everything).toHaveLength(168);
     const loaders = everything.filter((entry) => entry.component === 'homeassistant.loader');
     expect(loaders).toHaveLength(22);
+    expect(everything.filter(isStockCustomIntegrationWarning)).toHaveLength(22);
     expect(loaders.some((entry) => entry.message.includes('zha_toolkit'))).toBe(true);
     expect(loaders.some((entry) => entry.message.includes('spook'))).toBe(true);
     expect(parseHomeAssistantLog(['2026-09-06 01:11:37.916 WARNING (Thread-1 (_monitor)) [homeassistant.util.logging] Module custom_components.monitor_docker.sensor is logging too frequently. 200 messages since last count'], { includeWarnings: true })[0]).toMatchObject({ component: 'homeassistant.util.logging', level: 'WARNING' });
@@ -193,19 +215,24 @@ describe('batch log domain', () => {
     expect(authPlan.signatures[0]?.level).toBe('ERROR');
   });
 
-  it('chunks log lines for AI extraction by lines, bytes, and batch cap with stable numbering', () => {
+  it('chunks all log lines for AI extraction by lines and bytes with stable numbering', () => {
     const lines = ['a', 'b', 'c', 'd', 'e'];
-    const chunked = chunkLogLinesForExtraction(lines, { maxLinesPerBatch: 2, maxBatches: 10 });
-    expect(chunked.truncated).toBe(false);
+    const chunked = chunkLogLinesForExtraction(lines, { maxLinesPerBatch: 2 });
     expect(chunked.batches.map((batch) => batch.lines)).toEqual([['a', 'b'], ['c', 'd'], ['e']]);
     expect(chunked.batches.map((batch) => batch.startLine)).toEqual([1, 3, 5]);
 
-    const capped = chunkLogLinesForExtraction(lines, { maxLinesPerBatch: 2, maxBatches: 2 });
-    expect(capped.truncated).toBe(true);
-    expect(capped.batches).toHaveLength(2);
+    const manyLines = Array.from({ length: 1201 }, () => 'line');
+    const complete = chunkLogLinesForExtraction(manyLines);
+    expect(complete.batches).toHaveLength(9);
+    expect(complete.batches.flatMap((batch) => batch.lines)).toEqual(manyLines);
+    expect(complete.batches.at(-1)?.startLine).toBe(1201);
 
-    const byteCapped = chunkLogLinesForExtraction(['x'.repeat(100), 'y'.repeat(100)], { maxBytesPerBatch: 120, maxBatches: 10 });
+    const byteCapped = chunkLogLinesForExtraction(['x'.repeat(100), 'y'.repeat(100)], { maxBytesPerBatch: 120 });
     expect(byteCapped.batches.map((batch) => batch.lines)).toEqual([['x'.repeat(100)], ['y'.repeat(100)]]);
+    const oversized = 'é'.repeat(200);
+    expect(chunkLogLinesForExtraction([oversized, 'tail'], { maxBytesPerBatch: 120 }).batches).toEqual([
+      { lines: [oversized], startLine: 1 }, { lines: ['tail'], startLine: 2 }
+    ]);
   });
 
   it('builds deterministic parsed entries from validated AI output with timestamp fallback', () => {
