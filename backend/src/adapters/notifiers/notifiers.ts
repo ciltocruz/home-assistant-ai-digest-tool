@@ -23,8 +23,9 @@ type TelegramNotifierOptions = {
   timeoutMs?: number;
 };
 
-export type TelegramSummary = { findings: Array<{ signature: string; analysis: { summary: string; recommendation: string } }>; detectedProblems?: number; reportUrl?: string; language?: 'en' | 'es' };
-export type TelegramManualSummary = { critical: number; warnings: number; detectedProblems: number; reportUrl?: string; language: 'en' | 'es' };
+export type TelegramProblemCounts = { errors: number; warnings: number };
+export type TelegramSummary = { findings: Array<{ signature: string; analysis: { summary: string; recommendation: string } }>; detectedProblems?: number; problemCounts?: TelegramProblemCounts; reportUrl?: string; language?: 'en' | 'es' };
+export type TelegramManualSummary = { critical: number; warnings: number; detectedProblems: number; problemCounts?: TelegramProblemCounts; reportUrl?: string; language: 'en' | 'es' };
 
 type MarkdownNotifierOptions = {
   write: (entry: { label: string; body: string }) => Promise<string>;
@@ -59,6 +60,12 @@ export class TelegramNotifier implements Notifier {
     const spanish = summary.language === 'es';
     const link = summary.reportUrl ? `\n[${spanish ? 'Abrir informe' : 'Open report'}](${escapeTelegramUrl(summary.reportUrl)})` : '';
     const count = summary.findings.length;
+    if (summary.problemCounts !== undefined) {
+      const { errors, warnings } = summary.problemCounts;
+      return this.postMessage(target, spanish
+        ? `*Resumen de Home Assistant*\n${errors} ${errors === 1 ? 'error' : 'errores'} y ${warnings} warning${warnings === 1 ? '' : 's'}; ${count} explicado${count === 1 ? '' : 's'} por la IA\\. ${first}${link}`
+        : `*Home Assistant digest*\n${errors} error${errors === 1 ? '' : 's'} and ${warnings} warning${warnings === 1 ? '' : 's'}; ${count} explained by AI\\. ${first}${link}`, true);
+    }
     if (summary.detectedProblems !== undefined) {
       const detected = summary.detectedProblems;
       return this.postMessage(target, spanish
@@ -73,9 +80,13 @@ export class TelegramNotifier implements Notifier {
   async sendManualSummary(summary: TelegramManualSummary, target: ResolvedTargetConfig): Promise<DeliveryResult> {
     const spanish = summary.language === 'es';
     const link = summary.reportUrl ? `\n[${spanish ? 'Abrir informe' : 'Open report'}](${escapeTelegramUrl(summary.reportUrl)})` : '';
-    const text = spanish
-      ? `*Informe de Home Assistant*\n${summary.detectedProblems} problemas detectados: ${summary.critical} críticos, ${summary.warnings} avisos\\.${link}`
-      : `*Home Assistant report*\n${summary.detectedProblems} detected problems: ${summary.critical} critical, ${summary.warnings} warnings\\.${link}`;
+    const text = summary.problemCounts
+      ? spanish
+        ? `*Informe de Home Assistant*\n${summary.problemCounts.errors} ${summary.problemCounts.errors === 1 ? 'error' : 'errores'} y ${summary.problemCounts.warnings} warning${summary.problemCounts.warnings === 1 ? '' : 's'}\\.${link}`
+        : `*Home Assistant report*\n${summary.problemCounts.errors} error${summary.problemCounts.errors === 1 ? '' : 's'} and ${summary.problemCounts.warnings} warning${summary.problemCounts.warnings === 1 ? '' : 's'}\\.${link}`
+      : spanish
+        ? `*Informe de Home Assistant*\n${summary.detectedProblems} problemas detectados: ${summary.critical} críticos, ${summary.warnings} avisos\\.${link}`
+        : `*Home Assistant report*\n${summary.detectedProblems} detected problems: ${summary.critical} critical, ${summary.warnings} warnings\\.${link}`;
     return this.postMessage(target, text, true);
   }
 

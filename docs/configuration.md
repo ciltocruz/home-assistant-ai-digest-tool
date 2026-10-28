@@ -57,7 +57,7 @@ ChatGPT-account login is not an authentication method for this release. Use a pr
 
 ## Telegram notifications
 
-Telegram is optional. Configure the bot token and chat ID in onboarding or Settings and use **Send Telegram test** to validate the saved target. The application sends a compact summary only when findings are noteworthy. It includes a saved-report link only when `PUBLIC_APP_URL` contains the valid browser-accessible HTTP(S) origin where the application is served. Path prefixes are not supported; invalid values leave the Telegram summary unlinked without failing the report or delivery.
+Telegram is optional. Configure the bot token and chat ID in onboarding or Settings and use **Send Telegram test** to validate the saved target. The application sends a compact summary only when findings are noteworthy. For current batch reports, the summary gives distinct error and warning counts (critical problems count as errors); repeated occurrences of one grouped problem count once. The AI explanation count remains separate, and the first explanation and optional report link stay compact. Manual sends use the same split when stored severity levels are available; older reports without levels retain their previous summary. A saved-report link is included only when `PUBLIC_APP_URL` contains the valid browser-accessible HTTP(S) origin where the application is served. Path prefixes are not supported; invalid values leave the Telegram summary unlinked without failing the report or delivery.
 
 When a run has no noteworthy findings, no Telegram message is sent. When collection, analysis, scheduling, or delivery cannot produce a trustworthy result, no Telegram message is sent either; the quiet or failed state remains visible in the web UI.
 

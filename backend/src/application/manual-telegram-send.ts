@@ -6,7 +6,7 @@ type AttemptStore = {
   list(reportId: string): Promise<ManualTelegramSendAttempt[]>;
 };
 
-type ManualTelegramSummary = { critical: number; warnings: number; detectedProblems: number; reportUrl?: string; language: 'en' | 'es' };
+type ManualTelegramSummary = { critical: number; warnings: number; detectedProblems: number; problemCounts?: { errors: number; warnings: number }; reportUrl?: string; language: 'en' | 'es' };
 
 export class ManualTelegramSendService {
   constructor(private readonly dependencies: {
@@ -36,10 +36,13 @@ export class ManualTelegramSendService {
 
     try {
       const reportUrl = this.dependencies.reportUrl?.(reportId);
+      const signatures = report.presentation?.mode === 'batch' ? report.presentation.signatures : undefined;
+      const problemCounts = signatures ? countProblemLevels(signatures) : undefined;
       const result = await this.dependencies.notifier.send({
         critical: report.summary.severityCounts.critical,
         warnings: report.summary.severityCounts.warning,
-        detectedProblems: report.presentation?.mode === 'batch' ? report.presentation.signatures.length : report.summary.severityCounts.critical + report.summary.severityCounts.warning,
+        detectedProblems: signatures ? signatures.length : report.summary.severityCounts.critical + report.summary.severityCounts.warning,
+        ...(problemCounts ? { problemCounts } : {}),
         ...(reportUrl ? { reportUrl } : {}),
         language: await this.dependencies.language()
       });
@@ -54,6 +57,16 @@ export class ManualTelegramSendService {
   list(reportId: string): Promise<ManualTelegramSendAttempt[]> {
     return this.dependencies.attempts.list(reportId);
   }
+}
+
+function countProblemLevels(signatures: Array<{ level?: string }>): { errors: number; warnings: number } | undefined {
+  const counts = { errors: 0, warnings: 0 };
+  for (const signature of signatures) {
+    if (signature.level === 'ERROR' || signature.level === 'CRITICAL') counts.errors += 1;
+    else if (signature.level === 'WARNING') counts.warnings += 1;
+    else return undefined;
+  }
+  return counts;
 }
 
 function isFailedPlaceholder(report: DigestDetail): boolean {

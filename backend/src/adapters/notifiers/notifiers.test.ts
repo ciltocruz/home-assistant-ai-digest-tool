@@ -213,6 +213,34 @@ describe('notifier adapters', () => {
   });
 
   it.each([
+    { language: 'en' as const, expected: '*Home Assistant digest*\n0 errors and 1 warning; 1 explained by AI\\. MQTT failed\\.\n[Open report](https://digest.test/reports/warning-only)' },
+    { language: 'es' as const, expected: '*Resumen de Home Assistant*\n0 errores y 1 warning; 1 explicado por la IA\\. MQTT failed\\.\n[Abrir informe](https://digest.test/reports/warning-only)' }
+  ])('includes explicit error and warning counts in automatic Telegram summaries ($language)', async ({ language, expected }) => {
+    const requests: HttpRequest[] = [];
+    const notifier = new TelegramNotifier({ httpClient: async (request) => { requests.push(request); return { status: 200, json: async () => ({ ok: true }) }; } });
+
+    await notifier.sendSummary({
+      findings: [{ signature: 'warning', analysis: { summary: 'MQTT failed.', recommendation: 'Review it' } }],
+      detectedProblems: 1,
+      problemCounts: { errors: 0, warnings: 1 },
+      reportUrl: 'https://digest.test/reports/warning-only', language
+    }, { channel: 'telegram', label: 'Telegram', config: { botToken: TELEGRAM_BOT_TOKEN_SENTINEL, chatId: '4242' } });
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.body).toMatchObject({ text: expected, parse_mode: 'MarkdownV2' });
+  });
+
+  it('uses grammatical singular and plural error and warning counts in manual Telegram summaries', async () => {
+    const requests: HttpRequest[] = [];
+    const notifier = new TelegramNotifier({ httpClient: async (request) => { requests.push(request); return { status: 200, json: async () => ({ ok: true }) }; } });
+    const target = { channel: 'telegram' as const, label: 'Telegram', config: { botToken: TELEGRAM_BOT_TOKEN_SENTINEL, chatId: '4242' } };
+
+    await notifier.sendManualSummary({ critical: 1, warnings: 2, detectedProblems: 3, problemCounts: { errors: 2, warnings: 1 }, language: 'es' }, target);
+
+    expect(requests[0]?.body).toMatchObject({ text: expect.stringContaining('*Informe de Home Assistant*\n2 errores y 1 warning\\.') });
+  });
+
+  it.each([
     {
       label: 'English singular without a URL',
       language: 'en' as const,

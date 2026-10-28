@@ -79,7 +79,7 @@ Secrets are encrypted in `/data`, returned only as masks, and must never be comm
 
 Reports rank findings into **attention items** (before observations and positive status), backed by recommendations and evidence.
 
-Batch reports include every eligible distinct detected error or opted-in warning, grouping duplicate occurrences without a fixed problem-count cap. Problems beyond the ten-explanation budget are explicitly **not attempted**, not failed and not queued for later analysis. In AI-assisted log mode, every chunk is extracted sequentially; total AI usage and run duration grow with log volume. Large reports still require proportional server/browser memory; no million-item performance guarantee is implied.
+Batch reports include every eligible distinct detected error or opted-in warning, grouping duplicate occurrences without a fixed problem-count cap. Report details separate errors (including critical errors) from warnings, and Telegram summaries state both distinct counts; repeated occurrences do not inflate them. Problems beyond the ten-explanation budget are explicitly **not attempted**, not failed and not queued for later analysis. In AI-assisted log mode, every chunk is extracted sequentially; total AI usage and run duration grow with log volume. Large reports still require proportional server/browser memory; no million-item performance guarantee is implied.
 
 ![Report detail](docs/readme-screenshots/02-report-detail.png)
 

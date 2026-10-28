@@ -22,8 +22,40 @@ describe('ManualTelegramSendService', () => {
     await expect(service.send('v2-report:report-1', secondAction)).resolves.toMatchObject({ alreadyRequested: false, attempt: { status: 'sent' } });
 
     expect(sends).toHaveLength(2);
-    expect(sends[0]).toEqual({ critical: 1, warnings: 2, detectedProblems: 2, reportUrl: 'https://digest.example/reports/v2-report%3Areport-1', language: 'en' });
+    expect(sends[0]).toEqual({ critical: 1, warnings: 2, detectedProblems: 2, problemCounts: { errors: 2, warnings: 0 }, reportUrl: 'https://digest.example/reports/v2-report%3Areport-1', language: 'en' });
     expect(automaticDeliveryMutation).not.toHaveBeenCalled();
+  });
+
+  it('derives manual Telegram counts from each v2 signature, not grouped occurrences or old severity totals', async () => {
+    const sends: unknown[] = [];
+    const stored = report();
+    if (stored.presentation?.mode !== 'batch') throw new Error('Expected a batch report fixture.');
+    stored.presentation.signatures.push({ signature: 'warning', component: 'loader', level: 'WARNING', classification: 'new', trend: 'new', occurrences: 9 });
+    const service = new ManualTelegramSendService({
+      reports: { get: async () => stored }, attempts: attemptStore(new Map()),
+      notifier: { configured: async () => true, send: async (summary) => { sends.push(summary); return { status: 'sent', targetRef: 'telegram:test' }; } },
+      language: async () => 'es'
+    });
+
+    await service.send('v2-report:report-1', '33333333-3333-4333-8333-333333333333');
+
+    expect(sends[0]).toMatchObject({ critical: 1, warnings: 2, detectedProblems: 3, problemCounts: { errors: 2, warnings: 1 }, language: 'es' });
+  });
+
+  it('does not invent split counts for legacy reports without presentation levels', async () => {
+    const sends: unknown[] = [];
+    const legacy = report();
+    legacy.source = 'legacy';
+    legacy.presentation = { version: 1, mode: 'legacy_markdown', legacyMarkdown: '# Legacy' };
+    const service = new ManualTelegramSendService({
+      reports: { get: async () => legacy }, attempts: attemptStore(new Map()),
+      notifier: { configured: async () => true, send: async (summary) => { sends.push(summary); return { status: 'sent', targetRef: 'telegram:test' }; } },
+      language: async () => 'en'
+    });
+
+    await service.send('v2-report:report-1', '44444444-4444-4444-8444-444444444444');
+
+    expect(sends[0]).toEqual({ critical: 1, warnings: 2, detectedProblems: 3, language: 'en' });
   });
 
   it('records missing Telegram configuration as a safe failure without sending', async () => {
