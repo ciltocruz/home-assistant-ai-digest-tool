@@ -1274,7 +1274,8 @@ option {
   padding: 0.38rem 0.7rem;
 }
 
-.severity-chip--critical {
+.severity-chip--critical,
+.severity-chip--error {
   background: rgba(255, 77, 79, 0.15);
   border: 1px solid rgba(255, 77, 79, 0.3);
   color: #ff7875;
@@ -1864,6 +1865,10 @@ option {
   padding: 0.875rem 1rem;
 }
 
+.report-severity-group { border-top: 1px solid var(--border-subtle); margin-top: 0.9rem; padding-top: 0.9rem; }
+.report-severity-group > h2,
+.report-severity-group > h3 { margin-bottom: 0.65rem; }
+.report-severity-empty { color: var(--text-secondary); margin: 0; }
 .report-problem-heading { align-items: center; display: flex; gap: 0.75rem; justify-content: space-between; }
 .report-problem-stats { color: var(--text-secondary); display: flex; flex-wrap: wrap; font-size: 0.8rem; gap: 0.4rem 1rem; margin: 0.55rem 0 0; }
 .report-ai-content { display: grid; gap: 0.75rem; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 0.9rem; }
@@ -1974,7 +1979,8 @@ option {
   font-weight: 800;
 }
 
-.severity-badge--critical { background: rgba(255,77,79,0.2); color: #ff7875; }
+.severity-badge--critical,
+.severity-badge--error { background: rgba(255,77,79,0.2); color: #ff7875; }
 .severity-badge--warning  { background: rgba(255,169,64,0.2); color: #ffc069; }
 .severity-badge--info     { background: rgba(24,255,220,0.12); color: var(--ha-teal); }
 

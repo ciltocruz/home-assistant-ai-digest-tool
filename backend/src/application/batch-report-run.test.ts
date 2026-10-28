@@ -321,7 +321,7 @@ describe('BatchReportRun', () => {
     expect(reported.find((item) => item.component === 'ha.comp1')).toMatchObject({ analysisStatus: 'failed' });
     expect(reported.at(-1)).toMatchObject({ component: 'ha.comp11', level: 'WARNING', analysisStatus: 'not_attempted' });
     expect(analyze).toHaveBeenCalledTimes(10);
-    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ detectedProblems: 12, findings: expect.any(Array) }));
+    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ detectedProblems: 12, findings: expect.any(Array), problemCounts: { errors: 11, warnings: 1 } }));
     expect(commits[0]?.report.findings).toHaveLength(9);
     expect(commits[0]?.report.warnings).toEqual(['AI_ANALYSIS_LIMIT', 'AI_ANALYSIS_PARTIAL', 'analysis down']);
   });

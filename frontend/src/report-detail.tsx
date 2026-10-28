@@ -10,6 +10,7 @@ export function ReportDetail({ report, embedded = false, onDelete, onIgnoreProbl
   const SectionHeading = embedded ? 'h3' : 'h2';
   const legacyMarkdown = presentation?.mode === 'legacy_markdown' ? presentation.legacyMarkdown : report.rendered.body;
   const source = report.source ?? report.summary.source ?? (presentation?.mode === 'batch' ? 'v2' : 'legacy');
+  const problemCounts = presentation?.mode === 'batch' ? countPresentationProblemLevels(presentation.signatures) : undefined;
   const sendable = !report.id.startsWith('v2-run:') && !(presentation?.mode === 'batch' && presentation.status === 'failed');
   const [deleteState, setDeleteState] = useState<'idle' | 'confirming' | 'pending' | 'error'>('idle');
   const [telegramState, setTelegramState] = useState<'idle' | 'confirming' | 'pending' | 'error'>('idle');
@@ -47,12 +48,18 @@ export function ReportDetail({ report, embedded = false, onDelete, onIgnoreProbl
     <section className="report-section" aria-labelledby="report-severity-title">
       <SectionHeading id="report-severity-title">{t('report.severity.title')}</SectionHeading>
       <div className="severity-strip" aria-label={t('report.severity.ariaLabel')}>
-        <span className="severity-chip severity-chip--critical">{t('report.severity.critical')} {report.summary.severityCounts.critical}</span>
-        <span className="severity-chip severity-chip--warning">{t('report.severity.warning')} {report.summary.severityCounts.warning}</span>
-        <span className="severity-chip severity-chip--info">{t('report.severity.info')} {report.summary.severityCounts.info}</span>
+        {problemCounts ? <>
+          <span className="severity-chip severity-chip--error">{t('report.severity.errors')} {problemCounts.errors}</span>
+          <span className="severity-chip severity-chip--warning">{t('report.severity.warnings')} {problemCounts.warnings}</span>
+          <span className="severity-chip severity-chip--info">{t('report.severity.info')} {report.summary.severityCounts.info}</span>
+        </> : <>
+          <span className="severity-chip severity-chip--critical">{t('report.severity.critical')} {report.summary.severityCounts.critical}</span>
+          <span className="severity-chip severity-chip--warning">{t('report.severity.warning')} {report.summary.severityCounts.warning}</span>
+          <span className="severity-chip severity-chip--info">{t('report.severity.info')} {report.summary.severityCounts.info}</span>
+        </>}
       </div>
     </section>
-    {presentation?.mode === 'batch' ? <BatchPresentation heading={SectionHeading} presentation={presentation} onIgnoreProblem={onIgnoreProblem} timeZone={timeZone} /> : presentation?.mode === 'structured' ? <>
+    {presentation?.mode === 'batch' ? <BatchPresentation heading={SectionHeading} presentation={presentation} problemCounts={problemCounts} onIgnoreProblem={onIgnoreProblem} timeZone={timeZone} /> : presentation?.mode === 'structured' ? <>
       <section className="report-section" aria-labelledby="report-overview-title">
         <SectionHeading id="report-overview-title">{t('report.presentation.overview.title')}</SectionHeading>
         <p className="report-item-title">{presentation.overview.title}</p>
@@ -156,14 +163,26 @@ function PresentationSection({ heading: Heading, id, title, items }: { heading: 
   </section>;
 }
 
-function BatchPresentation({ heading: Heading, presentation, onIgnoreProblem, timeZone }: { heading: 'h2' | 'h3'; presentation: Extract<NonNullable<DigestDetail['presentation']>, { mode: 'batch' }>; onIgnoreProblem?: (signature: string) => Promise<void>; timeZone?: string }) {
+function BatchPresentation({ heading: Heading, presentation, problemCounts, onIgnoreProblem, timeZone }: { heading: 'h2' | 'h3'; presentation: Extract<NonNullable<DigestDetail['presentation']>, { mode: 'batch' }>; problemCounts?: { errors: number; warnings: number }; onIgnoreProblem?: (signature: string) => Promise<void>; timeZone?: string }) {
   if (presentation.status === 'failed') return <section className="report-section" role="alert"><Heading>{t('report.batch.failure')}</Heading><p>{failureLabel(presentation.failure)}</p></section>;
   const integrationStatus = projectIntegrationStatus(presentation.integrationStatus);
   return <>
     {presentation.warnings.length > 0 ? <section className="report-section report-analysis-note"><Heading>{t('report.batch.warnings')}</Heading><ul>{presentation.warnings.map((warning) => <li key={warning}>{warningLabel(warning)}{warning === 'AI_ANALYSIS_PARTIAL' ? null : <code translate="no" dir="ltr">{warning}</code>}</li>)}</ul></section> : null}
     <IntegrationSummary heading={Heading} status={integrationStatus} />
-    <section className="report-section report-problems"><Heading>{t('report.batch.problems')}</Heading><p className="report-section-intro">{t('report.batch.groupingExplanation')}</p><ul className="report-presentation-list">{presentation.signatures.map((item) => <ProblemCard key={item.signature} item={item} onIgnoreProblem={onIgnoreProblem} timeZone={timeZone} />)}</ul></section>
+    <section className="report-section report-problems" aria-labelledby="report-problems-title"><Heading id="report-problems-title">{t('report.batch.problems')}</Heading><p className="report-section-intro">{t('report.batch.groupingExplanation')}</p>
+      {problemCounts ? <>
+        <ProblemSeveritySection heading={Heading} id="report-errors-title" title={t('report.batch.errorsTitle').replace('{count}', String(problemCounts.errors))} empty={t('report.batch.noErrors')} items={presentation.signatures.filter((item) => item.level === 'ERROR' || item.level === 'CRITICAL')} onIgnoreProblem={onIgnoreProblem} timeZone={timeZone} />
+        <ProblemSeveritySection heading={Heading} id="report-warnings-title" title={t('report.batch.warningsTitle').replace('{count}', String(problemCounts.warnings))} empty={t('report.batch.noWarnings')} items={presentation.signatures.filter((item) => item.level === 'WARNING')} onIgnoreProblem={onIgnoreProblem} timeZone={timeZone} />
+      </> : <ul className="report-presentation-list">{presentation.signatures.map((item) => <ProblemCard key={item.signature} item={item} onIgnoreProblem={onIgnoreProblem} timeZone={timeZone} />)}</ul>}
+    </section>
   </>;
+}
+
+function ProblemSeveritySection({ heading: Heading, id, title, empty, items, onIgnoreProblem, timeZone }: { heading: 'h2' | 'h3'; id: string; title: string; empty: string; items: Extract<NonNullable<DigestDetail['presentation']>, { mode: 'batch' }>['signatures']; onIgnoreProblem?: (signature: string) => Promise<void>; timeZone?: string }) {
+  return <section className="report-severity-group" aria-labelledby={id}>
+    <Heading id={id}>{title}</Heading>
+    {items.length > 0 ? <ul className="report-presentation-list">{items.map((item) => <ProblemCard key={item.signature} item={item} onIgnoreProblem={onIgnoreProblem} timeZone={timeZone} />)}</ul> : <p className="report-severity-empty">{empty}</p>}
+  </section>;
 }
 
 function ProblemCard({ item, onIgnoreProblem, timeZone }: { item: Extract<NonNullable<DigestDetail['presentation']>, { mode: 'batch' }>['signatures'][number]; onIgnoreProblem?: (signature: string) => Promise<void>; timeZone?: string }) {
@@ -175,7 +194,7 @@ function ProblemCard({ item, onIgnoreProblem, timeZone }: { item: Extract<NonNul
     catch { setIgnoreState('error'); }
   }
   return <li className="report-presentation-item">
-      <div className="report-problem-heading"><p className="report-item-title"><span>{item.problemKind ? t(`report.batch.problemKinds.${item.problemKind}.title`) : t(`report.batch.classification.${item.classification}`)}</span> <code className="report-component-badge" translate="no" dir="ltr">{item.component}</code></p><span className={`severity-badge severity-badge--${severityForLevel(item.level)}`}>{severityLabel(severityForLevel(item.level))}</span></div>
+      <div className="report-problem-heading"><p className="report-item-title"><span>{item.problemKind ? t(`report.batch.problemKinds.${item.problemKind}.title`) : t(`report.batch.classification.${item.classification}`)}</span> <code className="report-component-badge" translate="no" dir="ltr">{item.component}</code></p><span className={`severity-badge severity-badge--${severityForLevel(item.level)}`}>{severityLabelForLevel(item.level)}</span></div>
       <p className="report-problem-stats"><span>{item.occurrences === 1 ? t('report.batch.occurrencesSingular') : t('report.batch.occurrencesPlural').replace('{count}', String(item.occurrences))}</span>{item.lastSeenAt ? <span>{t('report.batch.lastSeen').replace('{time}', formatDateTime(item.lastSeenAt, timeZone))}</span> : null}</p>
       {item.problemKind && !item.analysis ? <p className="muted-copy">{t(item.analysisStatus === 'not_attempted' ? 'report.batch.analysisNotAttempted' : 'report.batch.analysisUnavailable')}</p> : null}
       {item.problemKind ? <div className="report-ai-content"><div><p className="report-field-label">{t('report.batch.connectionExplanation')}</p><p>{t(`report.batch.problemKinds.${item.problemKind}.copy`)}</p></div><div><p className="report-field-label">{t('report.batch.nextStep')}</p><p>{t(`report.batch.problemKinds.${item.problemKind}.action`)}</p></div></div> : item.analysis ? <div className="report-ai-content"><div><p className="report-field-label">{t('report.batch.aiExplanation')}</p><p>{item.analysis.summary}</p></div><div><p className="report-field-label">{t('report.batch.aiRecommendation')}</p><p>{item.analysis.recommendation}</p></div></div> : <><p className="muted-copy">{t(item.analysisStatus === 'not_attempted' ? 'report.batch.analysisNotAttempted' : 'report.batch.analysisUnavailable')}</p>{item.safeExcerpt ? <details className="report-trace-detail"><summary>{t('report.batch.trace.action')}</summary><p>{t('report.batch.trace.warning')}</p><pre><code dir="ltr" translate="no">{item.safeExcerpt.lines.join('\n')}</code></pre></details> : <p className="muted-copy">{t('report.batch.trace.unavailable')}</p>}</>}
@@ -271,8 +290,26 @@ function failureLabel(message?: string): string {
   return message;
 }
 
-function severityForLevel(level: 'ERROR' | 'CRITICAL' | 'WARNING'): 'critical' | 'warning' {
-  return level === 'CRITICAL' ? 'critical' : 'warning';
+function countPresentationProblemLevels(signatures: Extract<NonNullable<DigestDetail['presentation']>, { mode: 'batch' }>['signatures']): { errors: number; warnings: number } | undefined {
+  const counts = { errors: 0, warnings: 0 };
+  for (const signature of signatures) {
+    const level = (signature as { level?: string }).level;
+    if (level === 'ERROR' || level === 'CRITICAL') counts.errors += 1;
+    else if (level === 'WARNING') counts.warnings += 1;
+    else return undefined;
+  }
+  return counts;
+}
+
+function severityForLevel(level: string | undefined): 'critical' | 'error' | 'warning' {
+  if (level === 'CRITICAL') return 'critical';
+  return level === 'ERROR' ? 'error' : 'warning';
+}
+
+function severityLabelForLevel(level: string | undefined): string {
+  if (level === 'ERROR') return t('report.batch.severity.error');
+  if (level === 'CRITICAL') return t('report.batch.severity.critical');
+  return t('report.batch.severity.warning');
 }
 
 function integrationFailureCopy(reason?: Extract<IntegrationStatusSummary, { available: false }>['reason']): string {

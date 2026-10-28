@@ -190,6 +190,35 @@ test('renders structured and legacy reports', async ({ page }) => {
   await expect(page.locator('pre')).toHaveCount(0);
 });
 
+test('separates batch errors from warnings in the report detail', async ({ page }) => {
+  const state = await mockRuntimeApi(page);
+  state.onboardingCompleted = true;
+  state.language = 'en';
+  state.reportPresentations['report-severity'] = {
+    version: 2,
+    mode: 'batch',
+    status: 'partial',
+    warnings: [],
+    signatures: [
+      { signature: 'grouped-error', component: 'mqtt', level: 'ERROR', classification: 'new', trend: 'new', occurrences: 7, analysisStatus: 'not_attempted' },
+      { signature: 'critical-error', component: 'core', level: 'CRITICAL', classification: 'new', trend: 'new', occurrences: 2 },
+      { signature: 'warning-only', component: 'loader', level: 'WARNING', classification: 'new', trend: 'new', occurrences: 5 }
+    ]
+  };
+
+  await page.goto('/reports/report-severity');
+
+  const errors = page.getByRole('region', { name: 'Errors (2)' });
+  const warnings = page.getByRole('region', { name: 'Warnings (1)' });
+  await expect(errors).toBeVisible();
+  await expect(warnings).toBeVisible();
+  await expect(errors).toContainText('grouped-error');
+  await expect(errors).toContainText('critical-error');
+  await expect(warnings).toContainText('warning-only');
+  await expect(errors.getByRole('button', { name: 'Ignore this problem' })).toHaveCount(2);
+  await expect(page.getByRole('heading', { name: 'Errors (2)' })).toBeVisible();
+});
+
 test('keeps selected report reading order and responsive layout through live resizing', async ({ page }) => {
   const state = await mockRuntimeApi(page);
   state.onboardingCompleted = true;

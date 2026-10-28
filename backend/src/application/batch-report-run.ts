@@ -24,7 +24,7 @@ export interface BatchPersistence {
   fail(run: FailedRun): Promise<void>;
 }
 export interface HAStatusPort { snapshot(): Promise<IntegrationStatusSnapshot>; }
-export interface BatchNotifier { notify(summary: { findings: Array<{ signature: string; analysis: SignatureAnalysis }>; detectedProblems?: number; reportUrl?: string; language: 'en' | 'es' }): Promise<DeliveryStatus | DeliveryResult>; }
+export interface BatchNotifier { notify(summary: { findings: Array<{ signature: string; analysis: SignatureAnalysis }>; detectedProblems?: number; problemCounts?: { errors: number; warnings: number }; reportUrl?: string; language: 'en' | 'es' }): Promise<DeliveryStatus | DeliveryResult>; }
 export type LogExtractionRequest = { batch: LogExtractionBatch; includeWarnings: boolean; language: 'en' | 'es' };
 export type LogExtractionResult = { entries: ExtractedLogError[]; rejectedCount: number };
 export interface LogErrorExtractor {
@@ -208,7 +208,12 @@ export class BatchReportRun {
         deliveryStarted = this.time();
         this.report({ event: 'telegram_delivery_started' });
         const reportUrl = this.dependencies.reportUrl?.(reportId);
-        const result = await this.dependencies.notifier.notify({ findings, detectedProblems: reportedSignatures.length, ...(reportUrl ? { reportUrl } : {}), language });
+        const problemCounts = reportedSignatures.reduce((counts, signature) => {
+          if (signature.level === 'WARNING') counts.warnings += 1;
+          else counts.errors += 1;
+          return counts;
+        }, { errors: 0, warnings: 0 });
+        const result = await this.dependencies.notifier.notify({ findings, detectedProblems: reportedSignatures.length, problemCounts, ...(reportUrl ? { reportUrl } : {}), language });
         deliveryStatus = typeof result === 'string' ? result : result.status;
         deliveryDiagnostic = typeof result === 'string' ? undefined : deliveryDiagnosticFor(result, this.dependencies.now?.() ?? new Date().toISOString());
         this.report({ event: 'telegram_delivery_completed', outcome: deliveryStatus, ...(deliveryDiagnostic ? { errorCode: deliveryDiagnostic.errorCode } : {}), durationMs: this.duration(deliveryStarted) });

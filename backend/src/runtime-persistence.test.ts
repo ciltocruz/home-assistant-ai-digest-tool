@@ -352,8 +352,9 @@ describe('persistent runtime services', () => {
     const committedReportId = (await services.digestJobs.get(queued.jobId))?.reportId;
     expect(telegramBodies).toEqual([expect.objectContaining({
       parse_mode: 'MarkdownV2',
-      text: expect.stringContaining(`[Abrir informe](https://digest.local/reports/${encodeURIComponent(committedReportId ?? '')})`)
+      text: expect.stringContaining('1 error y 0 warnings; 1 explicado por la IA')
     })]);
+    expect(telegramBodies[0]).toMatchObject({ text: expect.stringContaining(`[Abrir informe](https://digest.local/reports/${encodeURIComponent(committedReportId ?? '')})`) });
     const successfulReport = await services.reports.get((await services.digestJobs.get(queued.jobId))?.reportId ?? 'missing');
     expect(successfulReport?.summary.deliveryStatus).toBe('sent');
 
@@ -875,6 +876,9 @@ describe('persistent runtime services', () => {
 
     const after = DigestDetailSchema.parse(await services.reports.get(reportId));
     expect(requests).toHaveLength(3);
+    expect(requests[0]?.body).toMatchObject({ text: expect.stringContaining('1 error and 0 warnings') });
+    expect(requests[1]?.body).toMatchObject({ text: expect.stringContaining('1 error and 0 warnings') });
+    expect(requests[2]?.body).toMatchObject({ text: expect.stringContaining('1 error and 0 warnings') });
     expect(after.summary.deliveryStatus).toBe(before.summary.deliveryStatus);
     expect(after.summary.deliveryStatus).toBe('sent');
     expect(after.manualTelegram).toMatchObject({ configured: true, attempts: [

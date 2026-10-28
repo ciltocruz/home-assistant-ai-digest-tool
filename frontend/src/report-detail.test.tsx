@@ -573,4 +573,51 @@ describe('ReportDetail', () => {
     expect(html).not.toContain('Errores leídos');
     expect(html).not.toContain('Desde el cursor persistido en el archivo de log actual.');
   });
+
+  test.each([
+    { locale: 'en' as const, errors: 'Errors (2)', warnings: 'Warnings (1)', errorBadge: 'Error', criticalBadge: 'Critical', warningBadge: 'Warning', occurrences: '7 occurrences', unanalyzed: 'AI explanation was not attempted' },
+    { locale: 'es' as const, errors: 'Errores (2)', warnings: 'Avisos (1)', errorBadge: 'Error', criticalBadge: 'Crítica', warningBadge: 'Aviso', occurrences: '7 apariciones', unanalyzed: 'No se intentó una explicación de IA' }
+  ])('separates grouped v2 errors and warnings in $locale without losing unanalyzed cards', ({ locale, errors, warnings, errorBadge, criticalBadge, warningBadge, occurrences, unanalyzed }) => {
+    setLocale(locale);
+    const html = renderToStaticMarkup(<ReportDetail report={{
+      id: `split-severity-${locale}`, source: 'v2',
+      summary: { id: `split-severity-${locale}`, window: { from: '2026-08-01T09:00:00.000Z', to: '2026-08-01T10:00:00.000Z' }, severityCounts: { critical: 1, warning: 2, info: 0 }, createdAt: '2026-08-01T10:00:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'partial' },
+      rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'partial', warnings: [], signatures: [
+        { signature: 'grouped-error', component: 'mqtt', level: 'ERROR', classification: 'new', trend: 'new', occurrences: 7, analysisStatus: 'not_attempted' },
+        { signature: 'critical-error', component: 'ha.core', level: 'CRITICAL', classification: 'new', trend: 'new', occurrences: 2, analysis: { summary: 'Critical explanation', recommendation: 'Review it' } },
+        { signature: 'warning-only', component: 'loader', level: 'WARNING', classification: 'latent', trend: 'unknown', occurrences: 5, analysisStatus: 'failed' }
+      ] }
+    }} />);
+
+    expect(html).toContain(errors);
+    expect(html).toContain(warnings);
+    expect(html).toContain('grouped-error');
+    expect(html).toContain('critical-error');
+    expect(html).toContain('warning-only');
+    expect(html).toContain(errorBadge);
+    expect(html).toContain(criticalBadge);
+    expect(html).toContain(warningBadge);
+    expect(html.indexOf(errors)).toBeLessThan(html.indexOf(warnings));
+    expect(html).toContain(occurrences);
+    expect(html).toContain(unanalyzed);
+  });
+
+  test.each([
+    { locale: 'en' as const, errors: 'Errors (0)', warnings: 'Warnings (1)', empty: 'No errors were detected.' },
+    { locale: 'es' as const, errors: 'Errores (0)', warnings: 'Avisos (1)', empty: 'No se detectaron errores.' }
+  ])('shows zero-error clarity for a warning-only report in $locale', ({ locale, errors, warnings, empty }) => {
+    setLocale(locale);
+    const html = renderToStaticMarkup(<ReportDetail report={{
+      id: `warning-only-${locale}`, source: 'v2',
+      summary: { id: `warning-only-${locale}`, window: { from: '2026-08-01T09:00:00.000Z', to: '2026-08-01T10:00:00.000Z' }, severityCounts: { critical: 0, warning: 1, info: 0 }, createdAt: '2026-08-01T10:00:00.000Z', deliveryStatus: 'skipped', source: 'v2', runStatus: 'reported' },
+      rendered: { format: 'markdown', body: '' },
+      presentation: { version: 2, mode: 'batch', status: 'reported', warnings: [], signatures: [{ signature: 'only-warning', component: 'loader', level: 'WARNING', classification: 'new', trend: 'new', occurrences: 1 }] }
+    }} />);
+
+    expect(html).toContain(errors);
+    expect(html).toContain(warnings);
+    expect(html).toContain(empty);
+    expect(html).toContain('only-warning');
+  });
 });
