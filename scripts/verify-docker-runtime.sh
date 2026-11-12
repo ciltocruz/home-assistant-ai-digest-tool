@@ -682,6 +682,7 @@ main() {
   deadline_started_at="$SECONDS"
   require_dependencies
   mkdir -p -- "$ha_logs_dir"
+  chmod 0755 "$ha_logs_dir"
   # The fixture line must fall inside the analysis lookback window, so its
   # timestamp is refreshed to the current time on every verification run.
   sed -E "s/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}/$(date -u '+%Y-%m-%d %H:%M:%S')/" \
