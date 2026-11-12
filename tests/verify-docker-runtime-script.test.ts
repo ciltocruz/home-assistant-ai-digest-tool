@@ -290,6 +290,29 @@ describe('Docker runtime verification command', () => {
     }
   }, 215_000);
 
+  it('makes the temporary log directory readable to the container user', async () => {
+    const fakeBin = await mkdtemp(join(tmpdir(), 'ha-digest-log-permissions-'));
+    const fakeDocker = join(fakeBin, 'docker');
+    await writeFile(fakeDocker, `#!/usr/bin/env sh
+if [ "$1" = "info" ] || { [ "$1" = "compose" ] && [ "$2" = "version" ]; }; then exit 0; fi
+if [ "$1" = "compose" ] && printf '%s' "$*" | grep -q 'config --quiet'; then
+  stat -c '%a' "$HA_LOGS_DIR" >&2
+  exit 1
+fi
+exit 0
+`);
+    await chmod(fakeDocker, 0o755);
+    try {
+      const result = await execute('bash', [scriptPath], {
+        cwd: repositoryRoot,
+        env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}` }
+      }).then(() => ({ stderr: '' }), (error: { stderr: string }) => error);
+      expect(result.stderr).toMatch(/(?:^|\n)755(?:\n|$)/);
+    } finally {
+      await rm(fakeBin, { recursive: true, force: true });
+    }
+  });
+
   it('redacts failure diagnostics without treating sed expressions as file paths', async () => {
     const fakeBin = await mkdtemp(join(tmpdir(), 'ha-digest-fake-docker-'));
     const fakeDocker = join(fakeBin, 'docker');
